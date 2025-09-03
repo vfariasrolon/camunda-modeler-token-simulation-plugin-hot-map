@@ -1,3 +1,4 @@
+// client/Heatmap.js
 import h337 from 'heatmap.js';
 
 const VERY_HIGH_PRIORITY = 10000;
@@ -29,37 +30,44 @@ export default function Heatmap(
     this.drawHeatmap();
   });
 
-  const scopeStartTimes = {};
+  // This is the flawed, but known-to-load, logic
+  eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
+    console.log('[DEBUG] elementChanged event fired. Context keys:', Object.keys(context));
 
-  eventBus.on('tokenSimulation.simulator.createScope', VERY_HIGH_PRIORITY, (event) => {
-    const { scope } = event;
-    scopeStartTimes[scope.id] = new Date().getTime();
-  });
+    const {
+      element,
+      scope
+    } = context;
 
-  eventBus.on('tokenSimulation.simulator.destroyScope', VERY_HIGH_PRIORITY, (event) => {
-    const { scope } = event;
+    console.log('[DEBUG] Element:', element);
+    console.log('[DEBUG] Scope:', scope);
 
-    const startTime = scopeStartTimes[scope.id];
-    if (!startTime) {
-      return;
-    }
-
-    const endTime = new Date().getTime();
-    const duration = endTime - startTime;
-    const elementId = scope.element.id;
+    const elementId = element.id;
 
     if (!this.simulationData[elementId]) {
       this.simulationData[elementId] = {
-        name: scope.element.businessObject.name || elementId,
+        name: element.businessObject.name || element.id,
         count: 0,
-        totalTime: 0
+        totalTime: 0,
+        startTime: null
       };
     }
 
-    this.simulationData[elementId].count++;
-    this.simulationData[elementId].totalTime += duration;
+    const data = this.simulationData[elementId];
 
-    delete scopeStartTimes[scope.id];
+    if (scope.parent) {
+      if (!data.startTime) {
+        data.startTime = new Date().getTime();
+      }
+    } else {
+      if (data.startTime) {
+        const endTime = new Date().getTime();
+        const duration = endTime - data.startTime;
+        data.totalTime += duration;
+        data.count++;
+        data.startTime = null;
+      }
+    }
   });
 }
 

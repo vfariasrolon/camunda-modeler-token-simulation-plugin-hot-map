@@ -14,6 +14,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! heatmap.js */ "./node_modules/heatmap.js/build/heatmap.js");
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(heatmap_js__WEBPACK_IMPORTED_MODULE_0__);
+// client/Heatmap.js
 
 
 const VERY_HIGH_PRIORITY = 10000;
@@ -45,37 +46,44 @@ function Heatmap(
     this.drawHeatmap();
   });
 
-  const scopeStartTimes = {};
+  // This is the flawed, but known-to-load, logic
+  eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
+    console.log('[DEBUG] elementChanged event fired. Context keys:', Object.keys(context));
 
-  eventBus.on('tokenSimulation.simulator.createScope', VERY_HIGH_PRIORITY, (event) => {
-    const { scope } = event;
-    scopeStartTimes[scope.id] = new Date().getTime();
-  });
+    const {
+      element,
+      scope
+    } = context;
 
-  eventBus.on('tokenSimulation.simulator.destroyScope', VERY_HIGH_PRIORITY, (event) => {
-    const { scope } = event;
+    console.log('[DEBUG] Element:', element);
+    console.log('[DEBUG] Scope:', scope);
 
-    const startTime = scopeStartTimes[scope.id];
-    if (!startTime) {
-      return;
-    }
-
-    const endTime = new Date().getTime();
-    const duration = endTime - startTime;
-    const elementId = scope.element.id;
+    const elementId = element.id;
 
     if (!this.simulationData[elementId]) {
       this.simulationData[elementId] = {
-        name: scope.element.businessObject.name || elementId,
+        name: element.businessObject.name || element.id,
         count: 0,
-        totalTime: 0
+        totalTime: 0,
+        startTime: null
       };
     }
 
-    this.simulationData[elementId].count++;
-    this.simulationData[elementId].totalTime += duration;
+    const data = this.simulationData[elementId];
 
-    delete scopeStartTimes[scope.id];
+    if (scope.parent) {
+      if (!data.startTime) {
+        data.startTime = new Date().getTime();
+      }
+    } else {
+      if (data.startTime) {
+        const endTime = new Date().getTime();
+        const duration = endTime - data.startTime;
+        data.totalTime += duration;
+        data.count++;
+        data.startTime = null;
+      }
+    }
   });
 }
 
@@ -13543,13 +13551,18 @@ __webpack_require__.r(__webpack_exports__);
 
 
 const TokenSimulationPluginModule = {
-  __init__: [ 'hideModelerElements', 'heatmap' ],
-  hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__["default"] ],
+  __init__: [ 'hideModelerElements' ],
+  hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__["default"] ]
+};
+
+const HeatmapPluginModule = {
+  __init__: [ 'heatmap' ],
   heatmap: [ 'type', _Heatmap__WEBPACK_IMPORTED_MODULE_2__["default"] ]
 };
 
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_3__["default"]);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TokenSimulationPluginModule);
+(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(HeatmapPluginModule);
 
 })();
 
