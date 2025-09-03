@@ -7,8 +7,7 @@ export default function Heatmap(
     simulator,
     canvas,
     elementRegistry,
-    tokenSimulationPalette,
-    toggleMode
+    tokenSimulationPalette
 ) {
   this._eventBus = eventBus;
   this._simulator = simulator;
@@ -20,17 +19,11 @@ export default function Heatmap(
 
   this.simulationData = {};
 
-  const init = () => {
+  eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, (context) => {
     this.simulationData = {};
     this.getOrCreateHeatmapInstance();
     this.addHeatmapToggleButton();
-  };
-
-  eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, init);
-
-  if (toggleMode.isSimulationActive()) {
-    init();
-  }
+  });
 
   eventBus.on('tokenSimulation.simulator.ended', VERY_HIGH_PRIORITY, (context) => {
     this.drawHeatmap();
@@ -146,6 +139,5 @@ Heatmap.$inject = [
   'simulator',
   'canvas',
   'elementRegistry',
-  'tokenSimulationPalette',
-  'toggleMode'
+  'tokenSimulationPalette'
 ];
