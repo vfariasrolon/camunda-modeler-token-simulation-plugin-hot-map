@@ -1,7 +1,5 @@
 import h337 from 'heatmap.js';
 
-console.log('[DEBUG-1] Heatmap.js file is being read.');
-
 const VERY_HIGH_PRIORITY = 10000;
 
 export default function Heatmap(
@@ -9,10 +7,9 @@ export default function Heatmap(
     simulator,
     canvas,
     elementRegistry,
-    tokenSimulationPalette
+    tokenSimulationPalette,
+    toggleMode
 ) {
-  console.log('[DEBUG-2] Heatmap constructor is being executed.');
-
   this._eventBus = eventBus;
   this._simulator = simulator;
   this._canvas = canvas;
@@ -23,29 +20,31 @@ export default function Heatmap(
 
   this.simulationData = {};
 
-  eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, (context) => {
-    console.log('[DEBUG-3] "simulator.created" event received.');
+  const init = () => {
     this.simulationData = {};
     this.getOrCreateHeatmapInstance();
     this.addHeatmapToggleButton();
-  });
+  };
+
+  eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, init);
+
+  if (toggleMode.isSimulationActive()) {
+    init();
+  }
 
   eventBus.on('tokenSimulation.simulator.ended', VERY_HIGH_PRIORITY, (context) => {
-    console.log('[DEBUG-4] "simulator.ended" event received.');
     this.drawHeatmap();
   });
 
   const scopeStartTimes = {};
 
-  eventBus.on('tokenSimulation.simulator.scope.created', VERY_HIGH_PRIORITY, (event) => {
+  eventBus.on('tokenSimulation.simulator.createScope', VERY_HIGH_PRIORITY, (event) => {
     const { scope } = event;
-    console.log(`[DEBUG-5] "scope.created" event for element: ${scope.element.id}`);
     scopeStartTimes[scope.id] = new Date().getTime();
   });
 
-  eventBus.on('tokenSimulation.simulator.scope.destroyed', VERY_HIGH_PRIORITY, (event) => {
+  eventBus.on('tokenSimulation.simulator.destroyScope', VERY_HIGH_PRIORITY, (event) => {
     const { scope } = event;
-    console.log(`[DEBUG-6] "scope.destroyed" event for element: ${scope.element.id}`);
 
     const startTime = scopeStartTimes[scope.id];
     if (!startTime) {
@@ -147,5 +146,6 @@ Heatmap.$inject = [
   'simulator',
   'canvas',
   'elementRegistry',
-  'tokenSimulationPalette'
+  'tokenSimulationPalette',
+  'toggleMode'
 ];
