@@ -33,11 +33,12 @@ function Heatmap(
   this._tokenSimulationPalette = tokenSimulationPalette;
   this.heatmapInstance = null;
   this.heatmapVisible = true;
-
   this.simulationData = {};
+  this.elementActiveState = {};
 
   eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, (context) => {
     this.simulationData = {};
+    this.elementActiveState = {};
     this.getOrCreateHeatmapInstance();
     this.addHeatmapToggleButton();
   });
@@ -47,39 +48,41 @@ function Heatmap(
   });
 
   eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
-    const {
-      element,
-      type
-    } = context;
 
-    console.log(`[DEBUG] elementChanged: type=${type}, element=${element.id}`);
+    console.log(`[DEBUG] elementChanged fired for element: ${context.element.id}`);
 
-    const elementId = element.id;
+    const allScopes = this._simulator.getScopes();
+    const activeElements = new Set(allScopes.map(s => s.element.id));
 
-    if (!this.simulationData[elementId]) {
-      this.simulationData[elementId] = {
-        name: element.businessObject.name || element.id,
-        count: 0,
-        totalTime: 0,
-        startTime: null
-      };
-    }
-
-    const data = this.simulationData[elementId];
-
-    // Best-effort logic based on a guess of the 'type' value.
-    // The user can adjust these strings based on the console output.
-    if (type === 'token.add' || type === 'token.consume') {
-      if (!data.startTime) {
-        data.startTime = new Date().getTime();
+    // Check for newly active elements
+    activeElements.forEach(elementId => {
+      if (!this.elementActiveState[elementId]) {
+        // Element has become active
+        this.elementActiveState[elementId] = { startTime: new Date().getTime() };
       }
-    } else if (type === 'token.remove' || type === 'token.exit') {
-      if (data.startTime) {
-        const endTime = new Date().getTime();
-        const duration = endTime - data.startTime;
-        data.totalTime += duration;
-        data.count++;
-        data.startTime = null;
+    });
+
+    // Check for newly inactive elements
+    for (const elementId in this.elementActiveState) {
+      if (!activeElements.has(elementId)) {
+        // Element has become inactive
+        const startTime = this.elementActiveState[elementId].startTime;
+        if (startTime) {
+          const endTime = new Date().getTime();
+          const duration = endTime - startTime;
+
+          if (!this.simulationData[elementId]) {
+            const element = this._elementRegistry.get(elementId);
+            this.simulationData[elementId] = {
+              name: element.businessObject.name || elementId,
+              count: 0,
+              totalTime: 0
+            };
+          }
+          this.simulationData[elementId].count++;
+          this.simulationData[elementId].totalTime += duration;
+        }
+        delete this.elementActiveState[elementId];
       }
     }
   });
