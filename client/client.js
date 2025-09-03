@@ -1,8 +1,10 @@
 import {
-  registerBpmnJSPlugin
+  registerBpmnJSPlugin,
+  registerBpmnJSModdleExtension
 } from 'camunda-modeler-plugin-helpers';
 
 import TokenSimulationModule from 'bpmn-js-token-simulation';
+import HeatmapExtension from '../resources/heatmap-extension.json';
 import HideModelerElements from './HideModelerElements';
 import HeatmapModule from './Heatmap';
 
@@ -18,4 +20,5 @@ const HeatmapPluginModule = {
 
 registerBpmnJSPlugin(TokenSimulationModule);
 registerBpmnJSPlugin(TokenSimulationPluginModule);
+registerBpmnJSModdleExtension(HeatmapExtension);
 registerBpmnJSPlugin(HeatmapPluginModule);

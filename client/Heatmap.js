@@ -1,76 +1,74 @@
 // client/Heatmap.js
 import h337 from 'heatmap.js';
 
-const VERY_HIGH_PRIORITY = 10000;
-
 export default function Heatmap(
-    eventBus,
-    simulator,
     canvas,
     elementRegistry,
-    tokenSimulationPalette
+    palette
 ) {
-  this._eventBus = eventBus;
-  this._simulator = simulator;
   this._canvas = canvas;
   this._elementRegistry = elementRegistry;
-  this._tokenSimulationPalette = tokenSimulationPalette;
+  this._palette = palette;
   this.heatmapInstance = null;
-  this.heatmapVisible = true;
-  this.simulationData = {};
-  this.elementActiveState = {};
 
-  eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, (context) => {
-    this.simulationData = {};
-    this.elementActiveState = {};
-    this.getOrCreateHeatmapInstance();
-    this.addHeatmapToggleButton();
-  });
+  palette.registerProvider(this);
+}
 
-  eventBus.on('tokenSimulation.simulator.ended', VERY_HIGH_PRIORITY, (context) => {
-    this.drawHeatmap();
-  });
+Heatmap.prototype.getPaletteEntries = function(element) {
+  const self = this;
 
-  eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
-
-    console.log(`[DEBUG] elementChanged fired for element: ${context.element.id}`);
-
-    const allScopes = this._simulator.getScopes();
-    const activeElements = new Set(allScopes.map(s => s.element.id));
-
-    // Check for newly active elements
-    activeElements.forEach(elementId => {
-      if (!this.elementActiveState[elementId]) {
-        // Element has become active
-        this.elementActiveState[elementId] = { startTime: new Date().getTime() };
-      }
-    });
-
-    // Check for newly inactive elements
-    for (const elementId in this.elementActiveState) {
-      if (!activeElements.has(elementId)) {
-        // Element has become inactive
-        const startTime = this.elementActiveState[elementId].startTime;
-        if (startTime) {
-          const endTime = new Date().getTime();
-          const duration = endTime - startTime;
-
-          if (!this.simulationData[elementId]) {
-            const element = this._elementRegistry.get(elementId);
-            this.simulationData[elementId] = {
-              name: element.businessObject.name || elementId,
-              count: 0,
-              totalTime: 0
-            };
-          }
-          this.simulationData[elementId].count++;
-          this.simulationData[elementId].totalTime += duration;
+  return {
+    'generate-heatmap': {
+      group: 'tools',
+      className: 'fa-fire',
+      title: 'Generate Heatmap from Properties',
+      action: {
+        click: function(event) {
+          self.generateHeatmapFromProperties();
         }
-        delete this.elementActiveState[elementId];
+      }
+    }
+  };
+};
+
+Heatmap.prototype.generateHeatmapFromProperties = function() {
+  const heatmap = this.getOrCreateHeatmapInstance();
+  const dataPoints = [];
+  let maxTime = 0;
+
+  const tasks = this._elementRegistry.filter(function(element) {
+    return element.type.includes('Task');
+  });
+
+  tasks.forEach(function(task) {
+    const time = task.businessObject.get('heatmap:tiempoSimulacion');
+    if (time && time > 0) {
+      if (time > maxTime) {
+        maxTime = time;
       }
     }
   });
-}
+
+  if (maxTime === 0) {
+    heatmap.setData({ max: 1, data: [] }); // Clear heatmap
+    return;
+  }
+
+  tasks.forEach(function(task) {
+    const time = task.businessObject.get('heatmap:tiempoSimulacion');
+    if (time && time > 0) {
+      const x = Math.round(task.x + task.width / 2);
+      const y = Math.round(task.y + task.height / 2);
+      const value = Math.round((time / maxTime) * 100);
+      dataPoints.push({ x, y, value });
+    }
+  });
+
+  heatmap.setData({
+    max: 100,
+    data: dataPoints
+  });
+};
 
 Heatmap.prototype.getOrCreateHeatmapInstance = function() {
   if (!this.heatmapInstance) {
@@ -91,62 +89,9 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
   return this.heatmapInstance;
 };
 
-Heatmap.prototype.drawHeatmap = function() {
-  const heatmap = this.getOrCreateHeatmapInstance();
-  const dataPoints = [];
-  let maxTime = 0;
-
-  for (const elementId in this.simulationData) {
-    const data = this.simulationData[elementId];
-    if (data.totalTime > maxTime) {
-      maxTime = data.totalTime;
-    }
-  }
-
-  if (maxTime === 0) return;
-
-  for (const elementId in this.simulationData) {
-    const data = this.simulationData[elementId];
-    if (data.totalTime > 0) {
-      const element = this._elementRegistry.get(elementId);
-      if (element) {
-        const x = Math.round(element.x + element.width / 2);
-        const y = Math.round(element.y + element.height / 2);
-        const value = Math.round((data.totalTime / maxTime) * 100);
-        dataPoints.push({ x, y, value });
-      }
-    }
-  }
-
-  heatmap.setData({
-    max: 100,
-    data: dataPoints
-  });
-};
-
-Heatmap.prototype.addHeatmapToggleButton = function() {
-  if (this._tokenSimulationPalette.getEntry('toggle-heatmap')) {
-    return;
-  }
-
-  this._tokenSimulationPalette.addEntry({
-    id: 'toggle-heatmap',
-    title: 'Toggle Heatmap',
-    action: {
-      click: () => {
-        this.heatmapVisible = !this.heatmapVisible;
-        const display = this.heatmapVisible ? 'block' : 'none';
-        const heatmapCanvas = this.heatmapInstance.get('canvas');
-        heatmapCanvas.style.display = display;
-      }
-    }
-  });
-};
 
 Heatmap.$inject = [
-  'eventBus',
-  'simulator',
   'canvas',
   'elementRegistry',
-  'tokenSimulationPalette'
+  'palette'
 ];
