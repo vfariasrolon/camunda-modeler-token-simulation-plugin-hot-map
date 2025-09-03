@@ -13543,18 +13543,13 @@ __webpack_require__.r(__webpack_exports__);
 
 
 const TokenSimulationPluginModule = {
-  __init__: [ 'hideModelerElements' ],
-  hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__["default"] ]
-};
-
-const HeatmapPluginModule = {
-  __init__: [ 'heatmap' ],
+  __init__: [ 'hideModelerElements', 'heatmap' ],
+  hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__["default"] ],
   heatmap: [ 'type', _Heatmap__WEBPACK_IMPORTED_MODULE_2__["default"] ]
 };
 
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_3__["default"]);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TokenSimulationPluginModule);
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(HeatmapPluginModule);
 
 })();
 
