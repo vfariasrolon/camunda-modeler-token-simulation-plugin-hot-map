@@ -132,11 +132,13 @@ Heatmap.prototype.addHeatmapToggleButton = function() {
   this._tokenSimulationPalette.addEntry({
     id: 'toggle-heatmap',
     title: 'Toggle Heatmap',
-    action: () => {
-      this.heatmapVisible = !this.heatmapVisible;
-      const display = this.heatmapVisible ? 'block' : 'none';
-      const heatmapCanvas = this.heatmapInstance.get('canvas');
-      heatmapCanvas.style.display = display;
+    action: {
+      click: () => {
+        this.heatmapVisible = !this.heatmapVisible;
+        const display = this.heatmapVisible ? 'block' : 'none';
+        const heatmapCanvas = this.heatmapInstance.get('canvas');
+        heatmapCanvas.style.display = display;
+      }
     }
   });
 };
