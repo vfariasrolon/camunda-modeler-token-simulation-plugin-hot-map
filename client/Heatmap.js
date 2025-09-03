@@ -31,10 +31,8 @@ export default function Heatmap(
   eventBus.on('tokenSimulation.toggleMode', ({ active }) => {
     if (active) {
       this.addHeatmapToggleButton();
-      this.resetState();
-    } else if (this.heatmapInstance) {
-      this.heatmapInstance.setData({ max: 1, data: [] });
     }
+    this.resetState();
   });
 
   eventBus.on('tokenSimulation.simulator.ended', () => {
@@ -48,12 +46,9 @@ export default function Heatmap(
       action
     } = event;
 
-    // We are only interested in tasks
     if (!element.type.includes('Task')) {
       return;
     }
-
-    console.log(`[DEBUG] Trace Event: ${action} on ${element.id}`);
 
     const scopeId = scope.id;
 
@@ -61,7 +56,7 @@ export default function Heatmap(
       this.scopeStartTimes[scopeId] = new Date().getTime();
     } else if (action === 'exit') {
       const startTime = this.scopeStartTimes[scopeId];
-      if (startTime) {
+      if (typeof startTime !== 'undefined') {
         const endTime = new Date().getTime();
         const duration = endTime - startTime;
         const elementId = element.id;
