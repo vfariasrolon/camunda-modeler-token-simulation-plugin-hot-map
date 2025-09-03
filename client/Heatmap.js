@@ -30,37 +30,42 @@ export default function Heatmap(
     this.drawHeatmap();
   });
 
-  const scopeStartTimes = {};
+  eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
+    const {
+      element,
+      type
+    } = context;
 
-  eventBus.on('tokenSimulation.simulator.createScope', VERY_HIGH_PRIORITY, (event) => {
-    const { scope } = event;
-    scopeStartTimes[scope.id] = new Date().getTime();
-  });
+    console.log(`[DEBUG] elementChanged: type=${type}, element=${element.id}`);
 
-  eventBus.on('tokenSimulation.simulator.destroyScope', VERY_HIGH_PRIORITY, (event) => {
-    const { scope } = event;
-
-    const startTime = scopeStartTimes[scope.id];
-    if (!startTime) {
-      return;
-    }
-
-    const endTime = new Date().getTime();
-    const duration = endTime - startTime;
-    const elementId = scope.element.id;
+    const elementId = element.id;
 
     if (!this.simulationData[elementId]) {
       this.simulationData[elementId] = {
-        name: scope.element.businessObject.name || elementId,
+        name: element.businessObject.name || element.id,
         count: 0,
-        totalTime: 0
+        totalTime: 0,
+        startTime: null
       };
     }
 
-    this.simulationData[elementId].count++;
-    this.simulationData[elementId].totalTime += duration;
+    const data = this.simulationData[elementId];
 
-    delete scopeStartTimes[scope.id];
+    // Best-effort logic based on a guess of the 'type' value.
+    // The user can adjust these strings based on the console output.
+    if (type === 'token.add' || type === 'token.consume') {
+      if (!data.startTime) {
+        data.startTime = new Date().getTime();
+      }
+    } else if (type === 'token.remove' || type === 'token.exit') {
+      if (data.startTime) {
+        const endTime = new Date().getTime();
+        const duration = endTime - data.startTime;
+        data.totalTime += duration;
+        data.count++;
+        data.startTime = null;
+      }
+    }
   });
 }
 
