@@ -34,8 +34,11 @@ function Heatmap(
   this._elementColors = elementColors;
   this._tokenSimulationPalette = tokenSimulationPalette;
 
-  eventBus.on('tokenSimulation.simulator.created', () => {
-    this.addTestButton();
+  // Use a more reliable event to ensure the palette is ready
+  eventBus.on('tokenSimulation.toggleMode', ({ active }) => {
+    if (active) {
+      this.addTestButton();
+    }
   });
 }
 
