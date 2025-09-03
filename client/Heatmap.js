@@ -1,73 +1,101 @@
 // client/Heatmap.js
-import {
-  domify,
-  event as domEvent
-} from 'min-dom';
+import h337 from 'heatmap.js';
 
-import randomColor from 'randomcolor';
-
-// Using a random icon for now, for example, the fork icon.
-import { ForkIcon } from 'bpmn-js-token-simulation/lib/icons';
-
-export default function Heatmap(
-    eventBus,
-    elementRegistry,
-    elementColors,
-    tokenSimulationPalette
-) {
-  this._elementRegistry = elementRegistry;
-  this._elementColors = elementColors;
-  this._tokenSimulationPalette = tokenSimulationPalette;
-
-  // Use a more reliable event to ensure the palette is ready
-  eventBus.on('tokenSimulation.toggleMode', ({ active }) => {
-    if (active) {
-      this.addTestButton();
-    }
-  });
+function FireIcon() {
+  return '<i class="fa fa-fire"></i>';
 }
 
-Heatmap.prototype.addTestButton = function() {
-  // Ensure we don't add the button multiple times
-  if (document.querySelector('.bts-entry[title="Colorize Tasks"]')) {
-    return;
-  }
+export default function Heatmap(
+    canvas,
+    elementRegistry,
+    palette
+) {
+  this._canvas = canvas;
+  this._elementRegistry = elementRegistry;
+  this._palette = palette;
+  this.heatmapInstance = null;
 
-  const paletteEntry = domify(`
-    <div class="bts-entry" title="Colorize Tasks">
-      ${ ForkIcon() }
-    </div>
-  `);
+  palette.registerProvider(this);
+}
 
-  domEvent.bind(paletteEntry, 'click', () => {
-    console.log('[DEBUG] Colorize Tasks button clicked!');
-    this.applyRandomColors();
-  });
+Heatmap.prototype.getPaletteEntries = function(element) {
+  const self = this;
 
-  // Add to the simulation palette, at position 4 (after log)
-  this._tokenSimulationPalette.addEntry(paletteEntry, 4);
+  return {
+    'generate-heatmap': {
+      group: 'tools',
+      className: 'fa-fire',
+      title: 'Generate Heatmap from Properties',
+      action: {
+        click: function(event) {
+          self.generateHeatmapFromProperties();
+        }
+      }
+    }
+  };
 };
 
-Heatmap.prototype.applyRandomColors = function() {
+Heatmap.prototype.generateHeatmapFromProperties = function() {
+  const heatmap = this.getOrCreateHeatmapInstance();
+  const dataPoints = [];
+  let maxTime = 0;
+
   const tasks = this._elementRegistry.filter(function(element) {
     return element.type.includes('Task');
   });
 
-  tasks.forEach(task => {
-    const color = randomColor();
+  tasks.forEach(function(task) {
+    const time = task.businessObject.get('heatmap:tiempoSimulacion');
+    if (time && time > 0) {
+      if (time > maxTime) {
+        maxTime = time;
+      }
+    }
+  });
 
-    console.log(`[DEBUG] Coloring ${task.id} with ${color}`);
+  if (maxTime === 0) {
+    heatmap.setData({ max: 1, data: [] }); // Clear heatmap
+    return;
+  }
 
-    this._elementColors.add(task, 'heatmap-color', {
-      stroke: 'black',
-      fill: color
-    });
+  tasks.forEach(function(task) {
+    const time = task.businessObject.get('heatmap:tiempoSimulacion');
+    if (time && time > 0) {
+      const x = Math.round(task.x + task.width / 2);
+      const y = Math.round(task.y + task.height / 2);
+      const value = Math.round((time / maxTime) * 100);
+      dataPoints.push({ x, y, value });
+    }
+  });
+
+  heatmap.setData({
+    max: 100,
+    data: dataPoints
   });
 };
 
+Heatmap.prototype.getOrCreateHeatmapInstance = function() {
+  if (!this.heatmapInstance) {
+    const container = this._canvas.getContainer();
+    this.heatmapInstance = h337.create({
+      container: container,
+      radius: 50,
+      maxOpacity: .5,
+      minOpacity: 0,
+      blur: .75
+    });
+    const heatmapCanvas = container.querySelector('.heatmap-canvas');
+    heatmapCanvas.style.pointerEvents = 'none';
+    heatmapCanvas.style.position = 'absolute';
+    heatmapCanvas.style.top = 0;
+    heatmapCanvas.style.left = 0;
+  }
+  return this.heatmapInstance;
+};
+
+
 Heatmap.$inject = [
-  'eventBus',
+  'canvas',
   'elementRegistry',
-  'elementColors',
-  'tokenSimulationPalette'
+  'palette'
 ];
