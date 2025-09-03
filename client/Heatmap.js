@@ -34,41 +34,44 @@ export default function Heatmap(
     this.drawHeatmap();
   });
 
-  eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
-    const {
-      element,
-      scope
-    } = context;
+  const scopeStartTimes = {};
 
-    const elementId = element.id;
+  eventBus.on('tokenSimulation.simulator.scope.created', VERY_HIGH_PRIORITY, (event) => {
+    const {
+      scope
+    } = event;
+
+    scopeStartTimes[scope.id] = new Date().getTime();
+  });
+
+  eventBus.on('tokenSimulation.simulator.scope.destroyed', VERY_HIGH_PRIORITY, (event) => {
+    const {
+      scope
+    } = event;
+
+    const startTime = scopeStartTimes[scope.id];
+    if (!startTime) {
+      return;
+    }
+
+    const endTime = new Date().getTime();
+    const duration = endTime - startTime;
+    const elementId = scope.element.id;
 
     if (!this.simulationData[elementId]) {
       this.simulationData[elementId] = {
-        name: element.businessObject.name || element.id,
+        name: scope.element.businessObject.name || elementId,
         count: 0,
-        totalTime: 0,
-        startTime: null
+        totalTime: 0
       };
     }
 
-    const data = this.simulationData[elementId];
+    this.simulationData[elementId].count++;
+    this.simulationData[elementId].totalTime += duration;
 
-    if (scope.parent) {
-      // token entered the element
-      if (!data.startTime) { // Prevents resetting start time if multiple tokens enter
-        data.startTime = new Date().getTime();
-      }
-    } else {
-      // token left the element
-      if (data.startTime) {
-        const endTime = new Date().getTime();
-        const duration = endTime - data.startTime;
-        data.totalTime += duration;
-        data.count++; // Increment count on completion
-        data.startTime = null; // Reset start time for next entry
-        console.log(`Activity ${data.name} (ID: ${elementId}) took ${duration}ms`);
-      }
-    }
+    console.log(`Activity ${this.simulationData[elementId].name} (ID: ${elementId}) took ${duration}ms`);
+
+    delete scopeStartTimes[scope.id];
   });
 }
 
