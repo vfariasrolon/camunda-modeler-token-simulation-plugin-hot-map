@@ -12,112 +12,81 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ Heatmap)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! heatmap.js */ "./node_modules/heatmap.js/build/heatmap.js");
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(heatmap_js__WEBPACK_IMPORTED_MODULE_0__);
 // client/Heatmap.js
 
 
-
-
-const FireSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" height="16" width="16"><path fill="currentColor" d="M216 23.86c0-13.1-13.43-23.86-30-23.86C76.43 0 0 125.14 0 224c0 77.33 52.24 142.86 122.29 164.96.4.13.8.26 1.19.39C128.32 399.73 138.6 416 160 416c35.35 0 64-28.65 64-64s-28.65-64-64-64c-17.67 0-33.58 7.16-45.25 18.83-11.43-12.43-18.75-28.17-18.75-45.25 0-33.33 22.86-61.57 53.71-69.71 2.33-27.05 24.25-48.83 51.29-48.83 28.28 0 51.29 22.95 51.29 51.29 0 28.28-22.95 51.29-51.29 51.29-2.22 0-4.4-.15-6.55-.42-2.84 13.9-8.39 26.58-15.45 37.64 16.71 13.1 27 34.29 27 57.57 0 39.76-32.24 72-72 72-14.93 0-28.7-4.59-40-12.42-3.17 14.24-11.16 26.54-22.29 34.93C144.5 450.4 192 480 248 480c88.37 0 160-125.14 160-224S327.63 0 216 0c-2.49 0-4.93.09-7.33.25C207.2 1.34 208 2.62 208 4.14v19.72z"/></svg>`;
-
-function FireIcon() {
-  return `<span class="bts-icon">${FireSVG}</span>`;
-}
-
 const VERY_HIGH_PRIORITY = 10000;
 
 function Heatmap(
     eventBus,
+    simulator,
     canvas,
     elementRegistry,
     tokenSimulationPalette
 ) {
+  this._eventBus = eventBus;
+  this._simulator = simulator;
   this._canvas = canvas;
   this._elementRegistry = elementRegistry;
   this._tokenSimulationPalette = tokenSimulationPalette;
   this.heatmapInstance = null;
   this.heatmapVisible = true;
   this.simulationData = {};
-  this.scopeStartTimes = {};
+  this.elementActiveState = {};
 
-  eventBus.on('tokenSimulation.toggleMode', ({ active }) => {
-    if (active) {
-      this.addHeatmapToggleButton();
-    }
-    this.resetState();
+  eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, () => {
+    this.simulationData = {};
+    this.elementActiveState = {};
+    this.getOrCreateHeatmapInstance();
+    this.addHeatmapToggleButton();
   });
 
-  eventBus.on('tokenSimulation.simulator.ended', () => {
+  eventBus.on('tokenSimulation.simulator.ended', VERY_HIGH_PRIORITY, () => {
     this.drawHeatmap();
   });
 
-  eventBus.on('tokenSimulation.simulator.trace', VERY_HIGH_PRIORITY, (event) => {
-    const {
-      element,
-      scope,
-      action
-    } = event;
+  eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
 
-    if (!element.type.includes('Task')) {
-      return;
-    }
+    console.log(`[DEBUG] elementChanged fired for element: ${context.element.id}`);
 
-    const scopeId = scope.id;
+    const allScopes = this._simulator.findScopes(() => true);
+    const activeElements = new Set(allScopes.map(s => s.element.id));
 
-    if (action === 'enter') {
-      this.scopeStartTimes[scopeId] = new Date().getTime();
-    } else if (action === 'exit') {
-      const startTime = this.scopeStartTimes[scopeId];
-      if (typeof startTime !== 'undefined') {
-        const endTime = new Date().getTime();
-        const duration = endTime - startTime;
-        const elementId = element.id;
+    // Check for newly active elements
+    activeElements.forEach(elementId => {
+      if (!this.elementActiveState[elementId]) {
+        // Element has become active
+        this.elementActiveState[elementId] = { startTime: new Date().getTime() };
+      }
+    });
 
-        if (!this.simulationData[elementId]) {
-          this.simulationData[elementId] = {
-            name: element.businessObject.name || elementId,
-            count: 0,
-            totalTime: 0
-          };
+    // Check for newly inactive elements
+    for (const elementId in this.elementActiveState) {
+      if (!activeElements.has(elementId)) {
+        // Element has become inactive
+        const startTime = this.elementActiveState[elementId].startTime;
+        if (startTime) {
+          const endTime = new Date().getTime();
+          const duration = endTime - startTime;
+
+          if (!this.simulationData[elementId]) {
+            const element = this._elementRegistry.get(elementId);
+            this.simulationData[elementId] = {
+              name: element.businessObject.name || elementId,
+              count: 0,
+              totalTime: 0
+            };
+          }
+          this.simulationData[elementId].count++;
+          this.simulationData[elementId].totalTime += duration;
         }
-        this.simulationData[elementId].count++;
-        this.simulationData[elementId].totalTime += duration;
-
-        delete this.scopeStartTimes[scopeId];
+        delete this.elementActiveState[elementId];
       }
     }
   });
 }
-
-Heatmap.prototype.resetState = function() {
-  this.simulationData = {};
-  this.scopeStartTimes = {};
-  if (this.heatmapInstance) {
-    this.heatmapInstance.setData({ max: 1, data: [] });
-  }
-};
-
-Heatmap.prototype.addHeatmapToggleButton = function() {
-  if (document.querySelector('.bts-entry[title="Toggle Heatmap Visibility"]')) {
-    return;
-  }
-
-  const paletteEntry = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)(`
-    <div class="bts-entry" title="Toggle Heatmap Visibility">
-      ${ FireIcon() }
-    </div>
-  `);
-
-  min_dom__WEBPACK_IMPORTED_MODULE_1__.event.bind(paletteEntry, 'click', () => {
-    this.heatmapVisible = !this.heatmapVisible;
-    const heatmapCanvas = this.heatmapInstance.get('canvas');
-    heatmapCanvas.style.display = this.heatmapVisible ? 'block' : 'none';
-  });
-
-  this._tokenSimulationPalette.addEntry(paletteEntry, 4);
-};
 
 Heatmap.prototype.getOrCreateHeatmapInstance = function() {
   if (!this.heatmapInstance) {
@@ -174,8 +143,33 @@ Heatmap.prototype.drawHeatmap = function() {
   });
 };
 
+Heatmap.prototype.addHeatmapToggleButton = function() {
+  // Using a random icon for now, for example, the fork icon.
+  const ForkIcon = () => '<i class="fa fa-fire"></i>';
+
+  if (document.querySelector('.bts-entry[title="Toggle Heatmap"]')) {
+    return;
+  }
+
+  const paletteEntry = domify(`
+    <div class="bts-entry" title="Toggle Heatmap">
+      ${ ForkIcon() }
+    </div>
+  `);
+
+  domEvent.bind(paletteEntry, 'click', () => {
+    this.heatmapVisible = !this.heatmapVisible;
+    const display = this.heatmapVisible ? 'block' : 'none';
+    const heatmapCanvas = this.heatmapInstance.get('canvas');
+    heatmapCanvas.style.display = display;
+  });
+
+  this._tokenSimulationPalette.addEntry(paletteEntry, 4);
+};
+
 Heatmap.$inject = [
   'eventBus',
+  'simulator',
   'canvas',
   'elementRegistry',
   'tokenSimulationPalette'
