@@ -30,44 +30,37 @@ export default function Heatmap(
     this.drawHeatmap();
   });
 
-  // This is the flawed, but known-to-load, logic
-  eventBus.on('tokenSimulation.simulator.elementChanged', VERY_HIGH_PRIORITY, (context) => {
-    console.log('[DEBUG] elementChanged event fired. Context keys:', Object.keys(context));
+  const scopeStartTimes = {};
 
-    const {
-      element,
-      scope
-    } = context;
+  eventBus.on('tokenSimulation.simulator.createScope', VERY_HIGH_PRIORITY, (event) => {
+    const { scope } = event;
+    scopeStartTimes[scope.id] = new Date().getTime();
+  });
 
-    console.log('[DEBUG] Element:', element);
-    console.log('[DEBUG] Scope:', scope);
+  eventBus.on('tokenSimulation.simulator.destroyScope', VERY_HIGH_PRIORITY, (event) => {
+    const { scope } = event;
 
-    const elementId = element.id;
+    const startTime = scopeStartTimes[scope.id];
+    if (!startTime) {
+      return;
+    }
+
+    const endTime = new Date().getTime();
+    const duration = endTime - startTime;
+    const elementId = scope.element.id;
 
     if (!this.simulationData[elementId]) {
       this.simulationData[elementId] = {
-        name: element.businessObject.name || element.id,
+        name: scope.element.businessObject.name || elementId,
         count: 0,
-        totalTime: 0,
-        startTime: null
+        totalTime: 0
       };
     }
 
-    const data = this.simulationData[elementId];
+    this.simulationData[elementId].count++;
+    this.simulationData[elementId].totalTime += duration;
 
-    if (scope.parent) {
-      if (!data.startTime) {
-        data.startTime = new Date().getTime();
-      }
-    } else {
-      if (data.startTime) {
-        const endTime = new Date().getTime();
-        const duration = endTime - data.startTime;
-        data.totalTime += duration;
-        data.count++;
-        data.startTime = null;
-      }
-    }
+    delete scopeStartTimes[scope.id];
   });
 }
 
