@@ -1,5 +1,6 @@
-// client/Heatmap.js
 import h337 from 'heatmap.js';
+
+console.log('[DEBUG-1] Heatmap.js file is being read.');
 
 const VERY_HIGH_PRIORITY = 10000;
 
@@ -10,6 +11,8 @@ export default function Heatmap(
     elementRegistry,
     tokenSimulationPalette
 ) {
+  console.log('[DEBUG-2] Heatmap constructor is being executed.');
+
   this._eventBus = eventBus;
   this._simulator = simulator;
   this._canvas = canvas;
@@ -21,33 +24,28 @@ export default function Heatmap(
   this.simulationData = {};
 
   eventBus.on('tokenSimulation.simulator.created', VERY_HIGH_PRIORITY, (context) => {
-    // Reset data on new simulation
+    console.log('[DEBUG-3] "simulator.created" event received.');
     this.simulationData = {};
-    console.log('Heatmap module initialized and data reset.');
     this.getOrCreateHeatmapInstance();
     this.addHeatmapToggleButton();
   });
 
   eventBus.on('tokenSimulation.simulator.ended', VERY_HIGH_PRIORITY, (context) => {
-    // Log data when simulation ends
-    console.log('Simulation Ended. Final Data:', this.simulationData);
+    console.log('[DEBUG-4] "simulator.ended" event received.');
     this.drawHeatmap();
   });
 
   const scopeStartTimes = {};
 
   eventBus.on('tokenSimulation.simulator.scope.created', VERY_HIGH_PRIORITY, (event) => {
-    const {
-      scope
-    } = event;
-
+    const { scope } = event;
+    console.log(`[DEBUG-5] "scope.created" event for element: ${scope.element.id}`);
     scopeStartTimes[scope.id] = new Date().getTime();
   });
 
   eventBus.on('tokenSimulation.simulator.scope.destroyed', VERY_HIGH_PRIORITY, (event) => {
-    const {
-      scope
-    } = event;
+    const { scope } = event;
+    console.log(`[DEBUG-6] "scope.destroyed" event for element: ${scope.element.id}`);
 
     const startTime = scopeStartTimes[scope.id];
     if (!startTime) {
@@ -68,8 +66,6 @@ export default function Heatmap(
 
     this.simulationData[elementId].count++;
     this.simulationData[elementId].totalTime += duration;
-
-    console.log(`Activity ${this.simulationData[elementId].name} (ID: ${elementId}) took ${duration}ms`);
 
     delete scopeStartTimes[scope.id];
   });
@@ -106,7 +102,7 @@ Heatmap.prototype.drawHeatmap = function() {
     }
   }
 
-  if (maxTime === 0) return; // a void drawing if no time was spent
+  if (maxTime === 0) return;
 
   for (const elementId in this.simulationData) {
     const data = this.simulationData[elementId];
