@@ -133,7 +133,7 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
 
   // 3. Generate data points for sequence flows
   flows.forEach(flow => {
-    const sourceTime = elementTimes.get(flow.source.id);
+    const sourceTime = flow.source && elementTimes.get(flow.source.id);
     if (sourceTime) {
       const value = Math.round((sourceTime / maxTime) * 100);
       const pathPoints = getPointsAlongPath(flow.waypoints);
@@ -211,7 +211,7 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
 
   // 3. Generate data points for sequence flows
   flows.forEach(flow => {
-    const sourceTime = elementTimes.get(flow.source.id);
+    const sourceTime = flow.source && elementTimes.get(flow.source.id);
     if (sourceTime) {
       const value = Math.round((sourceTime / maxTime) * 100);
       const pathPoints = getPointsAlongPath(flow.waypoints);
@@ -270,7 +270,7 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
     heatmapCanvas.style.position = 'absolute';
     heatmapCanvas.style.top = 0;
     heatmapCanvas.style.left = 0;
-    heatmapCanvas.style.zIndex = 1; // Put it in front of the diagram elements
+    heatmapCanvas.style.zIndex = 1000; // Put it in front of the diagram elements
   }
   return this.heatmapInstance;
 };

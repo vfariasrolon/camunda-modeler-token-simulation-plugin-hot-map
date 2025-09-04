@@ -7,12 +7,13 @@ import {
   TOGGLE_MODE_EVENT
 } from 'bpmn-js-token-simulation/lib/util/EventHelper';
 
-export default function HeatmapData(eventBus, elementRegistry, modeling, moddle, timeTracker) {
+export default function HeatmapData(eventBus, elementRegistry, modeling, moddle, timeTracker, toggleMode) {
   this._eventBus = eventBus;
   this._elementRegistry = elementRegistry;
   this._modeling = modeling;
   this._moddle = moddle;
   this._timeTracker = timeTracker;
+  this._toggleMode = toggleMode;
 
   // Listen for the toggle mode event to write data when simulation is turned off
   eventBus.on(TOGGLE_MODE_EVENT, event => {
@@ -48,6 +49,12 @@ HeatmapData.prototype.writeTimesToModel = function() {
 }
 
 HeatmapData.prototype.updateElementTime = function(element, time, overwrite = false) {
+
+  // do not write to model when simulation is active
+  if (this._toggleMode.active) {
+    return;
+  }
+
   const businessObject = getBusinessObject(element);
 
   let extensionElements = businessObject.get('extensionElements');
@@ -79,6 +86,12 @@ HeatmapData.prototype.updateElementTime = function(element, time, overwrite = fa
 
 
 HeatmapData.prototype.clearAllHeatmapData = function() {
+
+  // do not write to model when simulation is active
+  if (this._toggleMode.active) {
+    return;
+  }
+
   const elements = this._elementRegistry.filter(element => {
     return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
   });
@@ -108,5 +121,6 @@ HeatmapData.$inject = [
   'elementRegistry',
   'modeling',
   'moddle',
-  'timeTracker' // Inject the timeTracker to get the data
+  'timeTracker', // Inject the timeTracker to get the data
+  'toggleMode'
 ];
