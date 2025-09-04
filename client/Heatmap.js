@@ -1,7 +1,7 @@
 import {
   domify,
-  domQuery,
-  domClasses
+  query,
+  classes as domClasses
 } from 'min-dom';
 
 import {
@@ -56,7 +56,7 @@ export default class Heatmap {
     if (!this._heatmapContainer) {
       return;
     }
-    const overlayContainer = domQuery('.djs-overlay-container', this._canvas.getContainer());
+    const overlayContainer = query('.djs-overlay-container', this._canvas.getContainer());
     if (overlayContainer) {
       // Copy transform and transformOrigin from the bpmn-js overlay container
       // This is the key to keeping the heatmap aligned with the diagram
@@ -152,7 +152,7 @@ export default class Heatmap {
 
   createHeatmap() {
     const container = this._canvas.getContainer();
-    const djsContainer = domQuery('.djs-container', container);
+    const djsContainer = query('.djs-container', container);
 
     // Create our own container for the heatmap and append it to the djs-container
     this._heatmapContainer = domify('<div class="heatmap-layer" style="position: absolute; top: 0; left: 0; pointer-events: none;"></div>');
