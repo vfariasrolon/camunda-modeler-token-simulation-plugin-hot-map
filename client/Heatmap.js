@@ -1,6 +1,15 @@
 // client/Heatmap.js
 import h337 from 'heatmap.js';
 
+import {
+  RESET_SIMULATION_EVENT
+} from 'bpmn-js-token-simulation/lib/util/EventHelper';
+
+import {
+  isAny,
+  getBusinessObject
+} from 'bpmn-js/lib/util/ModelUtil';
+
 function FireIcon() {
   return '<i class="fa fa-fire"></i>';
 }
@@ -8,14 +17,24 @@ function FireIcon() {
 export default function Heatmap(
     canvas,
     elementRegistry,
-    palette
+    palette,
+    eventBus
 ) {
   this._canvas = canvas;
   this._elementRegistry = elementRegistry;
   this._palette = palette;
+  this._eventBus = eventBus;
   this.heatmapInstance = null;
 
   palette.registerProvider(this);
+
+  // Clear heatmap on simulation reset
+  eventBus.on(RESET_SIMULATION_EVENT, () => {
+    if (this.heatmapInstance) {
+      this.heatmapInstance.setData({ max: 1, data: [] });
+      console.log('[Heatmap] Cleared heatmap data on reset.');
+    }
+  });
 }
 
 Heatmap.prototype.getPaletteEntries = function(element) {
@@ -42,12 +61,24 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   let maxTime = 0;
 
   const tasks = this._elementRegistry.filter(function(element) {
-    return element.type.includes('Task');
+    return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
   });
 
-  tasks.forEach(function(task) {
-    // Read the custom property, default to 1 if not set
-    const time = task.businessObject.get('heatmap:tiempoSimulacion') || 1;
+  tasks.forEach((task) => {
+    const businessObject = getBusinessObject(task);
+    const extensionElements = businessObject.get('extensionElements');
+
+    if (!extensionElements) {
+      return;
+    }
+
+    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+
+    if (!heatmapData) {
+      return;
+    }
+
+    const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
 
     if (time > maxTime) {
       maxTime = time;
@@ -56,16 +87,32 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
 
   if (maxTime === 0) {
     heatmap.setData({ max: 1, data: [] }); // Clear heatmap
+    console.log('[Heatmap] No simulation data found. Clearing heatmap.');
     return;
   }
 
-  tasks.forEach(function(task) {
-    const time = task.businessObject.get('heatmap:tiempoSimulacion') || 1;
+  tasks.forEach((task) => {
+    const businessObject = getBusinessObject(task);
+    const extensionElements = businessObject.get('extensionElements');
 
-    const x = Math.round(task.x + task.width / 2);
-    const y = Math.round(task.y + task.height / 2);
-    const value = Math.round((time / maxTime) * 100);
-    dataPoints.push({ x, y, value });
+    if (!extensionElements) {
+      return;
+    }
+
+    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+
+    if (!heatmapData) {
+      return;
+    }
+
+    const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
+
+    if (time > 0) {
+      const x = Math.round(task.x + task.width / 2);
+      const y = Math.round(task.y + task.height / 2);
+      const value = Math.round((time / maxTime) * 100);
+      dataPoints.push({ x, y, value });
+    }
   });
 
   console.log('[Heatmap] Generated data points:', dataPoints);
@@ -99,5 +146,6 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
 Heatmap.$inject = [
   'canvas',
   'elementRegistry',
-  'palette'
+  'palette',
+  'eventBus'
 ];

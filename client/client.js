@@ -7,6 +7,7 @@ import TokenSimulationModule from 'bpmn-js-token-simulation';
 import HeatmapExtension from '../resources/heatmap-extension.json';
 import HideModelerElements from './HideModelerElements';
 import HeatmapModule from './Heatmap';
+import TimeTracker from './TimeTracker';
 
 // Note: We register the HeatmapModule as a separate plugin
 // to ensure it loads correctly, based on our debugging.
@@ -22,6 +23,11 @@ const HeatmapPluginModule = {
   heatmap: [ 'type', HeatmapModule ]
 };
 
+const TimeTrackerPluginModule = {
+  __init__: [ 'timeTracker' ],
+  timeTracker: [ 'type', TimeTracker ]
+};
+
 // Register the BpmnJS Moddle Extension
 registerBpmnJSModdleExtension(HeatmapExtension);
 
@@ -29,3 +35,4 @@ registerBpmnJSModdleExtension(HeatmapExtension);
 registerBpmnJSPlugin(TokenSimulationModule);
 registerBpmnJSPlugin(TokenSimulationPluginModule);
 registerBpmnJSPlugin(HeatmapPluginModule);
+registerBpmnJSPlugin(TimeTrackerPluginModule);
