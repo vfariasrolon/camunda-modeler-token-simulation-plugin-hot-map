@@ -102,16 +102,25 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
 
   const allElements = this._elementRegistry.getAll();
 
-  const tasks = allElements.filter(element => {
-    return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
+  const nodesToColor = allElements.filter(element => {
+    return isAny(element, [
+      'bpmn:Task',
+      'bpmn:CallActivity',
+      'bpmn:StartEvent',
+      'bpmn:EndEvent',
+      'bpmn:ExclusiveGateway',
+      'bpmn:ParallelGateway',
+      'bpmn:InclusiveGateway',
+      'bpmn:EventBasedGateway'
+    ]);
   });
 
   const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
 
-  // 1. Generate random times for tasks and find the max
-  tasks.forEach(task => {
+  // 1. Generate random times for nodes and find the max
+  nodesToColor.forEach(node => {
     const time = Math.floor(Math.random() * 100) + 1; // Random time between 1 and 100
-    elementTimes.set(task.id, time);
+    elementTimes.set(node.id, time);
     if (time > maxTime) {
       maxTime = time;
     }
@@ -122,11 +131,11 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
     return;
   }
 
-  // 2. Create data points for tasks
-  tasks.forEach(task => {
-    const time = elementTimes.get(task.id);
-    const x = Math.round(task.x + task.width / 2);
-    const y = Math.round(task.y + task.height / 2);
+  // 2. Create data points for nodes
+  nodesToColor.forEach(node => {
+    const time = elementTimes.get(node.id);
+    const x = Math.round(node.x + node.width / 2);
+    const y = Math.round(node.y + node.height / 2);
     const value = Math.round((time / maxTime) * 100);
     dataPoints.push({ x, y, value, radius: 40 });
   });
