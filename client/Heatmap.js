@@ -1,6 +1,7 @@
 // client/Heatmap.js
 import h337 from 'heatmap.js';
 import { domify, event as domEvent } from 'min-dom';
+import { find } from 'min-dash';
 
 import {
   RESET_SIMULATION_EVENT,
@@ -45,22 +46,18 @@ export default function Heatmap(
 
   this._init();
 
-  // Update heatmap transform on viewbox change
   eventBus.on('canvas.viewbox.changed', () => {
     this.updateTransform();
   });
 
-  // Clear heatmap on simulation reset
   eventBus.on(RESET_SIMULATION_EVENT, () => {
     this.clearHeatmap();
   });
 
-  // Clear and remove heatmap when simulation is toggled off
   eventBus.on(TOGGLE_MODE_EVENT, event => {
     if (!event.active) {
       this.removeHeatmap();
     } else {
-      // When simulation starts, apply the current transform
       this.updateTransform();
     }
   });
@@ -70,19 +67,16 @@ Heatmap.prototype.updateTransform = function() {
   if (!this.heatmapCanvas) {
     return;
   }
-
   const viewbox = this._canvas.viewbox();
   const { scale, x, y } = viewbox;
-
   this.heatmapCanvas.style.transform = `matrix(${scale}, 0, 0, ${scale}, ${x}, ${y})`;
 };
 
 Heatmap.prototype._init = function() {
   const self = this;
 
-  // 1. Generate Heatmap Button
   const heatmapButton = domify(`
-    <div class="bts-entry" title="Generate/Clear Heatmap">
+    <div class="bts-entry" title="Generate Heatmap from Extension Properties">
       ${ BroomIcon() }
     </div>
   `);
@@ -94,7 +88,6 @@ Heatmap.prototype._init = function() {
 
   this._tokenSimulationPalette.addEntry(heatmapButton, 4);
 
-  // 2. Test Heatmap Button
   const testButton = domify(`
     <div class="bts-entry" title="Generate Test Heatmap">
       ${ BrushIcon() }
@@ -110,7 +103,6 @@ Heatmap.prototype._init = function() {
 };
 
 Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
-  // Use a timeout to ensure any pending model updates (like clearing) are done
   setTimeout(() => {
     const dataPoints = [];
     const elementTimes = new Map();
@@ -151,24 +143,25 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
     });
 
     flows.forEach(flow => {
-      const sourceTime = flow.source && elementTimes.get(flow.source.id);
-      if (sourceTime) {
-        const value = Math.round((sourceTime / maxTime) * 100);
-        const pathPoints = getPointsAlongPath(flow.waypoints);
-        pathPoints.forEach(point => {
-          dataPoints.push({ x: point.x - bbox.x, y: point.y - bbox.y, value, radius: 15 });
-        });
+      if (flow && flow.waypoints) {
+        const sourceTime = flow.source && elementTimes.get(flow.source.id);
+        if (sourceTime) {
+          const value = Math.round((sourceTime / maxTime) * 100);
+          const pathPoints = getPointsAlongPath(flow.waypoints);
+          pathPoints.forEach(point => {
+            dataPoints.push({ x: point.x - bbox.x, y: point.y - bbox.y, value, radius: 15 });
+          });
+        }
       }
     });
 
     console.log('[Heatmap] Generated hardcoded data points:', dataPoints);
     heatmap.setData({ max: 100, data: dataPoints });
-    this.updateTransform(); // ensure transform is correct after creation
+    this.updateTransform();
   }, 0);
 };
 
 Heatmap.prototype.generateHeatmapFromProperties = function() {
-  // Use a timeout to ensure any pending model updates are done
   setTimeout(() => {
     const dataPoints = [];
     const elementTimes = new Map();
@@ -186,11 +179,14 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
       const businessObject = getBusinessObject(node);
       const extensionElements = businessObject.get('extensionElements');
       if (extensionElements) {
-        const values = extensionElements.get('values');
-        if (values) {
-          const heatmapData = values.find(v => v.$type === 'heatmap:Data');
-          if (heatmapData) {
-            const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
+        const camundaProperties = find(extensionElements.get('values'), v => is(v, 'camunda:Properties'));
+        if (camundaProperties) {
+          const properties = camundaProperties.get('values');
+          const timeProperty = find(properties, p => p.name === 'tiempoSimulacion');
+          if (timeProperty && timeProperty.value) {
+            // User can enter seconds, we use them directly.
+            // If they enter ms, it will also work, just be a larger number.
+            const time = parseInt(timeProperty.value, 10) || 0;
             if (time > 0) {
               elementTimes.set(node.id, time);
               if (time > maxTime) maxTime = time;
@@ -202,7 +198,7 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
 
     if (maxTime === 0) {
       this.clearHeatmap();
-      console.log('[Heatmap] No simulation data found. Clearing heatmap.');
+      console.log('[Heatmap] No \'tiempoSimulacion\' extension properties found. Clearing heatmap.');
       return;
     }
 
@@ -220,19 +216,21 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
     });
 
     flows.forEach(flow => {
-      const sourceTime = flow.source && elementTimes.get(flow.source.id);
-      if (sourceTime) {
-        const value = Math.round((sourceTime / maxTime) * 100);
-        const pathPoints = getPointsAlongPath(flow.waypoints);
-        pathPoints.forEach(point => {
-          dataPoints.push({ x: point.x - bbox.x, y: point.y - bbox.y, value, radius: 15 });
-        });
+      if (flow && flow.waypoints) {
+        const sourceTime = flow.source && elementTimes.get(flow.source.id);
+        if (sourceTime) {
+          const value = Math.round((sourceTime / maxTime) * 100);
+          const pathPoints = getPointsAlongPath(flow.waypoints);
+          pathPoints.forEach(point => {
+            dataPoints.push({ x: point.x - bbox.x, y: point.y - bbox.y, value, radius: 15 });
+          });
+        }
       }
     });
 
-    console.log('[Heatmap] Generated data points:', dataPoints);
+    console.log('[Heatmap] Generated data points from extension properties:', dataPoints);
     heatmap.setData({ max: 100, data: dataPoints });
-    this.updateTransform(); // ensure transform is correct after creation
+    this.updateTransform();
   }, 0);
 };
 
@@ -245,10 +243,8 @@ Heatmap.prototype.clearHeatmap = function() {
 
 Heatmap.prototype.removeHeatmap = function() {
   if (this.heatmapInstance) {
-    const container = this._canvas.getContainer();
-    const heatmapCanvas = container.querySelector('.heatmap-canvas');
-    if (heatmapCanvas) {
-      heatmapCanvas.remove();
+    if (this.heatmapCanvas && this.heatmapCanvas.parentNode) {
+      this.heatmapCanvas.parentNode.removeChild(this.heatmapCanvas);
     }
     this.heatmapInstance = null;
     this.heatmapCanvas = null;
@@ -257,14 +253,9 @@ Heatmap.prototype.removeHeatmap = function() {
 };
 
 Heatmap.prototype.getOrCreateHeatmapInstance = function(bbox) {
+  const container = this._canvas.getContainer();
+
   if (!this.heatmapInstance) {
-    const container = this._canvas.getContainer();
-
-    const oldCanvas = container.querySelector('.heatmap-canvas');
-    if (oldCanvas) {
-      oldCanvas.remove();
-    }
-
     this.heatmapInstance = h337.create({
       container: container,
       radius: 20,
@@ -275,23 +266,18 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function(bbox) {
 
     this.heatmapCanvas = container.querySelector('.heatmap-canvas');
 
-    // Set canvas dimensions and position based on diagram bounding box
-    this.heatmapCanvas.width = bbox.width;
-    this.heatmapCanvas.height = bbox.height;
     this.heatmapCanvas.style.position = 'absolute';
-    this.heatmapCanvas.style.left = `${bbox.x}px`;
-    this.heatmapCanvas.style.top = `${bbox.y}px`;
     this.heatmapCanvas.style.pointerEvents = 'none';
     this.heatmapCanvas.style.zIndex = 1;
     this.heatmapCanvas.style.transformOrigin = 'top left';
-  } else {
-    // Update existing canvas size if diagram has changed
-    const bbox = this._canvas.getAbsoluteBBox();
-    this.heatmapCanvas.width = bbox.width;
-    this.heatmapCanvas.height = bbox.height;
-    this.heatmapCanvas.style.left = `${bbox.x}px`;
-    this.heatmapCanvas.style.top = `${bbox.y}px`;
   }
+
+  // Set canvas dimensions and position based on diagram bounding box
+  this.heatmapCanvas.width = bbox.width;
+  this.heatmapCanvas.height = bbox.height;
+  this.heatmapCanvas.style.left = `${bbox.x}px`;
+  this.heatmapCanvas.style.top = `${bbox.y}px`;
+
   return this.heatmapInstance;
 };
 
