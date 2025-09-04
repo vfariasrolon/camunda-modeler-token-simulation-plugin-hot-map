@@ -14,9 +14,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! heatmap.js */ "./node_modules/heatmap.js/build/heatmap.js");
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(heatmap_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
 /* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
 // client/Heatmap.js
+
+
 
 
 
@@ -27,19 +30,23 @@ function FireIcon() {
   return '<i class="fa fa-fire"></i>';
 }
 
+function TestIcon() {
+  return '<i class="fa fa-flask"></i>';
+}
+
 function Heatmap(
     canvas,
     elementRegistry,
-    palette,
-    eventBus
+    eventBus,
+    tokenSimulationPalette
 ) {
   this._canvas = canvas;
   this._elementRegistry = elementRegistry;
-  this._palette = palette;
   this._eventBus = eventBus;
+  this._tokenSimulationPalette = tokenSimulationPalette;
   this.heatmapInstance = null;
 
-  palette.registerProvider(this);
+  this._init();
 
   // Clear heatmap on simulation reset
   eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.RESET_SIMULATION_EVENT, () => {
@@ -48,25 +55,79 @@ function Heatmap(
       console.log('[Heatmap] Cleared heatmap data on reset.');
     }
   });
-}
 
-Heatmap.prototype.getPaletteEntries = function(element) {
-  const self = this;
-
-  return {
-    'generate-heatmap': {
-      group: 'tools',
-      className: 'fa-fire',
-      title: 'Generate Heatmap from Simulation Times',
-      action: {
-        click: function(event) {
-          console.log('[Heatmap] Generating heatmap from properties...');
-          self.generateHeatmapFromProperties();
+  eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.TOGGLE_MODE_EVENT, event => {
+    if (!event.active) {
+      if (this.heatmapInstance) {
+        // Find the heatmap canvas and remove it
+        const container = this._canvas.getContainer();
+        const heatmapCanvas = container.querySelector('.heatmap-canvas');
+        if (heatmapCanvas) {
+          heatmapCanvas.remove();
         }
+        this.heatmapInstance = null;
+        console.log('[Heatmap] Heatmap instance removed on simulation toggle off.');
       }
     }
-  };
+  });
+}
+
+Heatmap.prototype._init = function() {
+  const self = this;
+
+  // 1. Generate Heatmap Button
+  const heatmapButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+    <div class="bts-entry" title="Generate Heatmap from Simulation Times">
+      ${ FireIcon() }
+    </div>
+  `);
+
+  min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(heatmapButton, 'click', () => {
+    console.log('[Heatmap] Generating heatmap from properties...');
+    self.generateHeatmapFromProperties();
+  });
+
+  this._tokenSimulationPalette.addEntry(heatmapButton, 4);
+
+  // 2. Test Heatmap Button
+  const testButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+    <div class="bts-entry" title="Test Heatmap with Hardcoded Values">
+      ${ TestIcon() }
+    </div>
+  `);
+
+  min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(testButton, 'click', () => {
+    console.log('[Heatmap] Testing heatmap with hardcoded values...');
+    self.setHardcodedTimesAndGenerate();
+  });
+
+  this._tokenSimulationPalette.addEntry(testButton, 5);
 };
+
+Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
+  // First, clear any existing data
+  this._eventBus.fire('heatmap.data.clear');
+
+  const tasks = this._elementRegistry.filter(element => {
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
+  });
+
+  // Fire events to update the model for each task
+  tasks.forEach(task => {
+    this._eventBus.fire('heatmap.time.updated', {
+      element: task,
+      time: 1000 // Hardcoded 1 second
+    });
+  });
+
+  console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
+
+  // Use a timeout to allow the model updates to process before generating the heatmap
+  setTimeout(() => {
+    this.generateHeatmapFromProperties();
+  }, 100);
+};
+
 
 Heatmap.prototype.generateHeatmapFromProperties = function() {
   const heatmap = this.getOrCreateHeatmapInstance();
@@ -74,18 +135,23 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   let maxTime = 0;
 
   const tasks = this._elementRegistry.filter(function(element) {
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
   });
 
   tasks.forEach((task) => {
-    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.getBusinessObject)(task);
+    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.getBusinessObject)(task);
     const extensionElements = businessObject.get('extensionElements');
 
     if (!extensionElements) {
       return;
     }
 
-    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+    const values = extensionElements.get('values');
+    if (!values) {
+        return;
+    }
+
+    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
 
     if (!heatmapData) {
       return;
@@ -105,14 +171,19 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   }
 
   tasks.forEach((task) => {
-    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.getBusinessObject)(task);
+    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.getBusinessObject)(task);
     const extensionElements = businessObject.get('extensionElements');
 
     if (!extensionElements) {
       return;
     }
 
-    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+    const values = extensionElements.get('values');
+    if (!values) {
+        return;
+    }
+
+    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
 
     if (!heatmapData) {
       return;
@@ -139,6 +210,13 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
 Heatmap.prototype.getOrCreateHeatmapInstance = function() {
   if (!this.heatmapInstance) {
     const container = this._canvas.getContainer();
+
+    // Ensure no old canvas exists
+    const oldCanvas = container.querySelector('.heatmap-canvas');
+    if (oldCanvas) {
+      oldCanvas.remove();
+    }
+
     this.heatmapInstance = heatmap_js__WEBPACK_IMPORTED_MODULE_0___default().create({
       container: container,
       radius: 50,
@@ -151,6 +229,7 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
     heatmapCanvas.style.position = 'absolute';
     heatmapCanvas.style.top = 0;
     heatmapCanvas.style.left = 0;
+    heatmapCanvas.style.zIndex = -1;
   }
   return this.heatmapInstance;
 };
@@ -159,8 +238,120 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
 Heatmap.$inject = [
   'canvas',
   'elementRegistry',
-  'palette',
-  'eventBus'
+  'eventBus',
+  'tokenSimulationPalette'
+];
+
+
+/***/ }),
+
+/***/ "./client/HeatmapData.js":
+/*!*******************************!*\
+  !*** ./client/HeatmapData.js ***!
+  \*******************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (/* binding */ HeatmapData)
+/* harmony export */ });
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+
+
+function HeatmapData(eventBus, elementRegistry, modeling, moddle) {
+  this._eventBus = eventBus;
+  this._elementRegistry = elementRegistry;
+  this._modeling = modeling;
+  this._moddle = moddle;
+
+  // Listen for the custom event from TimeTracker to update the model
+  eventBus.on('heatmap.time.updated', ({ element, time }) => {
+    this.updateElementTime(element, time);
+  });
+
+  // Listen for the custom event from TimeTracker to clear all data
+  eventBus.on('heatmap.data.clear', () => {
+    this.clearAllHeatmapData();
+  });
+}
+
+HeatmapData.prototype.updateElementTime = function(element, time) {
+  const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
+
+  let extensionElements = businessObject.get('extensionElements');
+
+  if (!extensionElements) {
+    extensionElements = this._moddle.create('bpmn:ExtensionElements');
+
+    // Using modeling.updateProperties to ensure the change is undo/redo-able
+    this._modeling.updateProperties(element, { extensionElements });
+  }
+
+  // After updating properties, we need to get the latest business object
+  const newBusinessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
+  extensionElements = newBusinessObject.get('extensionElements');
+
+  let heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+
+  if (!heatmapData) {
+    heatmapData = this._moddle.create('heatmap:Data', { tiempoSimulacion: '0' });
+
+    // Use updateModdleProperties for adding to a list property
+    const currentValues = extensionElements.get('values') || [];
+    this._modeling.updateModdleProperties(element, extensionElements, {
+      values: [...currentValues, heatmapData]
+    });
+  }
+
+  // Get the latest heatmapData element after potential creation
+  const finalBusinessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
+  const finalExtensionElements = finalBusinessObject.get('extensionElements');
+  const finalHeatmapData = finalExtensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+
+  const currentTime = parseInt(finalHeatmapData.get('tiempoSimulacion'), 10) || 0;
+  const newTime = currentTime + time;
+
+  // Use updateModdleProperties to change the attribute on the custom element
+  this._modeling.updateModdleProperties(element, finalHeatmapData, {
+    tiempoSimulacion: String(newTime)
+  });
+
+  console.log(`[HeatmapData] Updated 'heatmap:tiempoSimulacion' to ${newTime} for ${element.id}`);
+};
+
+
+HeatmapData.prototype.clearAllHeatmapData = function() {
+  const elements = this._elementRegistry.filter(element => {
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
+  });
+
+  elements.forEach(element => {
+    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
+    const extensionElements = businessObject.get('extensionElements');
+
+    if (!extensionElements) {
+      return;
+    }
+
+    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+
+    if (heatmapData) {
+      // Set time to 0
+      this._modeling.updateModdleProperties(element, heatmapData, {
+        tiempoSimulacion: '0'
+      });
+    }
+  });
+
+  console.log('[HeatmapData] Cleared all heatmap:tiempoSimulacion attributes.');
+};
+
+HeatmapData.$inject = [
+  'eventBus',
+  'elementRegistry',
+  'modeling',
+  'moddle'
 ];
 
 
@@ -242,15 +433,12 @@ __webpack_require__.r(__webpack_exports__);
 
 const LOW_PRIORITY = 500;
 
-function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, modeling) {
+function TimeTracker(eventBus) {
   this._eventBus = eventBus;
-  this._bpmnjs = bpmnjs;
-  this._moddle = moddle;
-  this._elementRegistry = elementRegistry;
-  this._modeling = modeling;
 
   this.taskStartTimes = new Map();
 
+  // Listen for trace events to capture task entry and exit
   eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.TRACE_EVENT, LOW_PRIORITY, event => {
     const {
       element,
@@ -258,7 +446,7 @@ function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, modeling) {
       action
     } = event;
 
-    // We are only interested in tasks
+    // We are only interested in tasks and call activities
     if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:Task') && !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:CallActivity')) {
       return;
     }
@@ -269,36 +457,26 @@ function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, modeling) {
       this.taskStartTimes.set(taskKey, new Date().getTime());
       console.log(`[TimeTracker] Token entered task ${element.id}, scope ${scope.id}`);
     } else if (action === 'exit') {
-
       const startTime = this.taskStartTimes.get(taskKey);
 
-      // For the test, we'll just set a fixed time of 1 second on exit.
-      // This aligns with the user's request for the initial test.
-      const testDuration = 1000;
+      if (startTime) {
+        const endTime = new Date().getTime();
+        const duration = endTime - startTime;
 
-      const businessObject = element.businessObject;
+        // For the test, we'll use a fixed time of 1 second.
+        const testDuration = 1000;
 
-      let extensionElements = businessObject.get('extensionElements');
+        console.log(`[TimeTracker] Task ${element.id} executed. Duration: ${duration}ms. Emitting update event with value: ${testDuration}ms.`);
 
-      if (!extensionElements) {
-          extensionElements = this._moddle.create('bpmn:ExtensionElements');
-          businessObject.extensionElements = extensionElements;
+        // Fire an event with the element and the time, so another module can handle the moddle update.
+        this._eventBus.fire('heatmap.time.updated', {
+          element: element,
+          time: testDuration // In a real scenario, this would be `duration`
+        });
+
+        // Clean up the start time for this task instance
+        this.taskStartTimes.delete(taskKey);
       }
-
-      let heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
-
-      if (!heatmapData) {
-          heatmapData = this._moddle.create('heatmap:Data');
-          extensionElements.get('values').push(heatmapData);
-      }
-
-      // Set the simulation time to 1 second (1000 ms)
-      heatmapData.set('tiempoSimulacion', testDuration);
-
-      console.log(`[TimeTracker] Set 'heatmap:tiempoSimulacion' to ${testDuration} for ${element.id}`);
-
-      // Clean up the start time for this task instance
-      this.taskStartTimes.delete(taskKey);
     }
   });
 
@@ -307,31 +485,13 @@ function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, modeling) {
     this.taskStartTimes.clear();
     console.log('[TimeTracker] Cleared time tracking data.');
 
-    // Also clear the heatmap properties from all tasks
-    this._elementRegistry.forEach(element => {
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:CallActivity')) {
-        const businessObject = element.businessObject;
-        let extensionElements = businessObject.get('extensionElements');
-        if (extensionElements) {
-          const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
-
-          if (heatmapData) {
-            heatmapData.set('tiempoSimulacion', '0');
-          }
-        }
-      }
-    });
-
-    console.log('[TimeTracker] Cleared all heatmap:tiempoSimulacion attributes.');
+    // Fire an event to signal that all heatmap data should be cleared.
+    this._eventBus.fire('heatmap.data.clear');
   });
 }
 
 TimeTracker.$inject = [
-  'eventBus',
-  'bpmnjs',
-  'moddle',
-  'elementRegistry',
-  'modeling'
+  'eventBus'
 ];
 
 
@@ -13664,11 +13824,13 @@ var __webpack_exports__ = {};
   \**************************/
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! camunda-modeler-plugin-helpers */ "./node_modules/camunda-modeler-plugin-helpers/index.js");
-/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/bpmn-js-token-simulation/lib/modeler.js");
+/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/bpmn-js-token-simulation/lib/modeler.js");
 /* harmony import */ var _resources_heatmap_extension_json__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../resources/heatmap-extension.json */ "./resources/heatmap-extension.json");
 /* harmony import */ var _HideModelerElements__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./HideModelerElements */ "./client/HideModelerElements.js");
 /* harmony import */ var _Heatmap__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./Heatmap */ "./client/Heatmap.js");
 /* harmony import */ var _TimeTracker__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./TimeTracker */ "./client/TimeTracker.js");
+/* harmony import */ var _HeatmapData__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./HeatmapData */ "./client/HeatmapData.js");
+
 
 
 
@@ -13696,14 +13858,20 @@ const TimeTrackerPluginModule = {
   timeTracker: [ 'type', _TimeTracker__WEBPACK_IMPORTED_MODULE_4__["default"] ]
 };
 
+const HeatmapDataPluginModule = {
+  __init__: [ 'heatmapData' ],
+  heatmapData: [ 'type', _HeatmapData__WEBPACK_IMPORTED_MODULE_5__["default"] ]
+};
+
 // Register the BpmnJS Moddle Extension
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSModdleExtension)(_resources_heatmap_extension_json__WEBPACK_IMPORTED_MODULE_1__);
 
 // Register the BpmnJS modules
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_5__["default"]);
+(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_6__["default"]);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TokenSimulationPluginModule);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(HeatmapPluginModule);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TimeTrackerPluginModule);
+(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(HeatmapDataPluginModule);
 
 })();
 

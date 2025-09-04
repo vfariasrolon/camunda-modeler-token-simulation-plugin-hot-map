@@ -10,15 +10,12 @@ import {
 
 const LOW_PRIORITY = 500;
 
-export default function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, modeling) {
+export default function TimeTracker(eventBus) {
   this._eventBus = eventBus;
-  this._bpmnjs = bpmnjs;
-  this._moddle = moddle;
-  this._elementRegistry = elementRegistry;
-  this._modeling = modeling;
 
   this.taskStartTimes = new Map();
 
+  // Listen for trace events to capture task entry and exit
   eventBus.on(TRACE_EVENT, LOW_PRIORITY, event => {
     const {
       element,
@@ -26,7 +23,7 @@ export default function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, m
       action
     } = event;
 
-    // We are only interested in tasks
+    // We are only interested in tasks and call activities
     if (!is(element, 'bpmn:Task') && !is(element, 'bpmn:CallActivity')) {
       return;
     }
@@ -37,36 +34,26 @@ export default function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, m
       this.taskStartTimes.set(taskKey, new Date().getTime());
       console.log(`[TimeTracker] Token entered task ${element.id}, scope ${scope.id}`);
     } else if (action === 'exit') {
-
       const startTime = this.taskStartTimes.get(taskKey);
 
-      // For the test, we'll just set a fixed time of 1 second on exit.
-      // This aligns with the user's request for the initial test.
-      const testDuration = 1000;
+      if (startTime) {
+        const endTime = new Date().getTime();
+        const duration = endTime - startTime;
 
-      const businessObject = element.businessObject;
+        // For the test, we'll use a fixed time of 1 second.
+        const testDuration = 1000;
 
-      let extensionElements = businessObject.get('extensionElements');
+        console.log(`[TimeTracker] Task ${element.id} executed. Duration: ${duration}ms. Emitting update event with value: ${testDuration}ms.`);
 
-      if (!extensionElements) {
-          extensionElements = this._moddle.create('bpmn:ExtensionElements');
-          businessObject.extensionElements = extensionElements;
+        // Fire an event with the element and the time, so another module can handle the moddle update.
+        this._eventBus.fire('heatmap.time.updated', {
+          element: element,
+          time: testDuration // In a real scenario, this would be `duration`
+        });
+
+        // Clean up the start time for this task instance
+        this.taskStartTimes.delete(taskKey);
       }
-
-      let heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
-
-      if (!heatmapData) {
-          heatmapData = this._moddle.create('heatmap:Data');
-          extensionElements.get('values').push(heatmapData);
-      }
-
-      // Set the simulation time to 1 second (1000 ms)
-      heatmapData.set('tiempoSimulacion', testDuration);
-
-      console.log(`[TimeTracker] Set 'heatmap:tiempoSimulacion' to ${testDuration} for ${element.id}`);
-
-      // Clean up the start time for this task instance
-      this.taskStartTimes.delete(taskKey);
     }
   });
 
@@ -75,29 +62,11 @@ export default function TimeTracker(eventBus, bpmnjs, moddle, elementRegistry, m
     this.taskStartTimes.clear();
     console.log('[TimeTracker] Cleared time tracking data.');
 
-    // Also clear the heatmap properties from all tasks
-    this._elementRegistry.forEach(element => {
-      if (is(element, 'bpmn:Task') || is(element, 'bpmn:CallActivity')) {
-        const businessObject = element.businessObject;
-        let extensionElements = businessObject.get('extensionElements');
-        if (extensionElements) {
-          const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
-
-          if (heatmapData) {
-            heatmapData.set('tiempoSimulacion', '0');
-          }
-        }
-      }
-    });
-
-    console.log('[TimeTracker] Cleared all heatmap:tiempoSimulacion attributes.');
+    // Fire an event to signal that all heatmap data should be cleared.
+    this._eventBus.fire('heatmap.data.clear');
   });
 }
 
 TimeTracker.$inject = [
-  'eventBus',
-  'bpmnjs',
-  'moddle',
-  'elementRegistry',
-  'modeling'
+  'eventBus'
 ];

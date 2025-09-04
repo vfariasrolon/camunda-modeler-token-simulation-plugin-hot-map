@@ -1,8 +1,10 @@
 // client/Heatmap.js
 import h337 from 'heatmap.js';
+import { domify, event as domEvent } from 'min-dom';
 
 import {
-  RESET_SIMULATION_EVENT
+  RESET_SIMULATION_EVENT,
+  TOGGLE_MODE_EVENT
 } from 'bpmn-js-token-simulation/lib/util/EventHelper';
 
 import {
@@ -10,23 +12,28 @@ import {
   getBusinessObject
 } from 'bpmn-js/lib/util/ModelUtil';
 
+
 function FireIcon() {
   return '<i class="fa fa-fire"></i>';
+}
+
+function TestIcon() {
+  return '<i class="fa fa-flask"></i>';
 }
 
 export default function Heatmap(
     canvas,
     elementRegistry,
-    palette,
-    eventBus
+    eventBus,
+    tokenSimulationPalette
 ) {
   this._canvas = canvas;
   this._elementRegistry = elementRegistry;
-  this._palette = palette;
   this._eventBus = eventBus;
+  this._tokenSimulationPalette = tokenSimulationPalette;
   this.heatmapInstance = null;
 
-  palette.registerProvider(this);
+  this._init();
 
   // Clear heatmap on simulation reset
   eventBus.on(RESET_SIMULATION_EVENT, () => {
@@ -35,25 +42,79 @@ export default function Heatmap(
       console.log('[Heatmap] Cleared heatmap data on reset.');
     }
   });
-}
 
-Heatmap.prototype.getPaletteEntries = function(element) {
-  const self = this;
-
-  return {
-    'generate-heatmap': {
-      group: 'tools',
-      className: 'fa-fire',
-      title: 'Generate Heatmap from Simulation Times',
-      action: {
-        click: function(event) {
-          console.log('[Heatmap] Generating heatmap from properties...');
-          self.generateHeatmapFromProperties();
+  eventBus.on(TOGGLE_MODE_EVENT, event => {
+    if (!event.active) {
+      if (this.heatmapInstance) {
+        // Find the heatmap canvas and remove it
+        const container = this._canvas.getContainer();
+        const heatmapCanvas = container.querySelector('.heatmap-canvas');
+        if (heatmapCanvas) {
+          heatmapCanvas.remove();
         }
+        this.heatmapInstance = null;
+        console.log('[Heatmap] Heatmap instance removed on simulation toggle off.');
       }
     }
-  };
+  });
+}
+
+Heatmap.prototype._init = function() {
+  const self = this;
+
+  // 1. Generate Heatmap Button
+  const heatmapButton = domify(`
+    <div class="bts-entry" title="Generate Heatmap from Simulation Times">
+      ${ FireIcon() }
+    </div>
+  `);
+
+  domEvent.bind(heatmapButton, 'click', () => {
+    console.log('[Heatmap] Generating heatmap from properties...');
+    self.generateHeatmapFromProperties();
+  });
+
+  this._tokenSimulationPalette.addEntry(heatmapButton, 4);
+
+  // 2. Test Heatmap Button
+  const testButton = domify(`
+    <div class="bts-entry" title="Test Heatmap with Hardcoded Values">
+      ${ TestIcon() }
+    </div>
+  `);
+
+  domEvent.bind(testButton, 'click', () => {
+    console.log('[Heatmap] Testing heatmap with hardcoded values...');
+    self.setHardcodedTimesAndGenerate();
+  });
+
+  this._tokenSimulationPalette.addEntry(testButton, 5);
 };
+
+Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
+  // First, clear any existing data
+  this._eventBus.fire('heatmap.data.clear');
+
+  const tasks = this._elementRegistry.filter(element => {
+    return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
+  });
+
+  // Fire events to update the model for each task
+  tasks.forEach(task => {
+    this._eventBus.fire('heatmap.time.updated', {
+      element: task,
+      time: 1000 // Hardcoded 1 second
+    });
+  });
+
+  console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
+
+  // Use a timeout to allow the model updates to process before generating the heatmap
+  setTimeout(() => {
+    this.generateHeatmapFromProperties();
+  }, 100);
+};
+
 
 Heatmap.prototype.generateHeatmapFromProperties = function() {
   const heatmap = this.getOrCreateHeatmapInstance();
@@ -72,7 +133,12 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
       return;
     }
 
-    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+    const values = extensionElements.get('values');
+    if (!values) {
+        return;
+    }
+
+    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
 
     if (!heatmapData) {
       return;
@@ -99,7 +165,12 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
       return;
     }
 
-    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+    const values = extensionElements.get('values');
+    if (!values) {
+        return;
+    }
+
+    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
 
     if (!heatmapData) {
       return;
@@ -126,6 +197,13 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
 Heatmap.prototype.getOrCreateHeatmapInstance = function() {
   if (!this.heatmapInstance) {
     const container = this._canvas.getContainer();
+
+    // Ensure no old canvas exists
+    const oldCanvas = container.querySelector('.heatmap-canvas');
+    if (oldCanvas) {
+      oldCanvas.remove();
+    }
+
     this.heatmapInstance = h337.create({
       container: container,
       radius: 50,
@@ -138,6 +216,7 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
     heatmapCanvas.style.position = 'absolute';
     heatmapCanvas.style.top = 0;
     heatmapCanvas.style.left = 0;
+    heatmapCanvas.style.zIndex = -1;
   }
   return this.heatmapInstance;
 };
@@ -146,6 +225,6 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
 Heatmap.$inject = [
   'canvas',
   'elementRegistry',
-  'palette',
-  'eventBus'
+  'eventBus',
+  'tokenSimulationPalette'
 ];
