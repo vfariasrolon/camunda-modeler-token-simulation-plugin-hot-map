@@ -155,7 +155,8 @@ export default class Heatmap {
     this._isRandom = isRandom;
     const { dataPoints, max } = this._getHeatmapData(isRandom);
 
-    debugger; // Add debugger as requested by user
+    console.log('[Heatmap] Generated data:', { dataPoints, max });
+    debugger;
 
     this._heatmap.setData({ max: max, data: dataPoints });
     this._updateTransform();
@@ -180,13 +181,12 @@ export default class Heatmap {
       return;
     }
 
-    // Fix: Ensure the container has full dimensions
-    this._heatmapContainer = domify('<div class="heatmap-layer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></div>');
+    // Fix: Ensure the container has full dimensions and a z-index
+    this._heatmapContainer = domify('<div class="heatmap-layer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;"></div>');
     djsContainer.appendChild(this._heatmapContainer);
 
     this._heatmap = h337.create({ container: this._heatmapContainer });
 
-    // Fix: Address the willReadFrequently warning
     const heatmapCanvas = this._heatmapContainer.querySelector('.heatmap-canvas');
     if (heatmapCanvas) {
       heatmapCanvas.getContext('2d', { willReadFrequently: true });
