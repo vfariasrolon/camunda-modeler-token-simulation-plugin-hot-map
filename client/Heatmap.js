@@ -14,11 +14,11 @@ import {
 
 
 function FireIcon() {
-  return '<i class="fa fa-broom"></i>';
+  return '<i class="fa fa-eraser"></i>';
 }
 
 function TestIcon() {
-  return '<i class="fa fa-paint-brush"></i>';
+  return '<i class="fa fa-magic"></i>';
 }
 
 export default function Heatmap(
@@ -55,7 +55,7 @@ Heatmap.prototype._init = function() {
 
   // 1. Generate Heatmap Button
   const heatmapButton = domify(`
-    <div class="bts-entry" title="Generate Heatmap from Simulation Times">
+    <div class="bts-entry" title="Generate/Clear Heatmap">
       ${ FireIcon() }
     </div>
   `);
@@ -69,7 +69,7 @@ Heatmap.prototype._init = function() {
 
   // 2. Test Heatmap Button
   const testButton = domify(`
-    <div class="bts-entry" title="Test Heatmap with Hardcoded Values">
+    <div class="bts-entry" title="Generate Test Heatmap">
       ${ TestIcon() }
     </div>
   `);
