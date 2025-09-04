@@ -201,8 +201,10 @@ export default class Heatmap {
 
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
-      // Fix: Set canvas size to the full diagram size
-      const bbox = this._canvas.getAbsoluteBBox();
+      // Fix: Filter elements for BBox calculation to prevent crashes on sequence flows
+      const elementsForBBox = this._elementRegistry.filter(e => e.type !== 'bpmn:SequenceFlow');
+      const bbox = this._canvas.getAbsoluteBBox(elementsForBBox);
+
       this._heatmapCanvas.style.width = `${bbox.width}px`;
       this._heatmapCanvas.style.height = `${bbox.height}px`;
 
