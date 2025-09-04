@@ -129,7 +129,6 @@ export default class Heatmap {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
-    console.log('[Heatmap] Processing elements for heatmap data...');
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
 
@@ -140,7 +139,6 @@ export default class Heatmap {
       if (value > max) max = value;
 
       return {
-        // Make coordinates relative to the canvas's top-left corner (bbox)
         x: Math.round((element.x + element.width / 2) - bbox.x),
         y: Math.round((element.y + element.height / 2) - bbox.y),
         value: value,
@@ -166,9 +164,16 @@ export default class Heatmap {
       return;
     }
 
+    console.log('[Heatmap] Calculating BBox for elements:', elementsWithData.map(e => e.id));
     const bbox = this._canvas.getAbsoluteBBox(elementsWithData);
 
     console.log('[Heatmap] Canvas BBox:', bbox);
+
+    // Defensive check for NaN values from getAbsoluteBBox
+    if (isNaN(bbox.x) || isNaN(bbox.y) || isNaN(bbox.width) || isNaN(bbox.height)) {
+      console.error('[Heatmap] Bounding box calculation failed, returned NaN. Aborting heatmap draw.');
+      return;
+    }
 
     if (this._heatmapCanvas) {
       this._heatmapCanvas.style.width = `${bbox.width}px`;
