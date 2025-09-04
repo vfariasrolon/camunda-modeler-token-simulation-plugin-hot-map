@@ -8,6 +8,17 @@ module.exports = {
     path: path.resolve(__dirname, 'client'),
     filename: 'client.bundle.js'
   },
+  module: {
+    rules: [
+      {
+        test: /\.js$/,
+        exclude: /node_modules/,
+        use: {
+          loader: 'babel-loader'
+        }
+      }
+    ]
+  },
   plugins: [
     new CopyPlugin({
       patterns: [
