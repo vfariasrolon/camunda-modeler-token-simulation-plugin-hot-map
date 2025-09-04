@@ -142,9 +142,16 @@ export default class Heatmap {
     const elements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
+    console.log('[Heatmap] Processing elements for heatmap data...');
     const dataPoints = elements.map(element => {
       const value = isRandom ? this._getRandomInt(1, 100) : this._getSimulationTime(element);
+
+      if (!isRandom) {
+        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
+      }
+
       if (value > max) max = value;
+
       return {
         x: Math.round(element.x + element.width / 2),
         y: Math.round(element.y + element.height / 2),
