@@ -111,26 +111,18 @@ export default class Heatmap {
 
   _getSimulationTime(element) {
     const businessObject = element.businessObject;
-    let time = 0;
     if (!businessObject.extensionElements || !businessObject.extensionElements.values) {
       return 0;
     }
-
-    console.log(`[Heatmap] Checking element ${element.id}`);
     const properties = find(businessObject.extensionElements.values, v => is(v, 'camunda:Properties'));
     if (!properties || !properties.values) {
-      console.log(`[Heatmap] -> No <camunda:Properties> found.`);
       return 0;
     }
-
     const timeProperty = find(properties.values, p => p.name === 'tiempoSimulacion');
     if (!timeProperty || !timeProperty.value) {
-      console.log(`[Heatmap] -> No 'tiempoSimulacion' property found.`);
       return 0;
     }
-
-    time = parseInt(timeProperty.value, 10);
-    console.log(`[Heatmap] -> Found time: ${time}`);
+    const time = parseInt(timeProperty.value, 10);
     return isNaN(time) ? 0 : time;
   }
 
@@ -139,15 +131,19 @@ export default class Heatmap {
   }
 
   _getHeatmapData(isRandom) {
-    const elements = this._elementRegistry.filter(element => this._isSupported(element));
+    const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
+    const elementsWithData = [];
 
     console.log('[Heatmap] Processing elements for heatmap data...');
-    const dataPoints = elements.map(element => {
+    const dataPoints = allSupportedElements.map(element => {
       const value = isRandom ? this._getRandomInt(1, 100) : this._getSimulationTime(element);
 
-      if (!isRandom) {
-        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
+      if (value > 0) {
+        elementsWithData.push(element);
+        if (!isRandom) {
+          console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
+        }
       }
 
       if (value > max) max = value;
@@ -160,7 +156,7 @@ export default class Heatmap {
       };
     }).filter(point => point.value > 0);
 
-    return { dataPoints, max: max || 100 };
+    return { dataPoints, max: max || 100, elements: elementsWithData };
   }
 
   _updateDataAndRedraw(isRandom) {
@@ -170,9 +166,15 @@ export default class Heatmap {
       return;
     }
     this._isRandom = isRandom;
-    const { dataPoints, max } = this._getHeatmapData(isRandom);
+    const { dataPoints, max, elements } = this._getHeatmapData(isRandom);
 
     console.log('[Heatmap] Generated data:', { dataPoints, max });
+
+    if (this._heatmapCanvas && elements.length > 0) {
+      const bbox = this._canvas.getAbsoluteBBox(elements);
+      this._heatmapCanvas.style.width = `${bbox.width}px`;
+      this._heatmapCanvas.style.height = `${bbox.height}px`;
+    }
 
     this._heatmap.setData({ max: max, data: dataPoints });
     this._updateTransform();
@@ -201,13 +203,6 @@ export default class Heatmap {
 
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
-      // Fix: Filter elements for BBox calculation to prevent crashes on sequence flows
-      const elementsForBBox = this._elementRegistry.filter(e => e.type !== 'bpmn:SequenceFlow');
-      const bbox = this._canvas.getAbsoluteBBox(elementsForBBox);
-
-      this._heatmapCanvas.style.width = `${bbox.width}px`;
-      this._heatmapCanvas.style.height = `${bbox.height}px`;
-
       this._heatmapCanvas.style.pointerEvents = 'none';
       this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
