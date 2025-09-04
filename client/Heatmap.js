@@ -46,8 +46,8 @@ export default function Heatmap(
   this._init();
 
   // Update heatmap transform on viewbox change
-  eventBus.on('canvas.viewbox.changed', ({ viewbox }) => {
-    this.updateTransform(viewbox);
+  eventBus.on('canvas.viewbox.changed', () => {
+    this.updateTransform();
   });
 
   // Clear heatmap on simulation reset
@@ -59,15 +59,21 @@ export default function Heatmap(
   eventBus.on(TOGGLE_MODE_EVENT, event => {
     if (!event.active) {
       this.removeHeatmap();
+    } else {
+      // When simulation starts, apply the current transform
+      this.updateTransform();
     }
   });
 }
 
-Heatmap.prototype.updateTransform = function(viewbox) {
+Heatmap.prototype.updateTransform = function() {
   if (!this.heatmapCanvas) {
     return;
   }
+
+  const viewbox = this._canvas.viewbox();
   const { scale, x, y } = viewbox;
+
   this.heatmapCanvas.style.transform = `matrix(${scale}, 0, 0, ${scale}, ${x}, ${y})`;
 };
 
@@ -104,167 +110,130 @@ Heatmap.prototype._init = function() {
 };
 
 Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
-  const heatmap = this.getOrCreateHeatmapInstance();
-  const dataPoints = [];
-  const elementTimes = new Map();
-  let maxTime = 0;
+  // Use a timeout to ensure any pending model updates (like clearing) are done
+  setTimeout(() => {
+    const dataPoints = [];
+    const elementTimes = new Map();
+    let maxTime = 0;
 
-  // Test button should not be active during simulation
-  if (this._toggleMode.active) {
-    return;
-  }
-
-  const allElements = this._elementRegistry.getAll();
-
-  const nodesToColor = allElements.filter(element => {
-    return isAny(element, [
-      'bpmn:Task',
-      'bpmn:CallActivity',
-      'bpmn:StartEvent',
-      'bpmn:EndEvent',
-      'bpmn:ExclusiveGateway',
-      'bpmn:ParallelGateway',
-      'bpmn:InclusiveGateway',
-      'bpmn:EventBasedGateway',
-      'bpmn:IntermediateCatchEvent',
-      'bpmn:SubProcess'
-    ]);
-  });
-
-  const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
-
-  // 1. Generate random times for nodes and find the max
-  nodesToColor.forEach(node => {
-    const time = Math.floor(Math.random() * 100) + 1; // Random time between 1 and 100
-    elementTimes.set(node.id, time);
-    if (time > maxTime) {
-      maxTime = time;
-    }
-  });
-
-  if (maxTime === 0) {
-    this.clearHeatmap();
-    return;
-  }
-
-  // 2. Create data points for nodes
-  nodesToColor.forEach(node => {
-    const time = elementTimes.get(node.id);
-    const x = Math.round(node.x + node.width / 2);
-    const y = Math.round(node.y + node.height / 2);
-    const value = Math.round((time / maxTime) * 100);
-    dataPoints.push({ x, y, value, radius: 40 });
-  });
-
-  // 3. Generate data points for sequence flows
-  flows.forEach(flow => {
-    const sourceTime = flow.source && elementTimes.get(flow.source.id);
-    if (sourceTime) {
-      const value = Math.round((sourceTime / maxTime) * 100);
-      const pathPoints = getPointsAlongPath(flow.waypoints);
-      pathPoints.forEach(point => {
-        dataPoints.push({ x: point.x, y: point.y, value, radius: 15 });
-      });
-    }
-  });
-
-  console.log('[Heatmap] Generated hardcoded data points:', dataPoints);
-
-  heatmap.setData({
-    max: 100, // We normalized our values to be between 0 and 100
-    data: dataPoints
-  });
-};
-
-
-Heatmap.prototype.generateHeatmapFromProperties = function() {
-  const heatmap = this.getOrCreateHeatmapInstance();
-  const dataPoints = [];
-  const elementTimes = new Map();
-  let maxTime = 0;
-
-  const allElements = this._elementRegistry.getAll();
-  const nodesToColor = allElements.filter(element => {
-    return isAny(element, [
-      'bpmn:Task',
-      'bpmn:CallActivity',
-      'bpmn:StartEvent',
-      'bpmn:EndEvent',
-      'bpmn:ExclusiveGateway',
-      'bpmn:ParallelGateway',
-      'bpmn:InclusiveGateway',
-      'bpmn:EventBasedGateway',
-      'bpmn:IntermediateCatchEvent',
-      'bpmn:SubProcess'
-    ]);
-  });
-  const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
-
-  // 1. Get all times and find max
-  nodesToColor.forEach((node) => {
-    const businessObject = getBusinessObject(node);
-    const extensionElements = businessObject.get('extensionElements');
-
-    if (!extensionElements) {
+    if (this._toggleMode.active) {
       return;
     }
 
-    const values = extensionElements.get('values');
-    if (!values) {
-        return;
-    }
+    const allElements = this._elementRegistry.getAll();
+    const nodesToColor = allElements.filter(element => isAny(element, [
+      'bpmn:Task', 'bpmn:CallActivity', 'bpmn:StartEvent', 'bpmn:EndEvent',
+      'bpmn:ExclusiveGateway', 'bpmn:ParallelGateway', 'bpmn:InclusiveGateway',
+      'bpmn:EventBasedGateway', 'bpmn:IntermediateCatchEvent', 'bpmn:SubProcess'
+    ]));
+    const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
 
-    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
-
-    if (!heatmapData) {
-      return;
-    }
-
-    const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
-
-    if (time > 0) {
+    nodesToColor.forEach(node => {
+      const time = Math.floor(Math.random() * 100) + 1;
       elementTimes.set(node.id, time);
-      if (time > maxTime) {
-        maxTime = time;
-      }
+      if (time > maxTime) maxTime = time;
+    });
+
+    if (maxTime === 0) {
+      this.clearHeatmap();
+      return;
     }
-  });
 
-  if (maxTime === 0) {
-    this.clearHeatmap();
-    console.log('[Heatmap] No simulation data found. Clearing heatmap.');
-    return;
-  }
+    const bbox = this._canvas.getAbsoluteBBox();
+    const heatmap = this.getOrCreateHeatmapInstance(bbox);
 
-  // 2. Generate data points for nodes
-  nodesToColor.forEach((node) => {
-    const time = elementTimes.get(node.id) || 0;
-    if (time > 0) {
-      const x = Math.round(node.x + node.width / 2);
-      const y = Math.round(node.y + node.height / 2);
+    nodesToColor.forEach(node => {
+      const time = elementTimes.get(node.id);
+      const x = Math.round(node.x + node.width / 2) - bbox.x;
+      const y = Math.round(node.y + node.height / 2) - bbox.y;
       const value = Math.round((time / maxTime) * 100);
       dataPoints.push({ x, y, value, radius: 40 });
+    });
+
+    flows.forEach(flow => {
+      const sourceTime = flow.source && elementTimes.get(flow.source.id);
+      if (sourceTime) {
+        const value = Math.round((sourceTime / maxTime) * 100);
+        const pathPoints = getPointsAlongPath(flow.waypoints);
+        pathPoints.forEach(point => {
+          dataPoints.push({ x: point.x - bbox.x, y: point.y - bbox.y, value, radius: 15 });
+        });
+      }
+    });
+
+    console.log('[Heatmap] Generated hardcoded data points:', dataPoints);
+    heatmap.setData({ max: 100, data: dataPoints });
+    this.updateTransform(); // ensure transform is correct after creation
+  }, 0);
+};
+
+Heatmap.prototype.generateHeatmapFromProperties = function() {
+  // Use a timeout to ensure any pending model updates are done
+  setTimeout(() => {
+    const dataPoints = [];
+    const elementTimes = new Map();
+    let maxTime = 0;
+
+    const allElements = this._elementRegistry.getAll();
+    const nodesToColor = allElements.filter(element => isAny(element, [
+      'bpmn:Task', 'bpmn:CallActivity', 'bpmn:StartEvent', 'bpmn:EndEvent',
+      'bpmn:ExclusiveGateway', 'bpmn:ParallelGateway', 'bpmn:InclusiveGateway',
+      'bpmn:EventBasedGateway', 'bpmn:IntermediateCatchEvent', 'bpmn:SubProcess'
+    ]));
+    const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
+
+    nodesToColor.forEach((node) => {
+      const businessObject = getBusinessObject(node);
+      const extensionElements = businessObject.get('extensionElements');
+      if (extensionElements) {
+        const values = extensionElements.get('values');
+        if (values) {
+          const heatmapData = values.find(v => v.$type === 'heatmap:Data');
+          if (heatmapData) {
+            const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
+            if (time > 0) {
+              elementTimes.set(node.id, time);
+              if (time > maxTime) maxTime = time;
+            }
+          }
+        }
+      }
+    });
+
+    if (maxTime === 0) {
+      this.clearHeatmap();
+      console.log('[Heatmap] No simulation data found. Clearing heatmap.');
+      return;
     }
-  });
 
-  // 3. Generate data points for sequence flows
-  flows.forEach(flow => {
-    const sourceTime = flow.source && elementTimes.get(flow.source.id);
-    if (sourceTime) {
-      const value = Math.round((sourceTime / maxTime) * 100);
-      const pathPoints = getPointsAlongPath(flow.waypoints);
-      pathPoints.forEach(point => {
-        dataPoints.push({ x: point.x, y: point.y, value, radius: 15 });
-      });
-    }
-  });
+    const bbox = this._canvas.getAbsoluteBBox();
+    const heatmap = this.getOrCreateHeatmapInstance(bbox);
 
-  console.log('[Heatmap] Generated data points:', dataPoints);
+    nodesToColor.forEach((node) => {
+      const time = elementTimes.get(node.id) || 0;
+      if (time > 0) {
+        const x = Math.round(node.x + node.width / 2) - bbox.x;
+        const y = Math.round(node.y + node.height / 2) - bbox.y;
+        const value = Math.round((time / maxTime) * 100);
+        dataPoints.push({ x, y, value, radius: 40 });
+      }
+    });
 
-  heatmap.setData({
-    max: 100, // We normalized our values to be between 0 and 100
-    data: dataPoints
-  });
+    flows.forEach(flow => {
+      const sourceTime = flow.source && elementTimes.get(flow.source.id);
+      if (sourceTime) {
+        const value = Math.round((sourceTime / maxTime) * 100);
+        const pathPoints = getPointsAlongPath(flow.waypoints);
+        pathPoints.forEach(point => {
+          dataPoints.push({ x: point.x - bbox.x, y: point.y - bbox.y, value, radius: 15 });
+        });
+      }
+    });
+
+    console.log('[Heatmap] Generated data points:', dataPoints);
+    heatmap.setData({ max: 100, data: dataPoints });
+    this.updateTransform(); // ensure transform is correct after creation
+  }, 0);
 };
 
 Heatmap.prototype.clearHeatmap = function() {
@@ -282,15 +251,15 @@ Heatmap.prototype.removeHeatmap = function() {
       heatmapCanvas.remove();
     }
     this.heatmapInstance = null;
+    this.heatmapCanvas = null;
     console.log('[Heatmap] Heatmap instance removed.');
   }
 };
 
-Heatmap.prototype.getOrCreateHeatmapInstance = function() {
+Heatmap.prototype.getOrCreateHeatmapInstance = function(bbox) {
   if (!this.heatmapInstance) {
     const container = this._canvas.getContainer();
 
-    // Ensure no old canvas exists
     const oldCanvas = container.querySelector('.heatmap-canvas');
     if (oldCanvas) {
       oldCanvas.remove();
@@ -303,12 +272,25 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
       minOpacity: 0,
       blur: .90
     });
+
     this.heatmapCanvas = container.querySelector('.heatmap-canvas');
-    this.heatmapCanvas.style.pointerEvents = 'none';
+
+    // Set canvas dimensions and position based on diagram bounding box
+    this.heatmapCanvas.width = bbox.width;
+    this.heatmapCanvas.height = bbox.height;
     this.heatmapCanvas.style.position = 'absolute';
-    this.heatmapCanvas.style.top = 0;
-    this.heatmapCanvas.style.left = 0;
-    this.heatmapCanvas.style.zIndex = 0; // Put it on the same level as the diagram grid
+    this.heatmapCanvas.style.left = `${bbox.x}px`;
+    this.heatmapCanvas.style.top = `${bbox.y}px`;
+    this.heatmapCanvas.style.pointerEvents = 'none';
+    this.heatmapCanvas.style.zIndex = 1;
+    this.heatmapCanvas.style.transformOrigin = 'top left';
+  } else {
+    // Update existing canvas size if diagram has changed
+    const bbox = this._canvas.getAbsoluteBBox();
+    this.heatmapCanvas.width = bbox.width;
+    this.heatmapCanvas.height = bbox.height;
+    this.heatmapCanvas.style.left = `${bbox.x}px`;
+    this.heatmapCanvas.style.top = `${bbox.y}px`;
   }
   return this.heatmapInstance;
 };
@@ -325,7 +307,7 @@ Heatmap.$inject = [
 
 function getPointsAlongPath(waypoints) {
   const points = [];
-  const density = 5; // Add a point every 5 pixels
+  const density = 5;
 
   for (let i = 0; i < waypoints.length - 1; i++) {
     const p1 = waypoints[i];
