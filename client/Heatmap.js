@@ -45,7 +45,6 @@ export default class Heatmap {
 
     this._heatmap = null;
     this._heatmapCanvas = null;
-    this._isRandom = false;
 
     this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
 
@@ -64,21 +63,23 @@ export default class Heatmap {
   }
 
   _init() {
-    const heatmapButton = domify(`
+    // Button to GENERATE the heatmap from properties
+    const generateButton = domify(`
       <div class="bts-entry" title="Generate Heatmap from Extension Properties">
-        ${BroomIcon()}
-      </div>
-    `);
-    domEvent.bind(heatmapButton, 'click', () => this.showHeatmapFromProperties());
-    this._tokenSimulationPalette.addEntry(heatmapButton, 4);
-
-    const testButton = domify(`
-      <div class="bts-entry" title="Generate Test Heatmap">
         ${BrushIcon()}
       </div>
     `);
-    domEvent.bind(testButton, 'click', () => this.generateRandomData());
-    this._tokenSimulationPalette.addEntry(testButton, 5);
+    domEvent.bind(generateButton, 'click', () => this.showHeatmapFromProperties());
+    this._tokenSimulationPalette.addEntry(generateButton, 4);
+
+    // Button to CLEAR the heatmap
+    const clearButton = domify(`
+      <div class="bts-entry" title="Clear Heatmap">
+        ${BroomIcon()}
+      </div>
+    `);
+    domEvent.bind(clearButton, 'click', () => this.destroyHeatmap());
+    this._tokenSimulationPalette.addEntry(clearButton, 5);
   }
 
   _debounce(func, delay) {
@@ -126,24 +127,18 @@ export default class Heatmap {
     return isNaN(time) ? 0 : time;
   }
 
-  _getRandomInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-
-  _getHeatmapData(isRandom) {
+  _getHeatmapData() {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
     const elementsWithData = [];
 
     console.log('[Heatmap] Processing elements for heatmap data...');
     const dataPoints = allSupportedElements.map(element => {
-      const value = isRandom ? this._getRandomInt(1, 100) : this._getSimulationTime(element);
+      const value = this._getSimulationTime(element);
 
       if (value > 0) {
         elementsWithData.push(element);
-        if (!isRandom) {
-          console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
-        }
+        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
       }
 
       if (value > max) max = value;
@@ -159,14 +154,14 @@ export default class Heatmap {
     return { dataPoints, max: max || 100, elements: elementsWithData };
   }
 
-  _updateDataAndRedraw(isRandom) {
+  _updateDataAndRedraw() {
     if (!this._heatmap) return;
     if (this._toggleMode.active) {
       console.warn('[Heatmap] Please stop simulation before generating a heatmap.');
       return;
     }
-    this._isRandom = isRandom;
-    const { dataPoints, max, elements } = this._getHeatmapData(isRandom);
+
+    const { dataPoints, max, elements } = this._getHeatmapData();
 
     console.log('[Heatmap] Generated data:', { dataPoints, max });
 
@@ -174,6 +169,8 @@ export default class Heatmap {
       const bbox = this._canvas.getAbsoluteBBox(elements);
       this._heatmapCanvas.style.width = `${bbox.width}px`;
       this._heatmapCanvas.style.height = `${bbox.height}px`;
+      this._heatmapCanvas.style.top = `${bbox.y}px`;
+      this._heatmapCanvas.style.left = `${bbox.x}px`;
     }
 
     this._heatmap.setData({ max: max, data: dataPoints });
@@ -181,13 +178,11 @@ export default class Heatmap {
   }
 
   showHeatmapFromProperties() {
-    if (!this._heatmap) this.createHeatmap();
-    this._updateDataAndRedraw(false);
-  }
-
-  generateRandomData() {
-    if (!this._heatmap) this.createHeatmap();
-    this._updateDataAndRedraw(true);
+    if (!this._heatmap) {
+      this.createHeatmap();
+    }
+    // We always redraw, in case properties have changed
+    this._updateDataAndRedraw();
   }
 
   createHeatmap() {
@@ -220,12 +215,6 @@ export default class Heatmap {
     this._heatmap = null;
     this._heatmapCanvas = null;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
-  }
-
-  clear() {
-    if (this._heatmap) {
-      this._heatmap.setData({ max: 0, data: [] });
-    }
   }
 }
 
