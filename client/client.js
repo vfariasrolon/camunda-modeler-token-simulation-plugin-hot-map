@@ -5,11 +5,18 @@ import {
 
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
+// properties-panel
+import {
+  BpmnPropertiesPanelModule,
+  BpmnPropertiesProviderModule,
+} from 'bpmn-js-properties-panel';
+
 import HeatmapExtension from '../resources/heatmap-extension.json';
 import HideModelerElements from './HideModelerElements';
 import Heatmap from './Heatmap';
 import TimeTracker from './TimeTracker';
 import HeatmapData from './HeatmapData';
+import HeatmapPropertiesProviderModule from './properties-panel';
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
@@ -40,3 +47,5 @@ registerBpmnJSPlugin(TokenSimulationPluginModule);
 registerBpmnJSPlugin(HeatmapPluginModule);
 registerBpmnJSPlugin(TimeTrackerPluginModule);
 registerBpmnJSPlugin(HeatmapDataPluginModule);
+registerBpmnJSPlugin(BpmnPropertiesPanelModule);
+registerBpmnJSPlugin(HeatmapPropertiesProviderModule);
