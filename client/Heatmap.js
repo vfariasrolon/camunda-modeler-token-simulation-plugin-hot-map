@@ -44,7 +44,7 @@ export default class Heatmap {
     this._toggleMode = toggleMode;
 
     this._heatmap = null;
-    this._heatmapContainer = null;
+    this._heatmapCanvas = null; // Will store the canvas element created by heatmap.js
     this._isRandom = false;
 
     this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
@@ -91,13 +91,13 @@ export default class Heatmap {
   }
 
   _updateTransform() {
-    if (!this._heatmapContainer) {
+    if (!this._heatmapCanvas) {
       return;
     }
-    const overlayContainer = query('.djs-overlay-container', this._canvas.getContainer());
+    const overlayContainer = query('.djs-overlay-container');
     if (overlayContainer) {
-      this._heatmapContainer.style.transform = overlayContainer.style.transform;
-      this._heatmapContainer.style.transformOrigin = overlayContainer.style.transformOrigin;
+      this._heatmapCanvas.style.transform = overlayContainer.style.transform;
+      this._heatmapCanvas.style.transformOrigin = overlayContainer.style.transformOrigin;
     }
   }
 
@@ -156,7 +156,6 @@ export default class Heatmap {
     const { dataPoints, max } = this._getHeatmapData(isRandom);
 
     console.log('[Heatmap] Generated data:', { dataPoints, max });
-    debugger;
 
     this._heatmap.setData({ max: max, data: dataPoints });
     this._updateTransform();
@@ -173,38 +172,36 @@ export default class Heatmap {
   }
 
   createHeatmap() {
-    const container = this._canvas.getContainer();
     const djsContainer = query('.djs-container');
-
     if (!djsContainer) {
-      console.error('[Heatmap] Could not find .djs-container element to append heatmap to.');
+      console.error('[Heatmap] Could not find .djs-container to initialize heatmap.');
       return;
     }
 
-    // Fix: Ensure the container has full dimensions and a z-index
-    this._heatmapContainer = domify('<div class="heatmap-layer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;"></div>');
-    djsContainer.appendChild(this._heatmapContainer);
+    this._heatmap = h337.create({
+      container: djsContainer
+    });
 
-    this._heatmap = h337.create({ container: this._heatmapContainer });
-
-    const heatmapCanvas = this._heatmapContainer.querySelector('.heatmap-canvas');
-    if (heatmapCanvas) {
-      heatmapCanvas.getContext('2d', { willReadFrequently: true });
+    this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
+    if (this._heatmapCanvas) {
+      this._heatmapCanvas.style.pointerEvents = 'none';
+      this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
 
-    domClasses(container).add('heatmap-shown');
+    domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   destroyHeatmap() {
     if (!this._heatmap) return;
-    const container = this._canvas.getContainer();
-    this.clear();
-    if (this._heatmapContainer && this._heatmapContainer.parentNode) {
-      this._heatmapContainer.parentNode.removeChild(this._heatmapContainer);
+
+    // The heatmap instance is gone, so we manually find and remove the canvas
+    if (this._heatmapCanvas && this._heatmapCanvas.parentNode) {
+      this._heatmapCanvas.parentNode.removeChild(this._heatmapCanvas);
     }
+
     this._heatmap = null;
-    this._heatmapContainer = null;
-    domClasses(container).remove('heatmap-shown');
+    this._heatmapCanvas = null;
+    domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
   clear() {
