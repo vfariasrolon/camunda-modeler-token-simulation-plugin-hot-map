@@ -212,7 +212,9 @@ export default class Heatmap {
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
       // Sizing the canvas to the full diagram dimensions ONCE
-      const allShapes = this._elementRegistry.filter(e => !!e.width);
+      const allShapes = this._elementRegistry.filter(e =>
+        e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
+      );
       if (allShapes.length > 0) {
         const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
         console.log('[Heatmap] Sizing canvas to BBox:', bbox);
