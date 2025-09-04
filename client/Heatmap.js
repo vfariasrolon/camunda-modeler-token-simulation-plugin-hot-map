@@ -41,8 +41,14 @@ export default function Heatmap(
   this._tokenSimulationPalette = tokenSimulationPalette;
   this._toggleMode = toggleMode;
   this.heatmapInstance = null;
+  this.heatmapCanvas = null;
 
   this._init();
+
+  // Update heatmap transform on viewbox change
+  eventBus.on('canvas.viewbox.changed', ({ viewbox }) => {
+    this.updateTransform(viewbox);
+  });
 
   // Clear heatmap on simulation reset
   eventBus.on(RESET_SIMULATION_EVENT, () => {
@@ -56,6 +62,14 @@ export default function Heatmap(
     }
   });
 }
+
+Heatmap.prototype.updateTransform = function(viewbox) {
+  if (!this.heatmapCanvas) {
+    return;
+  }
+  const { scale, x, y } = viewbox;
+  this.heatmapCanvas.style.transform = `matrix(${scale}, 0, 0, ${scale}, ${x}, ${y})`;
+};
 
 Heatmap.prototype._init = function() {
   const self = this;
@@ -111,7 +125,9 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
       'bpmn:ExclusiveGateway',
       'bpmn:ParallelGateway',
       'bpmn:InclusiveGateway',
-      'bpmn:EventBasedGateway'
+      'bpmn:EventBasedGateway',
+      'bpmn:IntermediateCatchEvent',
+      'bpmn:SubProcess'
     ]);
   });
 
@@ -168,12 +184,25 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   let maxTime = 0;
 
   const allElements = this._elementRegistry.getAll();
-  const tasks = allElements.filter(element => isAny(element, ['bpmn:Task', 'bpmn:CallActivity']));
+  const nodesToColor = allElements.filter(element => {
+    return isAny(element, [
+      'bpmn:Task',
+      'bpmn:CallActivity',
+      'bpmn:StartEvent',
+      'bpmn:EndEvent',
+      'bpmn:ExclusiveGateway',
+      'bpmn:ParallelGateway',
+      'bpmn:InclusiveGateway',
+      'bpmn:EventBasedGateway',
+      'bpmn:IntermediateCatchEvent',
+      'bpmn:SubProcess'
+    ]);
+  });
   const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
 
   // 1. Get all times and find max
-  tasks.forEach((task) => {
-    const businessObject = getBusinessObject(task);
+  nodesToColor.forEach((node) => {
+    const businessObject = getBusinessObject(node);
     const extensionElements = businessObject.get('extensionElements');
 
     if (!extensionElements) {
@@ -194,7 +223,7 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
     const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
 
     if (time > 0) {
-      elementTimes.set(task.id, time);
+      elementTimes.set(node.id, time);
       if (time > maxTime) {
         maxTime = time;
       }
@@ -207,12 +236,12 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
     return;
   }
 
-  // 2. Generate data points for tasks
-  tasks.forEach((task) => {
-    const time = elementTimes.get(task.id) || 0;
+  // 2. Generate data points for nodes
+  nodesToColor.forEach((node) => {
+    const time = elementTimes.get(node.id) || 0;
     if (time > 0) {
-      const x = Math.round(task.x + task.width / 2);
-      const y = Math.round(task.y + task.height / 2);
+      const x = Math.round(node.x + node.width / 2);
+      const y = Math.round(node.y + node.height / 2);
       const value = Math.round((time / maxTime) * 100);
       dataPoints.push({ x, y, value, radius: 40 });
     }
@@ -274,12 +303,12 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
       minOpacity: 0,
       blur: .90
     });
-    const heatmapCanvas = container.querySelector('.heatmap-canvas');
-    heatmapCanvas.style.pointerEvents = 'none';
-    heatmapCanvas.style.position = 'absolute';
-    heatmapCanvas.style.top = 0;
-    heatmapCanvas.style.left = 0;
-    heatmapCanvas.style.zIndex = 1000; // Put it in front of the diagram elements
+    this.heatmapCanvas = container.querySelector('.heatmap-canvas');
+    this.heatmapCanvas.style.pointerEvents = 'none';
+    this.heatmapCanvas.style.position = 'absolute';
+    this.heatmapCanvas.style.top = 0;
+    this.heatmapCanvas.style.left = 0;
+    this.heatmapCanvas.style.zIndex = 0; // Put it on the same level as the diagram grid
   }
   return this.heatmapInstance;
 };

@@ -10,6 +10,7 @@ import HideModelerElements from './HideModelerElements';
 import Heatmap from './Heatmap';
 import TimeTracker from './TimeTracker';
 import HeatmapData from './HeatmapData';
+import HeatmapPropertiesProvider from './properties/HeatmapPropertiesProvider';
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
@@ -31,6 +32,11 @@ const HeatmapDataPluginModule = {
   heatmapData: [ 'type', HeatmapData ]
 };
 
+const HeatmapPropertiesModule = {
+  __init__: [ 'heatmapPropertiesProvider' ],
+  heatmapPropertiesProvider: [ 'type', HeatmapPropertiesProvider ]
+};
+
 // Register the BpmnJS Moddle Extension
 registerBpmnJSModdleExtension(HeatmapExtension);
 
@@ -40,3 +46,4 @@ registerBpmnJSPlugin(TokenSimulationPluginModule);
 registerBpmnJSPlugin(HeatmapPluginModule);
 registerBpmnJSPlugin(TimeTrackerPluginModule);
 registerBpmnJSPlugin(HeatmapDataPluginModule);
+registerBpmnJSPlugin(HeatmapPropertiesModule);

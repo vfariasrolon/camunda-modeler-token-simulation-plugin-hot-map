@@ -93,7 +93,18 @@ HeatmapData.prototype.clearAllHeatmapData = function() {
   }
 
   const elements = this._elementRegistry.filter(element => {
-    return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
+    return isAny(element, [
+      'bpmn:Task',
+      'bpmn:CallActivity',
+      'bpmn:StartEvent',
+      'bpmn:EndEvent',
+      'bpmn:ExclusiveGateway',
+      'bpmn:ParallelGateway',
+      'bpmn:InclusiveGateway',
+      'bpmn:EventBasedGateway',
+      'bpmn:IntermediateCatchEvent',
+      'bpmn:SubProcess'
+    ]);
   });
 
   elements.forEach(element => {
