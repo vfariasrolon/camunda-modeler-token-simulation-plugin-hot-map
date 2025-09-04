@@ -4,16 +4,13 @@ import {
 } from 'camunda-modeler-plugin-helpers';
 
 import TokenSimulationModule from 'bpmn-js-token-simulation';
+
 import HeatmapExtension from '../resources/heatmap-extension.json';
 import HideModelerElements from './HideModelerElements';
-import HeatmapModule from './Heatmap';
+import Heatmap from './Heatmap';
 import TimeTracker from './TimeTracker';
 import HeatmapData from './HeatmapData';
 
-// Note: We register the HeatmapModule as a separate plugin
-// to ensure it loads correctly, based on our debugging.
-// The HeatmapModule itself will no longer depend on the token simulation
-// but will provide its own palette button.
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
   hideModelerElements: [ 'type', HideModelerElements ]
@@ -21,7 +18,7 @@ const TokenSimulationPluginModule = {
 
 const HeatmapPluginModule = {
   __init__: [ 'heatmap' ],
-  heatmap: [ 'type', HeatmapModule ]
+  heatmap: [ 'type', Heatmap ]
 };
 
 const TimeTrackerPluginModule = {

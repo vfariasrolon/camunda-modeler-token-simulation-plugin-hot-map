@@ -25,36 +25,27 @@ export default function Heatmap(
     canvas,
     elementRegistry,
     eventBus,
-    tokenSimulationPalette
+    tokenSimulationPalette,
+    toggleMode
 ) {
   this._canvas = canvas;
   this._elementRegistry = elementRegistry;
   this._eventBus = eventBus;
   this._tokenSimulationPalette = tokenSimulationPalette;
+  this._toggleMode = toggleMode;
   this.heatmapInstance = null;
 
   this._init();
 
   // Clear heatmap on simulation reset
   eventBus.on(RESET_SIMULATION_EVENT, () => {
-    if (this.heatmapInstance) {
-      this.heatmapInstance.setData({ max: 1, data: [] });
-      console.log('[Heatmap] Cleared heatmap data on reset.');
-    }
+    this.clearHeatmap();
   });
 
+  // Clear and remove heatmap when simulation is toggled off
   eventBus.on(TOGGLE_MODE_EVENT, event => {
     if (!event.active) {
-      if (this.heatmapInstance) {
-        // Find the heatmap canvas and remove it
-        const container = this._canvas.getContainer();
-        const heatmapCanvas = container.querySelector('.heatmap-canvas');
-        if (heatmapCanvas) {
-          heatmapCanvas.remove();
-        }
-        this.heatmapInstance = null;
-        console.log('[Heatmap] Heatmap instance removed on simulation toggle off.');
-      }
+      this.removeHeatmap();
     }
   });
 }
@@ -92,26 +83,36 @@ Heatmap.prototype._init = function() {
 };
 
 Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
-  // First, clear any existing data
-  this._eventBus.fire('heatmap.data.clear');
 
-  const tasks = this._elementRegistry.filter(element => {
-    return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
-  });
+  // Test button should only work when simulation is off
+  if (this._toggleMode.active) {
+    this._toggleMode.toggleMode(false);
+  }
 
-  // Fire events to update the model for each task
-  tasks.forEach(task => {
-    this._eventBus.fire('heatmap.time.updated', {
-      element: task,
-      time: 1000 // Hardcoded 1 second
-    });
-  });
-
-  console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
-
-  // Use a timeout to allow the model updates to process before generating the heatmap
+  // Use a timeout to ensure toggleMode event processing is complete
   setTimeout(() => {
-    this.generateHeatmapFromProperties();
+    // First, clear any existing data
+    this._eventBus.fire('heatmap.data.clear');
+
+    const tasks = this._elementRegistry.filter(element => {
+      return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
+    });
+
+    // Fire events to update the model for each task
+    tasks.forEach(task => {
+      this._eventBus.fire('heatmap.test.update', {
+        element: task,
+        time: Math.floor(Math.random() * 5000) + 500 // Random time for visual variety
+      });
+    });
+
+    console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
+
+    // Use another timeout to allow the model updates to process before generating the heatmap
+    setTimeout(() => {
+      this.generateHeatmapFromProperties();
+    }, 100);
+
   }, 100);
 };
 
@@ -152,7 +153,7 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   });
 
   if (maxTime === 0) {
-    heatmap.setData({ max: 1, data: [] }); // Clear heatmap
+    this.clearHeatmap();
     console.log('[Heatmap] No simulation data found. Clearing heatmap.');
     return;
   }
@@ -189,9 +190,28 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   console.log('[Heatmap] Generated data points:', dataPoints);
 
   heatmap.setData({
-    max: 100,
+    max: 100, // We normalized our values to be between 0 and 100
     data: dataPoints
   });
+};
+
+Heatmap.prototype.clearHeatmap = function() {
+  if (this.heatmapInstance) {
+    this.heatmapInstance.setData({ max: 1, data: [] });
+    console.log('[Heatmap] Cleared heatmap data.');
+  }
+};
+
+Heatmap.prototype.removeHeatmap = function() {
+  if (this.heatmapInstance) {
+    const container = this._canvas.getContainer();
+    const heatmapCanvas = container.querySelector('.heatmap-canvas');
+    if (heatmapCanvas) {
+      heatmapCanvas.remove();
+    }
+    this.heatmapInstance = null;
+    console.log('[Heatmap] Heatmap instance removed.');
+  }
 };
 
 Heatmap.prototype.getOrCreateHeatmapInstance = function() {
@@ -216,7 +236,7 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
     heatmapCanvas.style.position = 'absolute';
     heatmapCanvas.style.top = 0;
     heatmapCanvas.style.left = 0;
-    heatmapCanvas.style.zIndex = -1;
+    heatmapCanvas.style.zIndex = -1; // Put it behind the diagram elements
   }
   return this.heatmapInstance;
 };
@@ -226,5 +246,6 @@ Heatmap.$inject = [
   'canvas',
   'elementRegistry',
   'eventBus',
-  'tokenSimulationPalette'
+  'tokenSimulationPalette',
+  'toggleMode'
 ];

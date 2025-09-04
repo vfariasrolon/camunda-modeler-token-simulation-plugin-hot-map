@@ -3,65 +3,83 @@ import {
   isAny
 } from 'bpmn-js/lib/util/ModelUtil';
 
-export default function HeatmapData(eventBus, elementRegistry, modeling, moddle) {
+import {
+  TOGGLE_MODE_EVENT
+} from 'bpmn-js-token-simulation/lib/util/EventHelper';
+
+export default function HeatmapData(eventBus, elementRegistry, modeling, moddle, timeTracker) {
   this._eventBus = eventBus;
   this._elementRegistry = elementRegistry;
   this._modeling = modeling;
   this._moddle = moddle;
+  this._timeTracker = timeTracker;
 
-  // Listen for the custom event from TimeTracker to update the model
-  eventBus.on('heatmap.time.updated', ({ element, time }) => {
-    this.updateElementTime(element, time);
+  // Listen for the toggle mode event to write data when simulation is turned off
+  eventBus.on(TOGGLE_MODE_EVENT, event => {
+    //
+    // We only write data when the simulation is turned OFF.
+    // This is because the model is read-only during simulation.
+    //
+    if (!event.active) {
+      this.writeTimesToModel();
+    }
   });
 
   // Listen for the custom event from TimeTracker to clear all data
   eventBus.on('heatmap.data.clear', () => {
     this.clearAllHeatmapData();
   });
+
+  // Listen for event from test button
+  eventBus.on('heatmap.test.update', ({ element, time }) => {
+    // Overwrite existing time with the test time
+    this.updateElementTime(element, time, true);
+  });
 }
 
-HeatmapData.prototype.updateElementTime = function(element, time) {
+HeatmapData.prototype.writeTimesToModel = function() {
+  const recordedTimes = this._timeTracker.getRecordedTimes();
+
+  for (const elementId in recordedTimes) {
+    const element = this._elementRegistry.get(elementId);
+    const time = recordedTimes[elementId];
+
+    if (element) {
+      // Pass overwrite=true because we are writing the final accumulated value
+      this.updateElementTime(element, time, true);
+    }
+  }
+  console.log('[HeatmapData] Wrote all recorded times to model.');
+}
+
+HeatmapData.prototype.updateElementTime = function(element, time, overwrite = false) {
   const businessObject = getBusinessObject(element);
 
   let extensionElements = businessObject.get('extensionElements');
 
   if (!extensionElements) {
-    extensionElements = this._moddle.create('bpmn:ExtensionElements');
-
-    // Using modeling.updateProperties to ensure the change is undo/redo-able
-    this._modeling.updateProperties(element, { extensionElements });
+    extensionElements = this._moddle.create('bpmn:ExtensionElements', { values: [] });
+    this._modeling.updateProperties(element, { extensionElements: extensionElements });
+    extensionElements = getBusinessObject(element).get('extensionElements');
   }
-
-  // After updating properties, we need to get the latest business object
-  const newBusinessObject = getBusinessObject(element);
-  extensionElements = newBusinessObject.get('extensionElements');
 
   let heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
 
   if (!heatmapData) {
-    heatmapData = this._moddle.create('heatmap:Data', { tiempoSimulacion: '0' });
-
-    // Use updateModdleProperties for adding to a list property
-    const currentValues = extensionElements.get('values') || [];
+    heatmapData = this._moddle.create('heatmap:Data');
     this._modeling.updateModdleProperties(element, extensionElements, {
-      values: [...currentValues, heatmapData]
+      values: [...extensionElements.get('values'), heatmapData]
     });
+    heatmapData = getBusinessObject(element).get('extensionElements').get('values').find(v => v.$type === 'heatmap:Data');
   }
 
-  // Get the latest heatmapData element after potential creation
-  const finalBusinessObject = getBusinessObject(element);
-  const finalExtensionElements = finalBusinessObject.get('extensionElements');
-  const finalHeatmapData = finalExtensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+  const currentTime = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
 
-  const currentTime = parseInt(finalHeatmapData.get('tiempoSimulacion'), 10) || 0;
-  const newTime = currentTime + time;
+  const newTime = overwrite ? time : currentTime + time;
 
-  // Use updateModdleProperties to change the attribute on the custom element
-  this._modeling.updateModdleProperties(element, finalHeatmapData, {
+  this._modeling.updateModdleProperties(element, heatmapData, {
     tiempoSimulacion: String(newTime)
   });
-
-  console.log(`[HeatmapData] Updated 'heatmap:tiempoSimulacion' to ${newTime} for ${element.id}`);
 };
 
 
@@ -81,7 +99,6 @@ HeatmapData.prototype.clearAllHeatmapData = function() {
     const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
 
     if (heatmapData) {
-      // Set time to 0
       this._modeling.updateModdleProperties(element, heatmapData, {
         tiempoSimulacion: '0'
       });
@@ -95,5 +112,6 @@ HeatmapData.$inject = [
   'eventBus',
   'elementRegistry',
   'modeling',
-  'moddle'
+  'moddle',
+  'timeTracker' // Inject the timeTracker to get the data
 ];

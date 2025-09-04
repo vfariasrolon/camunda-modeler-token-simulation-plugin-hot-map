@@ -38,36 +38,27 @@ function Heatmap(
     canvas,
     elementRegistry,
     eventBus,
-    tokenSimulationPalette
+    tokenSimulationPalette,
+    toggleMode
 ) {
   this._canvas = canvas;
   this._elementRegistry = elementRegistry;
   this._eventBus = eventBus;
   this._tokenSimulationPalette = tokenSimulationPalette;
+  this._toggleMode = toggleMode;
   this.heatmapInstance = null;
 
   this._init();
 
   // Clear heatmap on simulation reset
   eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.RESET_SIMULATION_EVENT, () => {
-    if (this.heatmapInstance) {
-      this.heatmapInstance.setData({ max: 1, data: [] });
-      console.log('[Heatmap] Cleared heatmap data on reset.');
-    }
+    this.clearHeatmap();
   });
 
+  // Clear and remove heatmap when simulation is toggled off
   eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.TOGGLE_MODE_EVENT, event => {
     if (!event.active) {
-      if (this.heatmapInstance) {
-        // Find the heatmap canvas and remove it
-        const container = this._canvas.getContainer();
-        const heatmapCanvas = container.querySelector('.heatmap-canvas');
-        if (heatmapCanvas) {
-          heatmapCanvas.remove();
-        }
-        this.heatmapInstance = null;
-        console.log('[Heatmap] Heatmap instance removed on simulation toggle off.');
-      }
+      this.removeHeatmap();
     }
   });
 }
@@ -105,26 +96,36 @@ Heatmap.prototype._init = function() {
 };
 
 Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
-  // First, clear any existing data
-  this._eventBus.fire('heatmap.data.clear');
 
-  const tasks = this._elementRegistry.filter(element => {
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
-  });
+  // Test button should only work when simulation is off
+  if (this._toggleMode.active) {
+    this._toggleMode.toggleMode(false);
+  }
 
-  // Fire events to update the model for each task
-  tasks.forEach(task => {
-    this._eventBus.fire('heatmap.time.updated', {
-      element: task,
-      time: 1000 // Hardcoded 1 second
-    });
-  });
-
-  console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
-
-  // Use a timeout to allow the model updates to process before generating the heatmap
+  // Use a timeout to ensure toggleMode event processing is complete
   setTimeout(() => {
-    this.generateHeatmapFromProperties();
+    // First, clear any existing data
+    this._eventBus.fire('heatmap.data.clear');
+
+    const tasks = this._elementRegistry.filter(element => {
+      return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
+    });
+
+    // Fire events to update the model for each task
+    tasks.forEach(task => {
+      this._eventBus.fire('heatmap.test.update', {
+        element: task,
+        time: Math.floor(Math.random() * 5000) + 500 // Random time for visual variety
+      });
+    });
+
+    console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
+
+    // Use another timeout to allow the model updates to process before generating the heatmap
+    setTimeout(() => {
+      this.generateHeatmapFromProperties();
+    }, 100);
+
   }, 100);
 };
 
@@ -165,7 +166,7 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   });
 
   if (maxTime === 0) {
-    heatmap.setData({ max: 1, data: [] }); // Clear heatmap
+    this.clearHeatmap();
     console.log('[Heatmap] No simulation data found. Clearing heatmap.');
     return;
   }
@@ -202,9 +203,28 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
   console.log('[Heatmap] Generated data points:', dataPoints);
 
   heatmap.setData({
-    max: 100,
+    max: 100, // We normalized our values to be between 0 and 100
     data: dataPoints
   });
+};
+
+Heatmap.prototype.clearHeatmap = function() {
+  if (this.heatmapInstance) {
+    this.heatmapInstance.setData({ max: 1, data: [] });
+    console.log('[Heatmap] Cleared heatmap data.');
+  }
+};
+
+Heatmap.prototype.removeHeatmap = function() {
+  if (this.heatmapInstance) {
+    const container = this._canvas.getContainer();
+    const heatmapCanvas = container.querySelector('.heatmap-canvas');
+    if (heatmapCanvas) {
+      heatmapCanvas.remove();
+    }
+    this.heatmapInstance = null;
+    console.log('[Heatmap] Heatmap instance removed.');
+  }
 };
 
 Heatmap.prototype.getOrCreateHeatmapInstance = function() {
@@ -229,7 +249,7 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
     heatmapCanvas.style.position = 'absolute';
     heatmapCanvas.style.top = 0;
     heatmapCanvas.style.left = 0;
-    heatmapCanvas.style.zIndex = -1;
+    heatmapCanvas.style.zIndex = -1; // Put it behind the diagram elements
   }
   return this.heatmapInstance;
 };
@@ -239,7 +259,8 @@ Heatmap.$inject = [
   'canvas',
   'elementRegistry',
   'eventBus',
-  'tokenSimulationPalette'
+  'tokenSimulationPalette',
+  'toggleMode'
 ];
 
 
@@ -256,78 +277,95 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ HeatmapData)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
 
 
-function HeatmapData(eventBus, elementRegistry, modeling, moddle) {
+
+
+function HeatmapData(eventBus, elementRegistry, modeling, moddle, timeTracker) {
   this._eventBus = eventBus;
   this._elementRegistry = elementRegistry;
   this._modeling = modeling;
   this._moddle = moddle;
+  this._timeTracker = timeTracker;
 
-  // Listen for the custom event from TimeTracker to update the model
-  eventBus.on('heatmap.time.updated', ({ element, time }) => {
-    this.updateElementTime(element, time);
+  // Listen for the toggle mode event to write data when simulation is turned off
+  eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.TOGGLE_MODE_EVENT, event => {
+    //
+    // We only write data when the simulation is turned OFF.
+    // This is because the model is read-only during simulation.
+    //
+    if (!event.active) {
+      this.writeTimesToModel();
+    }
   });
 
   // Listen for the custom event from TimeTracker to clear all data
   eventBus.on('heatmap.data.clear', () => {
     this.clearAllHeatmapData();
   });
+
+  // Listen for event from test button
+  eventBus.on('heatmap.test.update', ({ element, time }) => {
+    // Overwrite existing time with the test time
+    this.updateElementTime(element, time, true);
+  });
 }
 
-HeatmapData.prototype.updateElementTime = function(element, time) {
-  const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
+HeatmapData.prototype.writeTimesToModel = function() {
+  const recordedTimes = this._timeTracker.getRecordedTimes();
+
+  for (const elementId in recordedTimes) {
+    const element = this._elementRegistry.get(elementId);
+    const time = recordedTimes[elementId];
+
+    if (element) {
+      // Pass overwrite=true because we are writing the final accumulated value
+      this.updateElementTime(element, time, true);
+    }
+  }
+  console.log('[HeatmapData] Wrote all recorded times to model.');
+}
+
+HeatmapData.prototype.updateElementTime = function(element, time, overwrite = false) {
+  const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element);
 
   let extensionElements = businessObject.get('extensionElements');
 
   if (!extensionElements) {
-    extensionElements = this._moddle.create('bpmn:ExtensionElements');
-
-    // Using modeling.updateProperties to ensure the change is undo/redo-able
-    this._modeling.updateProperties(element, { extensionElements });
+    extensionElements = this._moddle.create('bpmn:ExtensionElements', { values: [] });
+    this._modeling.updateProperties(element, { extensionElements: extensionElements });
+    extensionElements = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element).get('extensionElements');
   }
-
-  // After updating properties, we need to get the latest business object
-  const newBusinessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
-  extensionElements = newBusinessObject.get('extensionElements');
 
   let heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
 
   if (!heatmapData) {
-    heatmapData = this._moddle.create('heatmap:Data', { tiempoSimulacion: '0' });
-
-    // Use updateModdleProperties for adding to a list property
-    const currentValues = extensionElements.get('values') || [];
+    heatmapData = this._moddle.create('heatmap:Data');
     this._modeling.updateModdleProperties(element, extensionElements, {
-      values: [...currentValues, heatmapData]
+      values: [...extensionElements.get('values'), heatmapData]
     });
+    heatmapData = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element).get('extensionElements').get('values').find(v => v.$type === 'heatmap:Data');
   }
 
-  // Get the latest heatmapData element after potential creation
-  const finalBusinessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
-  const finalExtensionElements = finalBusinessObject.get('extensionElements');
-  const finalHeatmapData = finalExtensionElements.get('values').find(v => v.$type === 'heatmap:Data');
+  const currentTime = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
 
-  const currentTime = parseInt(finalHeatmapData.get('tiempoSimulacion'), 10) || 0;
-  const newTime = currentTime + time;
+  const newTime = overwrite ? time : currentTime + time;
 
-  // Use updateModdleProperties to change the attribute on the custom element
-  this._modeling.updateModdleProperties(element, finalHeatmapData, {
+  this._modeling.updateModdleProperties(element, heatmapData, {
     tiempoSimulacion: String(newTime)
   });
-
-  console.log(`[HeatmapData] Updated 'heatmap:tiempoSimulacion' to ${newTime} for ${element.id}`);
 };
 
 
 HeatmapData.prototype.clearAllHeatmapData = function() {
   const elements = this._elementRegistry.filter(element => {
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
   });
 
   elements.forEach(element => {
-    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_0__.getBusinessObject)(element);
+    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element);
     const extensionElements = businessObject.get('extensionElements');
 
     if (!extensionElements) {
@@ -337,7 +375,6 @@ HeatmapData.prototype.clearAllHeatmapData = function() {
     const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
 
     if (heatmapData) {
-      // Set time to 0
       this._modeling.updateModdleProperties(element, heatmapData, {
         tiempoSimulacion: '0'
       });
@@ -351,7 +388,8 @@ HeatmapData.$inject = [
   'eventBus',
   'elementRegistry',
   'modeling',
-  'moddle'
+  'moddle',
+  'timeTracker' // Inject the timeTracker to get the data
 ];
 
 
@@ -426,8 +464,6 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
-// client/TimeTracker.js
-
 
 
 
@@ -437,6 +473,7 @@ function TimeTracker(eventBus) {
   this._eventBus = eventBus;
 
   this.taskStartTimes = new Map();
+  this.recordedTimes = {};
 
   // Listen for trace events to capture task entry and exit
   eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.TRACE_EVENT, LOW_PRIORITY, event => {
@@ -446,8 +483,7 @@ function TimeTracker(eventBus) {
       action
     } = event;
 
-    // We are only interested in tasks and call activities
-    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:Task') && !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:CallActivity')) {
+    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity'])) {
       return;
     }
 
@@ -455,7 +491,6 @@ function TimeTracker(eventBus) {
 
     if (action === 'enter') {
       this.taskStartTimes.set(taskKey, new Date().getTime());
-      console.log(`[TimeTracker] Token entered task ${element.id}, scope ${scope.id}`);
     } else if (action === 'exit') {
       const startTime = this.taskStartTimes.get(taskKey);
 
@@ -463,18 +498,11 @@ function TimeTracker(eventBus) {
         const endTime = new Date().getTime();
         const duration = endTime - startTime;
 
-        // For the test, we'll use a fixed time of 1 second.
-        const testDuration = 1000;
+        // Accumulate time for the element ID
+        this.recordedTimes[element.id] = (this.recordedTimes[element.id] || 0) + duration;
 
-        console.log(`[TimeTracker] Task ${element.id} executed. Duration: ${duration}ms. Emitting update event with value: ${testDuration}ms.`);
+        console.log(`[TimeTracker] Task ${element.id} finished. Duration: ${duration}ms. Total for element: ${this.recordedTimes[element.id]}ms`);
 
-        // Fire an event with the element and the time, so another module can handle the moddle update.
-        this._eventBus.fire('heatmap.time.updated', {
-          element: element,
-          time: testDuration // In a real scenario, this would be `duration`
-        });
-
-        // Clean up the start time for this task instance
         this.taskStartTimes.delete(taskKey);
       }
     }
@@ -483,12 +511,15 @@ function TimeTracker(eventBus) {
   // Clear data on simulation reset
   eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.RESET_SIMULATION_EVENT, () => {
     this.taskStartTimes.clear();
-    console.log('[TimeTracker] Cleared time tracking data.');
-
-    // Fire an event to signal that all heatmap data should be cleared.
+    this.recordedTimes = {};
     this._eventBus.fire('heatmap.data.clear');
+    console.log('[TimeTracker] Cleared time tracking data.');
   });
 }
+
+TimeTracker.prototype.getRecordedTimes = function() {
+  return this.recordedTimes;
+};
 
 TimeTracker.$inject = [
   'eventBus'
@@ -13731,7 +13762,7 @@ function merge(target, ...sources) {
 /***/ ((module) => {
 
 "use strict";
-module.exports = JSON.parse('{"name":"HeatmapExtension","uri":"http://heatmap.camunda.org/schema/1.0/bpmn","prefix":"heatmap","types":[{"name":"HeatmapCapable","extends":["bpmn:Task","bpmn:UserTask","bpmn:ServiceTask","bpmn:SendTask","bpmn:ReceiveTask","bpmn:ManualTask","bpmn:BusinessRuleTask","bpmn:ScriptTask"],"properties":[{"name":"tiempoSimulacion","isAttr":true,"type":"Integer"}]}]}');
+module.exports = JSON.parse('{"name":"Heatmap","uri":"http://heatmap.org/schema/1.0/heatmap","prefix":"heatmap","types":[{"name":"Data","superClass":["Element"],"properties":[{"name":"tiempoSimulacion","isAttr":true,"type":"String"}]}],"enumerations":[],"associations":[]}');
 
 /***/ })
 
@@ -13839,10 +13870,7 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-// Note: We register the HeatmapModule as a separate plugin
-// to ensure it loads correctly, based on our debugging.
-// The HeatmapModule itself will no longer depend on the token simulation
-// but will provide its own palette button.
+
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
   hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_2__["default"] ]
