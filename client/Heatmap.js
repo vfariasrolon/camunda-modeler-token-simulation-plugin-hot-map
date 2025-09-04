@@ -45,6 +45,7 @@ export default class Heatmap {
 
     this._heatmap = null;
     this._heatmapCanvas = null;
+    this._diagramBBox = null;
 
     this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
 
@@ -95,8 +96,20 @@ export default class Heatmap {
     }
     const overlayContainer = query('.djs-overlay-container');
     if (overlayContainer) {
-      this._heatmapCanvas.style.transform = overlayContainer.style.transform;
-      this._heatmapCanvas.style.transformOrigin = overlayContainer.style.transformOrigin;
+      const transformMatrix = overlayContainer.style.transform;
+
+      // Extract the scale from the matrix transform, e.g., "matrix(1.2, 0, 0, 1.2, -100, -50)"
+      const matrixRegex = /matrix\(([^,]+),/;
+      const match = transformMatrix.match(matrixRegex);
+
+      let scale = 1;
+      if (match && match[1]) {
+        scale = parseFloat(match[1]);
+      }
+
+      // Apply only the scale transform. The top/left properties handle the positioning.
+      this._heatmapCanvas.style.transform = `scale(${scale})`;
+      this._heatmapCanvas.style.transformOrigin = 'top left';
     }
   }
 
@@ -131,7 +144,6 @@ export default class Heatmap {
 
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
-
       if (value > 0) {
         console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
       }
@@ -139,9 +151,9 @@ export default class Heatmap {
 
       return {
         elementId: element.id,
-        // ABSOLUTE coordinates, not relative to bbox
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
+        // Make coordinates relative to the diagram BBox
+        x: Math.round((element.x + element.width / 2) - this._diagramBBox.x),
+        y: Math.round((element.y + element.height / 2) - this._diagramBBox.y),
         value: value,
         radius: Math.round(Math.max(element.width, element.height) / 1.2)
       };
@@ -162,10 +174,17 @@ export default class Heatmap {
     }
 
     const { dataPoints, max } = this._getHeatmapData();
+
+    if (!dataPoints.length) {
+      this.clear();
+      console.log('[Heatmap] No elements with simulation data found.');
+      return;
+    }
+
     console.log('[Heatmap] Generated data:', { dataPoints, max });
 
     this._heatmap.setData({ max: max, data: dataPoints });
-    this._updateTransform(); // Apply the current pan/zoom transform
+    this._updateTransform(); // Apply the current scale transform
   }
 
   showHeatmapFromProperties() {
@@ -205,24 +224,29 @@ export default class Heatmap {
       return;
     }
 
+    // Calculate and store BBox for the entire diagram
+    const allShapes = this._elementRegistry.filter(e =>
+      e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
+    );
+
+    if (!allShapes.length) {
+      console.error('[Heatmap] No valid shapes found to calculate diagram BBox.');
+      return;
+    }
+
+    this._diagramBBox = this._getBBox(allShapes);
+    console.log('[Heatmap] Diagram BBox calculated:', this._diagramBBox);
+
     this._heatmap = h337.create({
       container: djsContainer
     });
 
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
-      // Sizing the canvas to the full diagram dimensions ONCE
-      const allShapes = this._elementRegistry.filter(e =>
-        e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
-      );
-      if (allShapes.length > 0) {
-        const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
-        console.log('[Heatmap] Sizing canvas to BBox:', bbox);
-        this._heatmapCanvas.style.width = `${bbox.width}px`;
-        this._heatmapCanvas.style.height = `${bbox.height}px`;
-        // NO "top" or "left" style here. Position is handled by transform.
-      }
-
+      this._heatmapCanvas.style.width = `${this._diagramBBox.width}px`;
+      this._heatmapCanvas.style.height = `${this._diagramBBox.height}px`;
+      this._heatmapCanvas.style.top = `${this._diagramBBox.y}px`;
+      this._heatmapCanvas.style.left = `${this._diagramBBox.x}px`;
       this._heatmapCanvas.style.pointerEvents = 'none';
       this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
