@@ -12,12 +12,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ Heatmap)
 /* harmony export */ });
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var min_dash__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dash */ "./node_modules/min-dash/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! heatmap.js */ "./node_modules/heatmap.js/build/heatmap.js");
 /* harmony import */ var heatmap_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(heatmap_js__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
-// client/Heatmap.js
 
 
 
@@ -26,371 +26,242 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-function FireIcon() {
-  return '<i class="fa fa-fire"></i>';
+
+
+// SVG Icons for buttons
+const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
+const BrushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34c-.39-.39-1.02-.39-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>`;
+
+function createIcon(svg) {
+  return function Icon(className = '') {
+    return `<span class="bts-icon ${ className }">${svg}</span>`;
+  };
 }
 
-function TestIcon() {
-  return '<i class="fa fa-flask"></i>';
-}
+const BroomIcon = createIcon(BroomIconSVG);
+const BrushIcon = createIcon(BrushIconSVG);
 
-function Heatmap(
-    canvas,
-    elementRegistry,
-    eventBus,
-    tokenSimulationPalette,
-    toggleMode
-) {
-  this._canvas = canvas;
-  this._elementRegistry = elementRegistry;
-  this._eventBus = eventBus;
-  this._tokenSimulationPalette = tokenSimulationPalette;
-  this._toggleMode = toggleMode;
-  this.heatmapInstance = null;
+const DEBOUNCE_DELAY = 10;
 
-  this._init();
+class Heatmap {
+  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
+    this._canvas = canvas;
+    this._eventBus = eventBus;
+    this._elementRegistry = elementRegistry;
+    this._tokenSimulationPalette = tokenSimulationPalette;
+    this._toggleMode = toggleMode;
 
-  // Clear heatmap on simulation reset
-  eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.RESET_SIMULATION_EVENT, () => {
-    this.clearHeatmap();
-  });
+    this._heatmap = null;
+    this._heatmapCanvas = null;
 
-  // Clear and remove heatmap when simulation is toggled off
-  eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.TOGGLE_MODE_EVENT, event => {
-    if (!event.active) {
-      this.removeHeatmap();
-    }
-  });
-}
+    this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
 
-Heatmap.prototype._init = function() {
-  const self = this;
+    eventBus.on('canvas.viewbox.changed', this._debouncedUpdateTransform, this);
+    eventBus.on('canvas.resized', this._debouncedUpdateTransform, this);
 
-  // 1. Generate Heatmap Button
-  const heatmapButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
-    <div class="bts-entry" title="Generate Heatmap from Simulation Times">
-      ${ FireIcon() }
-    </div>
-  `);
-
-  min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(heatmapButton, 'click', () => {
-    console.log('[Heatmap] Generating heatmap from properties...');
-    self.generateHeatmapFromProperties();
-  });
-
-  this._tokenSimulationPalette.addEntry(heatmapButton, 4);
-
-  // 2. Test Heatmap Button
-  const testButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
-    <div class="bts-entry" title="Test Heatmap with Hardcoded Values">
-      ${ TestIcon() }
-    </div>
-  `);
-
-  min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(testButton, 'click', () => {
-    console.log('[Heatmap] Testing heatmap with hardcoded values...');
-    self.setHardcodedTimesAndGenerate();
-  });
-
-  this._tokenSimulationPalette.addEntry(testButton, 5);
-};
-
-Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
-
-  // Test button should only work when simulation is off
-  if (this._toggleMode.active) {
-    this._toggleMode.toggleMode(false);
-  }
-
-  // Use a timeout to ensure toggleMode event processing is complete
-  setTimeout(() => {
-    // First, clear any existing data
-    this._eventBus.fire('heatmap.data.clear');
-
-    const tasks = this._elementRegistry.filter(element => {
-      return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
+    eventBus.on('diagram.init', () => this.destroyHeatmap());
+    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
+    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.TOGGLE_MODE_EVENT, event => {
+      if (!event.active) {
+        this.destroyHeatmap();
+      }
     });
 
-    // Fire events to update the model for each task
-    tasks.forEach(task => {
-      this._eventBus.fire('heatmap.test.update', {
-        element: task,
-        time: Math.floor(Math.random() * 5000) + 500 // Random time for visual variety
-      });
+    this._init();
+  }
+
+  _init() {
+    const generateButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+      <div class="bts-entry" title="Generate Heatmap from Extension Properties">
+        ${BrushIcon()}
+      </div>
+    `);
+    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(generateButton, 'click', () => this.showHeatmapFromProperties());
+    this._tokenSimulationPalette.addEntry(generateButton, 4);
+
+    const clearButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+      <div class="bts-entry" title="Clear Heatmap">
+        ${BroomIcon()}
+      </div>
+    `);
+    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(clearButton, 'click', () => this.destroyHeatmap());
+    this._tokenSimulationPalette.addEntry(clearButton, 5);
+  }
+
+  _debounce(func, delay) {
+    let timeout;
+    return function(...args) {
+      const context = this;
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func.apply(context, args), delay);
+    };
+  }
+
+  _updateTransform() {
+    if (!this._heatmapCanvas) {
+      return;
+    }
+    const overlayContainer = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.query)('.djs-overlay-container');
+    if (overlayContainer) {
+      this._heatmapCanvas.style.transform = overlayContainer.style.transform;
+      this._heatmapCanvas.style.transformOrigin = overlayContainer.style.transformOrigin;
+    }
+  }
+
+  _isSupported(element) {
+    return isAny(element, [
+      'bpmn:Task', 'bpmn:CallActivity', 'bpmn:StartEvent', 'bpmn:EndEvent',
+      'bpmn:ExclusiveGateway', 'bpmn:ParallelGateway', 'bpmn:InclusiveGateway',
+      'bpmn:EventBasedGateway', 'bpmn:IntermediateCatchEvent', 'bpmn:SubProcess'
+    ]);
+  }
+
+  _getSimulationTime(element) {
+    const businessObject = element.businessObject;
+    if (!businessObject.extensionElements || !businessObject.extensionElements.values) {
+      return 0;
+    }
+    const properties = (0,min_dash__WEBPACK_IMPORTED_MODULE_3__.find)(businessObject.extensionElements.values, v => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(v, 'camunda:Properties'));
+    if (!properties || !properties.values) {
+      return 0;
+    }
+    const timeProperty = (0,min_dash__WEBPACK_IMPORTED_MODULE_3__.find)(properties.values, p => p.name === 'tiempoSimulacion');
+    if (!timeProperty || !timeProperty.value) {
+      return 0;
+    }
+    const time = parseInt(timeProperty.value, 10);
+    return isNaN(time) ? 0 : time;
+  }
+
+  _getHeatmapData() {
+    const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
+    let max = 0;
+
+    const dataPoints = allSupportedElements.map(element => {
+      const value = this._getSimulationTime(element);
+
+      if (value > 0) {
+        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
+      }
+      if (value > max) max = value;
+
+      return {
+        elementId: element.id,
+        // ABSOLUTE coordinates, not relative to bbox
+        x: Math.round(element.x + element.width / 2),
+        y: Math.round(element.y + element.height / 2),
+        value: value,
+        radius: Math.round(Math.max(element.width, element.height) / 1.2)
+      };
+    }).filter(point => point.value > 0);
+
+    return { dataPoints, max: max || 100 };
+  }
+
+  _updateDataAndRedraw() {
+    if (this._toggleMode.active) {
+      console.warn('[Heatmap] Please stop simulation before generating a heatmap.');
+      return;
+    }
+
+    if (!this._heatmap) {
+      this.createHeatmap();
+      if (!this._heatmap) return; // createHeatmap could have failed
+    }
+
+    const { dataPoints, max } = this._getHeatmapData();
+    console.log('[Heatmap] Generated data:', { dataPoints, max });
+
+    this._heatmap.setData({ max: max, data: dataPoints });
+    this._updateTransform(); // Apply the current pan/zoom transform
+  }
+
+  showHeatmapFromProperties() {
+    this._updateDataAndRedraw();
+  }
+
+  // A robust, manual bounding box calculation
+  _getBBox(elements) {
+    if (!elements.length) {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+
+    let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+
+    elements.forEach(element => {
+      minX = Math.min(minX, element.x);
+      minY = Math.min(minY, element.y);
+      maxX = Math.max(maxX, element.x + element.width);
+      maxY = Math.max(maxY, element.y + element.height);
     });
 
-    console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
-
-    // Use another timeout to allow the model updates to process before generating the heatmap
-    setTimeout(() => {
-      this.generateHeatmapFromProperties();
-    }, 100);
-
-  }, 100);
-};
-
-
-Heatmap.prototype.generateHeatmapFromProperties = function() {
-  const heatmap = this.getOrCreateHeatmapInstance();
-  const dataPoints = [];
-  let maxTime = 0;
-
-  const tasks = this._elementRegistry.filter(function(element) {
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
-  });
-
-  tasks.forEach((task) => {
-    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.getBusinessObject)(task);
-    const extensionElements = businessObject.get('extensionElements');
-
-    if (!extensionElements) {
-      return;
-    }
-
-    const values = extensionElements.get('values');
-    if (!values) {
-        return;
-    }
-
-    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
-
-    if (!heatmapData) {
-      return;
-    }
-
-    const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
-
-    if (time > maxTime) {
-      maxTime = time;
-    }
-  });
-
-  if (maxTime === 0) {
-    this.clearHeatmap();
-    console.log('[Heatmap] No simulation data found. Clearing heatmap.');
-    return;
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
   }
 
-  tasks.forEach((task) => {
-    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.getBusinessObject)(task);
-    const extensionElements = businessObject.get('extensionElements');
-
-    if (!extensionElements) {
+  createHeatmap() {
+    const djsContainer = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.query)('.djs-container');
+    if (!djsContainer) {
+      console.error('[Heatmap] Could not find .djs-container to initialize heatmap.');
       return;
     }
 
-    const values = extensionElements.get('values');
-    if (!values) {
-        return;
-    }
-
-    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
-
-    if (!heatmapData) {
-      return;
-    }
-
-    const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
-
-    if (time > 0) {
-      const x = Math.round(task.x + task.width / 2);
-      const y = Math.round(task.y + task.height / 2);
-      const value = Math.round((time / maxTime) * 100);
-      dataPoints.push({ x, y, value });
-    }
-  });
-
-  console.log('[Heatmap] Generated data points:', dataPoints);
-
-  heatmap.setData({
-    max: 100, // We normalized our values to be between 0 and 100
-    data: dataPoints
-  });
-};
-
-Heatmap.prototype.clearHeatmap = function() {
-  if (this.heatmapInstance) {
-    this.heatmapInstance.setData({ max: 1, data: [] });
-    console.log('[Heatmap] Cleared heatmap data.');
-  }
-};
-
-Heatmap.prototype.removeHeatmap = function() {
-  if (this.heatmapInstance) {
-    const container = this._canvas.getContainer();
-    const heatmapCanvas = container.querySelector('.heatmap-canvas');
-    if (heatmapCanvas) {
-      heatmapCanvas.remove();
-    }
-    this.heatmapInstance = null;
-    console.log('[Heatmap] Heatmap instance removed.');
-  }
-};
-
-Heatmap.prototype.getOrCreateHeatmapInstance = function() {
-  if (!this.heatmapInstance) {
-    const container = this._canvas.getContainer();
-
-    // Ensure no old canvas exists
-    const oldCanvas = container.querySelector('.heatmap-canvas');
-    if (oldCanvas) {
-      oldCanvas.remove();
-    }
-
-    this.heatmapInstance = heatmap_js__WEBPACK_IMPORTED_MODULE_0___default().create({
-      container: container,
-      radius: 50,
-      maxOpacity: .5,
-      minOpacity: 0,
-      blur: .75
+    this._heatmap = heatmap_js__WEBPACK_IMPORTED_MODULE_0___default().create({
+      container: djsContainer
     });
-    const heatmapCanvas = container.querySelector('.heatmap-canvas');
-    heatmapCanvas.style.pointerEvents = 'none';
-    heatmapCanvas.style.position = 'absolute';
-    heatmapCanvas.style.top = 0;
-    heatmapCanvas.style.left = 0;
-    heatmapCanvas.style.zIndex = -1; // Put it behind the diagram elements
-  }
-  return this.heatmapInstance;
-};
 
+    this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
+    if (this._heatmapCanvas) {
+      // Sizing the canvas to the full diagram dimensions ONCE
+      const allShapes = this._elementRegistry.filter(e =>
+        e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
+      );
+      if (allShapes.length > 0) {
+        const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
+        console.log('[Heatmap] Sizing canvas to BBox:', bbox);
+        this._heatmapCanvas.style.width = '99999';
+        this._heatmapCanvas.style.height = '99999999';
+        // NO "top" or "left" style here. Position is handled by transform.
+      }
 
-Heatmap.$inject = [
-  'canvas',
-  'elementRegistry',
-  'eventBus',
-  'tokenSimulationPalette',
-  'toggleMode'
-];
-
-
-/***/ }),
-
-/***/ "./client/HeatmapData.js":
-/*!*******************************!*\
-  !*** ./client/HeatmapData.js ***!
-  \*******************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (/* binding */ HeatmapData)
-/* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
-/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
-
-
-
-
-function HeatmapData(eventBus, elementRegistry, modeling, moddle, timeTracker) {
-  this._eventBus = eventBus;
-  this._elementRegistry = elementRegistry;
-  this._modeling = modeling;
-  this._moddle = moddle;
-  this._timeTracker = timeTracker;
-
-  // Listen for the toggle mode event to write data when simulation is turned off
-  eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.TOGGLE_MODE_EVENT, event => {
-    //
-    // We only write data when the simulation is turned OFF.
-    // This is because the model is read-only during simulation.
-    //
-    if (!event.active) {
-      this.writeTimesToModel();
+      this._heatmapCanvas.style.pointerEvents = 'none';
+      this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
-  });
 
-  // Listen for the custom event from TimeTracker to clear all data
-  eventBus.on('heatmap.data.clear', () => {
-    this.clearAllHeatmapData();
-  });
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+  }
 
-  // Listen for event from test button
-  eventBus.on('heatmap.test.update', ({ element, time }) => {
-    // Overwrite existing time with the test time
-    this.updateElementTime(element, time, true);
-  });
+  destroyHeatmap() {
+    if (!this._heatmap) return;
+
+    if (this._heatmapCanvas && this._heatmapCanvas.parentNode) {
+      this._heatmapCanvas.parentNode.removeChild(this._heatmapCanvas);
+    }
+
+    this._heatmap = null;
+    this._heatmapCanvas = null;
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
+  }
+
+  clear() {
+    if (this._heatmap) {
+      this._heatmap.setData({ max: 0, data: [] });
+    }
+  }
 }
 
-HeatmapData.prototype.writeTimesToModel = function() {
-  const recordedTimes = this._timeTracker.getRecordedTimes();
+Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
 
-  for (const elementId in recordedTimes) {
-    const element = this._elementRegistry.get(elementId);
-    const time = recordedTimes[elementId];
-
-    if (element) {
-      // Pass overwrite=true because we are writing the final accumulated value
-      this.updateElementTime(element, time, true);
-    }
-  }
-  console.log('[HeatmapData] Wrote all recorded times to model.');
+function isAny(element, types) {
+  return types.some(t => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, t));
 }
-
-HeatmapData.prototype.updateElementTime = function(element, time, overwrite = false) {
-  const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element);
-
-  let extensionElements = businessObject.get('extensionElements');
-
-  if (!extensionElements) {
-    extensionElements = this._moddle.create('bpmn:ExtensionElements', { values: [] });
-    this._modeling.updateProperties(element, { extensionElements: extensionElements });
-    extensionElements = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element).get('extensionElements');
-  }
-
-  let heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
-
-  if (!heatmapData) {
-    heatmapData = this._moddle.create('heatmap:Data');
-    this._modeling.updateModdleProperties(element, extensionElements, {
-      values: [...extensionElements.get('values'), heatmapData]
-    });
-    heatmapData = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element).get('extensionElements').get('values').find(v => v.$type === 'heatmap:Data');
-  }
-
-  const currentTime = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
-
-  const newTime = overwrite ? time : currentTime + time;
-
-  this._modeling.updateModdleProperties(element, heatmapData, {
-    tiempoSimulacion: String(newTime)
-  });
-};
-
-
-HeatmapData.prototype.clearAllHeatmapData = function() {
-  const elements = this._elementRegistry.filter(element => {
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.isAny)(element, ['bpmn:Task', 'bpmn:CallActivity']);
-  });
-
-  elements.forEach(element => {
-    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.getBusinessObject)(element);
-    const extensionElements = businessObject.get('extensionElements');
-
-    if (!extensionElements) {
-      return;
-    }
-
-    const heatmapData = extensionElements.get('values').find(v => v.$type === 'heatmap:Data');
-
-    if (heatmapData) {
-      this._modeling.updateModdleProperties(element, heatmapData, {
-        tiempoSimulacion: '0'
-      });
-    }
-  });
-
-  console.log('[HeatmapData] Cleared all heatmap:tiempoSimulacion attributes.');
-};
-
-HeatmapData.$inject = [
-  'eventBus',
-  'elementRegistry',
-  'modeling',
-  'moddle',
-  'timeTracker' // Inject the timeTracker to get the data
-];
 
 
 /***/ }),
@@ -9987,7 +9858,7 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;/*
  * heatmap.js v2.0.5 | JavaScript Heatmap Library
  *
  * Copyright 2008-2016 Patrick Wied <heatmapjs@patrick-wied.at> - All rights reserved.
- * Dual licensed under MIT and Beerware license
+ * Dual licensed under MIT and Beerware license 
  *
  * :: 2016-09-05 01:16
  */
@@ -10016,7 +9887,7 @@ var HeatmapConfig = {
   defaultBlur: .85,
   defaultXField: 'x',
   defaultYField: 'y',
-  defaultValueField: 'value',
+  defaultValueField: 'value', 
   plugins: {}
 };
 var Store = (function StoreClosure() {
@@ -10078,13 +9949,13 @@ var Store = (function StoreClosure() {
           }
           return false;
         } else {
-          return {
-            x: x,
+          return { 
+            x: x, 
             y: y,
-            value: value,
+            value: value, 
             radius: radius,
             min: min,
-            max: max
+            max: max 
           };
         }
     },
@@ -10125,7 +9996,7 @@ var Store = (function StoreClosure() {
           this.addData.call(this, dataArr[dataLen]);
         }
       } else {
-        // add to store
+        // add to store  
         var organisedEntry = this._organiseData(arguments[0], true);
         if (organisedEntry) {
           // if it's the first datapoint initialize the extremas with it
@@ -10155,7 +10026,7 @@ var Store = (function StoreClosure() {
       }
       this._max = data.max;
       this._min = data.min || 0;
-
+      
       this._onExtremaChange();
       this._coordinator.emit('renderall', this._getInternalData());
       return this;
@@ -10179,11 +10050,11 @@ var Store = (function StoreClosure() {
       this._coordinator = coordinator;
     },
     _getInternalData: function() {
-      return {
+      return { 
         max: this._max,
-        min: this._min,
+        min: this._min, 
         data: this._data,
-        radi: this._radi
+        radi: this._radi 
       };
     },
     getData: function() {
@@ -10217,7 +10088,7 @@ var Store = (function StoreClosure() {
                 }
               } else {
                 continue;
-              }
+              } 
             }
           }
         }
@@ -13753,17 +13624,6 @@ function merge(target, ...sources) {
 
 
 
-/***/ }),
-
-/***/ "./resources/heatmap-extension.json":
-/*!******************************************!*\
-  !*** ./resources/heatmap-extension.json ***!
-  \******************************************/
-/***/ ((module) => {
-
-"use strict";
-module.exports = JSON.parse('{"name":"Heatmap","uri":"http://heatmap.org/schema/1.0/heatmap","prefix":"heatmap","types":[{"name":"Data","superClass":["Element"],"properties":[{"name":"tiempoSimulacion","isAttr":true,"type":"String"}]}],"enumerations":[],"associations":[]}');
-
 /***/ })
 
 /******/ 	});
@@ -13855,14 +13715,10 @@ var __webpack_exports__ = {};
   \**************************/
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! camunda-modeler-plugin-helpers */ "./node_modules/camunda-modeler-plugin-helpers/index.js");
-/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/bpmn-js-token-simulation/lib/modeler.js");
-/* harmony import */ var _resources_heatmap_extension_json__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../resources/heatmap-extension.json */ "./resources/heatmap-extension.json");
-/* harmony import */ var _HideModelerElements__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./HideModelerElements */ "./client/HideModelerElements.js");
-/* harmony import */ var _Heatmap__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./Heatmap */ "./client/Heatmap.js");
-/* harmony import */ var _TimeTracker__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./TimeTracker */ "./client/TimeTracker.js");
-/* harmony import */ var _HeatmapData__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./HeatmapData */ "./client/HeatmapData.js");
-
-
+/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/bpmn-js-token-simulation/lib/modeler.js");
+/* harmony import */ var _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./HideModelerElements */ "./client/HideModelerElements.js");
+/* harmony import */ var _Heatmap__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./Heatmap */ "./client/Heatmap.js");
+/* harmony import */ var _TimeTracker__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./TimeTracker */ "./client/TimeTracker.js");
 
 
 
@@ -13873,33 +13729,23 @@ __webpack_require__.r(__webpack_exports__);
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
-  hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_2__["default"] ]
+  hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__["default"] ]
 };
 
 const HeatmapPluginModule = {
   __init__: [ 'heatmap' ],
-  heatmap: [ 'type', _Heatmap__WEBPACK_IMPORTED_MODULE_3__["default"] ]
+  heatmap: [ 'type', _Heatmap__WEBPACK_IMPORTED_MODULE_2__["default"] ]
 };
 
 const TimeTrackerPluginModule = {
   __init__: [ 'timeTracker' ],
-  timeTracker: [ 'type', _TimeTracker__WEBPACK_IMPORTED_MODULE_4__["default"] ]
+  timeTracker: [ 'type', _TimeTracker__WEBPACK_IMPORTED_MODULE_3__["default"] ]
 };
-
-const HeatmapDataPluginModule = {
-  __init__: [ 'heatmapData' ],
-  heatmapData: [ 'type', _HeatmapData__WEBPACK_IMPORTED_MODULE_5__["default"] ]
-};
-
-// Register the BpmnJS Moddle Extension
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSModdleExtension)(_resources_heatmap_extension_json__WEBPACK_IMPORTED_MODULE_1__);
 
 // Register the BpmnJS modules
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_6__["default"]);
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TokenSimulationPluginModule);
+(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_4__["default"]);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(HeatmapPluginModule);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TimeTrackerPluginModule);
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(HeatmapDataPluginModule);
 
 })();
 

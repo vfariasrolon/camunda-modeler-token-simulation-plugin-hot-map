@@ -218,8 +218,8 @@ export default class Heatmap {
       if (allShapes.length > 0) {
         const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
         console.log('[Heatmap] Sizing canvas to BBox:', bbox);
-        this._heatmapCanvas.style.width = '10000px';
-        this._heatmapCanvas.style.height = '10000px';
+        this._heatmapCanvas.style.width = '';
+        this._heatmapCanvas.style.height = '';
         // NO "top" or "left" style here. Position is handled by transform.
       }
 
