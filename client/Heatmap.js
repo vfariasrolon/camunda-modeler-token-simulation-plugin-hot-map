@@ -52,7 +52,6 @@ export default class Heatmap {
     eventBus.on('canvas.viewbox.changed', this._updateTransform, this);
     eventBus.on('canvas.resized', this._debouncedUpdateTransform, this);
 
-    // Also listen to simulation events to clear the heatmap
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
     eventBus.on(TOGGLE_MODE_EVENT, event => {
@@ -155,6 +154,9 @@ export default class Heatmap {
     }
     this._isRandom = isRandom;
     const { dataPoints, max } = this._getHeatmapData(isRandom);
+
+    debugger; // Add debugger as requested by user
+
     this._heatmap.setData({ max: max, data: dataPoints });
     this._updateTransform();
   }
@@ -171,8 +173,6 @@ export default class Heatmap {
 
   createHeatmap() {
     const container = this._canvas.getContainer();
-
-    // Use a global query to reliably find the djs-container
     const djsContainer = query('.djs-container');
 
     if (!djsContainer) {
@@ -180,9 +180,18 @@ export default class Heatmap {
       return;
     }
 
-    this._heatmapContainer = domify('<div class="heatmap-layer" style="position: absolute; top: 0; left: 0; pointer-events: none;"></div>');
+    // Fix: Ensure the container has full dimensions
+    this._heatmapContainer = domify('<div class="heatmap-layer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></div>');
     djsContainer.appendChild(this._heatmapContainer);
+
     this._heatmap = h337.create({ container: this._heatmapContainer });
+
+    // Fix: Address the willReadFrequently warning
+    const heatmapCanvas = this._heatmapContainer.querySelector('.heatmap-canvas');
+    if (heatmapCanvas) {
+      heatmapCanvas.getContext('2d', { willReadFrequently: true });
+    }
+
     domClasses(container).add('heatmap-shown');
   }
 
@@ -207,7 +216,6 @@ export default class Heatmap {
 
 Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
 
-// Helper function to check if an element is of a certain type
 function isAny(element, types) {
   return types.some(t => is(element, t));
 }
