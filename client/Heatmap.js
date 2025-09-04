@@ -63,7 +63,6 @@ export default class Heatmap {
   }
 
   _init() {
-    // Button to GENERATE the heatmap from properties
     const generateButton = domify(`
       <div class="bts-entry" title="Generate Heatmap from Extension Properties">
         ${BrushIcon()}
@@ -72,7 +71,6 @@ export default class Heatmap {
     domEvent.bind(generateButton, 'click', () => this.showHeatmapFromProperties());
     this._tokenSimulationPalette.addEntry(generateButton, 4);
 
-    // Button to CLEAR the heatmap
     const clearButton = domify(`
       <div class="bts-entry" title="Clear Heatmap">
         ${BroomIcon()}
@@ -127,31 +125,30 @@ export default class Heatmap {
     return isNaN(time) ? 0 : time;
   }
 
-  _getHeatmapData() {
+  _getHeatmapData(bbox) {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
-    const elementsWithData = [];
 
     console.log('[Heatmap] Processing elements for heatmap data...');
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
 
       if (value > 0) {
-        elementsWithData.push(element);
         console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
       }
 
       if (value > max) max = value;
 
       return {
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
+        // Make coordinates relative to the canvas's top-left corner (bbox)
+        x: Math.round((element.x + element.width / 2) - bbox.x),
+        y: Math.round((element.y + element.height / 2) - bbox.y),
         value: value,
         radius: Math.round(Math.max(element.width, element.height) / 1.2)
       };
     }).filter(point => point.value > 0);
 
-    return { dataPoints, max: max || 100, elements: elementsWithData };
+    return { dataPoints, max: max || 100 };
   }
 
   _updateDataAndRedraw() {
@@ -161,17 +158,27 @@ export default class Heatmap {
       return;
     }
 
-    const { dataPoints, max, elements } = this._getHeatmapData();
+    const elementsWithData = this._elementRegistry.filter(e => this._getSimulationTime(e) > 0);
 
-    console.log('[Heatmap] Generated data:', { dataPoints, max });
+    if (!elementsWithData.length) {
+      this.clear();
+      console.log('[Heatmap] No elements with simulation data found.');
+      return;
+    }
 
-    if (this._heatmapCanvas && elements.length > 0) {
-      const bbox = this._canvas.getAbsoluteBBox(elements);
+    const bbox = this._canvas.getAbsoluteBBox(elementsWithData);
+
+    console.log('[Heatmap] Canvas BBox:', bbox);
+
+    if (this._heatmapCanvas) {
       this._heatmapCanvas.style.width = `${bbox.width}px`;
       this._heatmapCanvas.style.height = `${bbox.height}px`;
       this._heatmapCanvas.style.top = `${bbox.y}px`;
       this._heatmapCanvas.style.left = `${bbox.x}px`;
     }
+
+    const { dataPoints, max } = this._getHeatmapData(bbox);
+    console.log('[Heatmap] Generated data:', { dataPoints, max });
 
     this._heatmap.setData({ max: max, data: dataPoints });
     this._updateTransform();
@@ -181,7 +188,6 @@ export default class Heatmap {
     if (!this._heatmap) {
       this.createHeatmap();
     }
-    // We always redraw, in case properties have changed
     this._updateDataAndRedraw();
   }
 
@@ -215,6 +221,12 @@ export default class Heatmap {
     this._heatmap = null;
     this._heatmapCanvas = null;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
+  }
+
+  clear() {
+    if (this._heatmap) {
+      this._heatmap.setData({ max: 0, data: [] });
+    }
   }
 }
 
