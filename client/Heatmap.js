@@ -254,7 +254,7 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
     heatmapCanvas.style.position = 'absolute';
     heatmapCanvas.style.top = 0;
     heatmapCanvas.style.left = 0;
-    heatmapCanvas.style.zIndex = -1; // Put it behind the diagram elements
+    heatmapCanvas.style.zIndex = 1; // Put it in front of the diagram elements
   }
   return this.heatmapInstance;
 };
