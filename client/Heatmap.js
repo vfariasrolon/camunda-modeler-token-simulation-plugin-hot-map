@@ -128,7 +128,7 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
     const x = Math.round(task.x + task.width / 2);
     const y = Math.round(task.y + task.height / 2);
     const value = Math.round((time / maxTime) * 100);
-    dataPoints.push({ x, y, value, radius: 40 });
+    dataPoints.push({ x, y, value, radius: 70 });
   });
 
   // 3. Generate data points for sequence flows
@@ -205,7 +205,7 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
       const x = Math.round(task.x + task.width / 2);
       const y = Math.round(task.y + task.height / 2);
       const value = Math.round((time / maxTime) * 100);
-      dataPoints.push({ x, y, value, radius: 40 });
+      dataPoints.push({ x, y, value, radius: 70 });
     }
   });
 
@@ -260,10 +260,10 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
 
     this.heatmapInstance = h337.create({
       container: container,
-      radius: 20,
+      radius: 70,
       maxOpacity: .5,
       minOpacity: 0,
-      blur: .90
+      blur: .95
     });
     const heatmapCanvas = container.querySelector('.heatmap-canvas');
     heatmapCanvas.style.pointerEvents = 'none';
