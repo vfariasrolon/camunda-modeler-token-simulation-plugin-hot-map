@@ -14,11 +14,11 @@ import {
 
 
 function FireIcon() {
-  return '<i class="fa fa-fire"></i>';
+  return '<i class="fa fa-broom"></i>';
 }
 
 function TestIcon() {
-  return '<i class="fa fa-flask"></i>';
+  return '<i class="fa fa-paint-brush"></i>';
 }
 
 export default function Heatmap(
