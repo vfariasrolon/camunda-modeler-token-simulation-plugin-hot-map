@@ -30,11 +30,6 @@ export default function HeatmapData(eventBus, elementRegistry, modeling, moddle,
     this.clearAllHeatmapData();
   });
 
-  // Listen for event from test button
-  eventBus.on('heatmap.test.update', ({ element, time }) => {
-    // Overwrite existing time with the test time
-    this.updateElementTime(element, time, true);
-  });
 }
 
 HeatmapData.prototype.writeTimesToModel = function() {

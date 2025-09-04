@@ -83,37 +83,49 @@ Heatmap.prototype._init = function() {
 };
 
 Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
+  const heatmap = this.getOrCreateHeatmapInstance();
+  const dataPoints = [];
+  const taskTimes = [];
+  let maxTime = 0;
 
-  // Test button should only work when simulation is off
+  // Test button should not be active during simulation
   if (this._toggleMode.active) {
-    this._toggleMode.toggleMode(false);
+    return;
   }
 
-  // Use a timeout to ensure toggleMode event processing is complete
-  setTimeout(() => {
-    // First, clear any existing data
-    this._eventBus.fire('heatmap.data.clear');
+  const tasks = this._elementRegistry.filter(element => {
+    return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
+  });
 
-    const tasks = this._elementRegistry.filter(element => {
-      return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
-    });
+  // 1. Generate random times and find the max
+  tasks.forEach(task => {
+    const time = Math.floor(Math.random() * 100) + 1; // Random time between 1 and 100
+    taskTimes.push({ task, time });
+    if (time > maxTime) {
+      maxTime = time;
+    }
+  });
 
-    // Fire events to update the model for each task
-    tasks.forEach(task => {
-      this._eventBus.fire('heatmap.test.update', {
-        element: task,
-        time: Math.floor(Math.random() * 5000) + 500 // Random time for visual variety
-      });
-    });
+  if (maxTime === 0) {
+    this.clearHeatmap();
+    return;
+  }
 
-    console.log('[Heatmap] Hardcoded values set via events. Generating heatmap.');
+  // 2. Create data points for the heatmap
+  taskTimes.forEach(item => {
+    const { task, time } = item;
+    const x = Math.round(task.x + task.width / 2);
+    const y = Math.round(task.y + task.height / 2);
+    const value = Math.round((time / maxTime) * 100);
+    dataPoints.push({ x, y, value });
+  });
 
-    // Use another timeout to allow the model updates to process before generating the heatmap
-    setTimeout(() => {
-      this.generateHeatmapFromProperties();
-    }, 100);
+  console.log('[Heatmap] Generated hardcoded data points:', dataPoints);
 
-  }, 100);
+  heatmap.setData({
+    max: 100, // We normalized our values to be between 0 and 100
+    data: dataPoints
+  });
 };
 
 
