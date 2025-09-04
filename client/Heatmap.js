@@ -9,6 +9,7 @@ import {
 
 import {
   isAny,
+  is,
   getBusinessObject
 } from 'bpmn-js/lib/util/ModelUtil';
 
@@ -91,7 +92,7 @@ Heatmap.prototype._init = function() {
 Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
   const heatmap = this.getOrCreateHeatmapInstance();
   const dataPoints = [];
-  const taskTimes = [];
+  const elementTimes = new Map();
   let maxTime = 0;
 
   // Test button should not be active during simulation
@@ -99,14 +100,18 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
     return;
   }
 
-  const tasks = this._elementRegistry.filter(element => {
+  const allElements = this._elementRegistry.getAll();
+
+  const tasks = allElements.filter(element => {
     return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
   });
 
-  // 1. Generate random times and find the max
+  const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
+
+  // 1. Generate random times for tasks and find the max
   tasks.forEach(task => {
     const time = Math.floor(Math.random() * 100) + 1; // Random time between 1 and 100
-    taskTimes.push({ task, time });
+    elementTimes.set(task.id, time);
     if (time > maxTime) {
       maxTime = time;
     }
@@ -117,13 +122,25 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
     return;
   }
 
-  // 2. Create data points for the heatmap
-  taskTimes.forEach(item => {
-    const { task, time } = item;
+  // 2. Create data points for tasks
+  tasks.forEach(task => {
+    const time = elementTimes.get(task.id);
     const x = Math.round(task.x + task.width / 2);
     const y = Math.round(task.y + task.height / 2);
     const value = Math.round((time / maxTime) * 100);
-    dataPoints.push({ x, y, value });
+    dataPoints.push({ x, y, value, radius: 40 });
+  });
+
+  // 3. Generate data points for sequence flows
+  flows.forEach(flow => {
+    const sourceTime = elementTimes.get(flow.source.id);
+    if (sourceTime) {
+      const value = Math.round((sourceTime / maxTime) * 100);
+      const pathPoints = getPointsAlongPath(flow.waypoints);
+      pathPoints.forEach(point => {
+        dataPoints.push({ x: point.x, y: point.y, value, radius: 15 });
+      });
+    }
   });
 
   console.log('[Heatmap] Generated hardcoded data points:', dataPoints);
@@ -138,44 +155,14 @@ Heatmap.prototype.setHardcodedTimesAndGenerate = function() {
 Heatmap.prototype.generateHeatmapFromProperties = function() {
   const heatmap = this.getOrCreateHeatmapInstance();
   const dataPoints = [];
+  const elementTimes = new Map();
   let maxTime = 0;
 
-  const tasks = this._elementRegistry.filter(function(element) {
-    return isAny(element, ['bpmn:Task', 'bpmn:CallActivity']);
-  });
+  const allElements = this._elementRegistry.getAll();
+  const tasks = allElements.filter(element => isAny(element, ['bpmn:Task', 'bpmn:CallActivity']));
+  const flows = allElements.filter(element => is(element, 'bpmn:SequenceFlow'));
 
-  tasks.forEach((task) => {
-    const businessObject = getBusinessObject(task);
-    const extensionElements = businessObject.get('extensionElements');
-
-    if (!extensionElements) {
-      return;
-    }
-
-    const values = extensionElements.get('values');
-    if (!values) {
-        return;
-    }
-
-    const heatmapData = values.find(v => v.$type === 'heatmap:Data');
-
-    if (!heatmapData) {
-      return;
-    }
-
-    const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
-
-    if (time > maxTime) {
-      maxTime = time;
-    }
-  });
-
-  if (maxTime === 0) {
-    this.clearHeatmap();
-    console.log('[Heatmap] No simulation data found. Clearing heatmap.');
-    return;
-  }
-
+  // 1. Get all times and find max
   tasks.forEach((task) => {
     const businessObject = getBusinessObject(task);
     const extensionElements = businessObject.get('extensionElements');
@@ -198,10 +185,39 @@ Heatmap.prototype.generateHeatmapFromProperties = function() {
     const time = parseInt(heatmapData.get('tiempoSimulacion'), 10) || 0;
 
     if (time > 0) {
+      elementTimes.set(task.id, time);
+      if (time > maxTime) {
+        maxTime = time;
+      }
+    }
+  });
+
+  if (maxTime === 0) {
+    this.clearHeatmap();
+    console.log('[Heatmap] No simulation data found. Clearing heatmap.');
+    return;
+  }
+
+  // 2. Generate data points for tasks
+  tasks.forEach((task) => {
+    const time = elementTimes.get(task.id) || 0;
+    if (time > 0) {
       const x = Math.round(task.x + task.width / 2);
       const y = Math.round(task.y + task.height / 2);
       const value = Math.round((time / maxTime) * 100);
-      dataPoints.push({ x, y, value });
+      dataPoints.push({ x, y, value, radius: 40 });
+    }
+  });
+
+  // 3. Generate data points for sequence flows
+  flows.forEach(flow => {
+    const sourceTime = elementTimes.get(flow.source.id);
+    if (sourceTime) {
+      const value = Math.round((sourceTime / maxTime) * 100);
+      const pathPoints = getPointsAlongPath(flow.waypoints);
+      pathPoints.forEach(point => {
+        dataPoints.push({ x: point.x, y: point.y, value, radius: 15 });
+      });
     }
   });
 
@@ -244,10 +260,10 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
 
     this.heatmapInstance = h337.create({
       container: container,
-      radius: 50,
+      radius: 20,
       maxOpacity: .5,
       minOpacity: 0,
-      blur: .75
+      blur: .90
     });
     const heatmapCanvas = container.querySelector('.heatmap-canvas');
     heatmapCanvas.style.pointerEvents = 'none';
@@ -259,7 +275,6 @@ Heatmap.prototype.getOrCreateHeatmapInstance = function() {
   return this.heatmapInstance;
 };
 
-
 Heatmap.$inject = [
   'canvas',
   'elementRegistry',
@@ -267,3 +282,31 @@ Heatmap.$inject = [
   'tokenSimulationPalette',
   'toggleMode'
 ];
+
+// helpers //////////////////////
+
+function getPointsAlongPath(waypoints) {
+  const points = [];
+  const density = 5; // Add a point every 5 pixels
+
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const p1 = waypoints[i];
+    const p2 = waypoints[i + 1];
+
+    const deltaX = p2.x - p1.x;
+    const deltaY = p2.y - p1.y;
+    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    const numPoints = Math.floor(distance / density);
+
+    points.push({ x: p1.x, y: p1.y });
+
+    for (let j = 1; j <= numPoints; j++) {
+      const t = j / (numPoints + 1);
+      const x = Math.round(p1.x + t * deltaX);
+      const y = Math.round(p1.y + t * deltaY);
+      points.push({ x, y });
+    }
+  }
+  points.push(waypoints[waypoints.length - 1]);
+  return points;
+}
