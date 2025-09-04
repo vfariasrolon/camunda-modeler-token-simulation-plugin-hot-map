@@ -171,7 +171,15 @@ export default class Heatmap {
 
   createHeatmap() {
     const container = this._canvas.getContainer();
-    const djsContainer = query('.djs-container', container);
+
+    // Use a global query to reliably find the djs-container
+    const djsContainer = query('.djs-container');
+
+    if (!djsContainer) {
+      console.error('[Heatmap] Could not find .djs-container element to append heatmap to.');
+      return;
+    }
+
     this._heatmapContainer = domify('<div class="heatmap-layer" style="position: absolute; top: 0; left: 0; pointer-events: none;"></div>');
     djsContainer.appendChild(this._heatmapContainer);
     this._heatmap = h337.create({ container: this._heatmapContainer });
