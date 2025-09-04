@@ -125,6 +125,27 @@ export default class Heatmap {
     return isNaN(time) ? 0 : time;
   }
 
+  _getBBox(elements) {
+    let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+
+    elements.forEach(element => {
+      minX = Math.min(minX, element.x);
+      minY = Math.min(minY, element.y);
+      maxX = Math.max(maxX, element.x + element.width);
+      maxY = Math.max(maxY, element.y + element.height);
+    });
+
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
+  }
+
   _getHeatmapData(bbox) {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
@@ -164,16 +185,8 @@ export default class Heatmap {
       return;
     }
 
-    console.log('[Heatmap] Calculating BBox for elements:', elementsWithData.map(e => e.id));
-    const bbox = this._canvas.getAbsoluteBBox(elementsWithData);
-
+    const bbox = this._getBBox(elementsWithData);
     console.log('[Heatmap] Canvas BBox:', bbox);
-
-    // Defensive check for NaN values from getAbsoluteBBox
-    if (isNaN(bbox.x) || isNaN(bbox.y) || isNaN(bbox.width) || isNaN(bbox.height)) {
-      console.error('[Heatmap] Bounding box calculation failed, returned NaN. Aborting heatmap draw.');
-      return;
-    }
 
     if (this._heatmapCanvas) {
       this._heatmapCanvas.style.width = `${bbox.width}px`;
