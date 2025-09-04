@@ -125,7 +125,79 @@ export default class Heatmap {
     return isNaN(time) ? 0 : time;
   }
 
+  _getHeatmapData(bbox) {
+    const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
+    let max = 0;
+
+    const dataPoints = allSupportedElements.map(element => {
+      const value = this._getSimulationTime(element);
+      if (value > 0) {
+        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
+      }
+      if (value > max) max = value;
+
+      return {
+        elementId: element.id,
+        // Make coordinates relative to the canvas's top-left corner (bbox)
+        x: Math.round((element.x + element.width / 2) - bbox.x),
+        y: Math.round((element.y + element.height / 2) - bbox.y),
+        value: value,
+        radius: Math.round(Math.max(element.width, element.height) / 1.2)
+      };
+    }).filter(point => point.value > 0);
+
+    return { dataPoints, max: max || 100 };
+  }
+
+  _updateDataAndRedraw() {
+    if (this._toggleMode.active) {
+      console.warn('[Heatmap] Please stop simulation before generating a heatmap.');
+      return;
+    }
+
+    if (!this._heatmap) {
+      this.createHeatmap();
+      if (!this._heatmap) return;
+    }
+
+    const elementsWithData = this._elementRegistry.filter(e => this._getSimulationTime(e) > 0);
+
+    if (!elementsWithData.length) {
+      this.clear();
+      console.log('[Heatmap] No elements with simulation data found.');
+      return;
+    }
+
+    const bbox = this._getBBox(elementsWithData);
+    console.log('[Heatmap] Canvas BBox:', bbox);
+
+    if (this._heatmapCanvas) {
+      this._heatmapCanvas.style.width = `${bbox.width}px`;
+      this._heatmapCanvas.style.height = `${bbox.height}px`;
+      this._heatmapCanvas.style.top = `${bbox.y}px`;
+      this._heatmapCanvas.style.left = `${bbox.x}px`;
+    }
+
+    const { dataPoints, max } = this._getHeatmapData(bbox);
+    console.log('[Heatmap] Generated data:', { dataPoints, max });
+
+    // Force heatmap.js to re-render with the new data in the resized canvas
+    this._heatmap.setData({ max: max, data: dataPoints });
+
+    // The transform must be applied AFTER setting data on a resized canvas
+    this._updateTransform();
+  }
+
+  showHeatmapFromProperties() {
+    this._updateDataAndRedraw();
+  }
+
+  // A robust, manual bounding box calculation
   _getBBox(elements) {
+    if (!elements.length) {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+
     let minX = Infinity,
         minY = Infinity,
         maxX = -Infinity,
@@ -146,54 +218,6 @@ export default class Heatmap {
     };
   }
 
-  _getHeatmapData() {
-    const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
-    let max = 0;
-
-    const dataPoints = allSupportedElements.map(element => {
-      const value = this._getSimulationTime(element);
-
-      if (value > 0) {
-        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
-      }
-
-      if (value > max) max = value;
-
-      return {
-        elementId: element.id, // Add ID for logging
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
-        value: value,
-        radius: Math.round(Math.max(element.width, element.height) / 1.2)
-      };
-    }).filter(point => point.value > 0);
-
-    return { dataPoints, max: max || 100 };
-  }
-
-  _updateDataAndRedraw() {
-    if (this._toggleMode.active) {
-      console.warn('[Heatmap] Please stop simulation before generating a heatmap.');
-      return;
-    }
-
-    // Ensure heatmap exists before proceeding
-    if (!this._heatmap) {
-      this.createHeatmap();
-      if (!this._heatmap) return; // createHeatmap can fail
-    }
-
-    const { dataPoints, max } = this._getHeatmapData();
-    console.log('[Heatmap] Generated data:', { dataPoints, max });
-
-    this._heatmap.setData({ max: max, data: dataPoints });
-    this._updateTransform();
-  }
-
-  showHeatmapFromProperties() {
-    this._updateDataAndRedraw();
-  }
-
   createHeatmap() {
     const djsContainer = query('.djs-container');
     if (!djsContainer) {
@@ -207,15 +231,6 @@ export default class Heatmap {
 
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
-      // Size the canvas to the full diagram dimensions
-      const allShapes = this._elementRegistry.filter(e => !!e.width);
-      const bbox = this._getBBox(allShapes);
-
-      console.log('[Heatmap] Sizing canvas to BBox:', bbox);
-
-      this._heatmapCanvas.style.width = `${bbox.width}px`;
-      this._heatmapCanvas.style.height = `${bbox.height}px`;
-
       this._heatmapCanvas.style.pointerEvents = 'none';
       this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
@@ -233,6 +248,12 @@ export default class Heatmap {
     this._heatmap = null;
     this._heatmapCanvas = null;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
+  }
+
+  clear() {
+    if (this._heatmap) {
+      this._heatmap.setData({ max: 0, data: [] });
+    }
   }
 }
 
