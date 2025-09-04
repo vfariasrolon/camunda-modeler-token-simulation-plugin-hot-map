@@ -45,6 +45,7 @@ export default class Heatmap {
 
     this._heatmap = null;
     this._heatmapCanvas = null;
+    this._heatmapWrapper = null;
     this._diagramBBox = null;
 
     this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
@@ -91,7 +92,7 @@ export default class Heatmap {
   }
 
   _updateTransform() {
-    if (!this._heatmapCanvas) {
+    if (!this._heatmapWrapper) {
       return;
     }
     const overlayContainer = query('.djs-overlay-container');
@@ -107,9 +108,9 @@ export default class Heatmap {
         scale = parseFloat(match[1]);
       }
 
-      // Apply only the scale transform. The top/left properties handle the positioning.
-      this._heatmapCanvas.style.transform = `scale(${scale})`;
-      this._heatmapCanvas.style.transformOrigin = 'top left';
+      // Apply the scale transform to the WRAPPER. The top/left properties handle the positioning.
+      this._heatmapWrapper.style.transform = `scale(${scale})`;
+      this._heatmapWrapper.style.transformOrigin = 'top left';
     }
   }
 
@@ -224,7 +225,7 @@ export default class Heatmap {
       return;
     }
 
-    // Calculate and store BBox for the entire diagram
+    // Calculate BBox for the entire diagram
     const allShapes = this._elementRegistry.filter(e =>
       e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
     );
@@ -233,36 +234,44 @@ export default class Heatmap {
       console.error('[Heatmap] No valid shapes found to calculate diagram BBox.');
       return;
     }
-
     this._diagramBBox = this._getBBox(allShapes);
     console.log('[Heatmap] Diagram BBox calculated:', this._diagramBBox);
 
+    // Create and position the wrapper
+    this._heatmapWrapper = domify('<div></div>');
+    domClasses(this._heatmapWrapper).add('heatmap-wrapper');
+    this._heatmapWrapper.style.position = 'absolute';
+    this._heatmapWrapper.style.top = `${this._diagramBBox.y}px`;
+    this._heatmapWrapper.style.left = `${this._diagramBBox.x}px`;
+    this._heatmapWrapper.style.width = `${this._diagramBBox.width}px`;
+    this._heatmapWrapper.style.height = `${this._diagramBBox.height}px`;
+
+    djsContainer.appendChild(this._heatmapWrapper);
+
+    // Create heatmap instance inside the wrapper
     this._heatmap = h337.create({
-      container: djsContainer
+      container: this._heatmapWrapper
     });
 
-    this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
+    this._heatmapCanvas = this._heatmapWrapper.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
-      this._heatmapCanvas.style.width = `${this._diagramBBox.width}px`;
-      this._heatmapCanvas.style.height = `${this._diagramBBox.height}px`;
-      this._heatmapCanvas.style.top = `${this._diagramBBox.y}px`;
-      this._heatmapCanvas.style.left = `${this._diagramBBox.x}px`;
       this._heatmapCanvas.style.pointerEvents = 'none';
-      this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
 
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   destroyHeatmap() {
-    if (!this._heatmap) return;
-
-    if (this._heatmapCanvas && this._heatmapCanvas.parentNode) {
-      this._heatmapCanvas.parentNode.removeChild(this._heatmapCanvas);
+    if (this._heatmapWrapper && this._heatmapWrapper.parentNode) {
+      this._heatmapWrapper.parentNode.removeChild(this._heatmapWrapper);
     }
 
+    // Nullify all heatmap related properties
     this._heatmap = null;
     this._heatmapCanvas = null;
+    this._heatmapWrapper = null;
+    this._diagramBBox = null;
+
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
