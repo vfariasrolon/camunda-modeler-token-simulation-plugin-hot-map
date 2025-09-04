@@ -44,12 +44,12 @@ export default class Heatmap {
     this._toggleMode = toggleMode;
 
     this._heatmap = null;
-    this._heatmapCanvas = null; // Will store the canvas element created by heatmap.js
+    this._heatmapCanvas = null;
     this._isRandom = false;
 
     this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
 
-    eventBus.on('canvas.viewbox.changed', this._updateTransform, this);
+    eventBus.on('canvas.viewbox.changed', this._debouncedUpdateTransform, this);
     eventBus.on('canvas.resized', this._debouncedUpdateTransform, this);
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
@@ -112,15 +112,25 @@ export default class Heatmap {
   _getSimulationTime(element) {
     const businessObject = element.businessObject;
     let time = 0;
-    if (businessObject.extensionElements && businessObject.extensionElements.values) {
-      const properties = find(businessObject.extensionElements.values, v => is(v, 'camunda:Properties'));
-      if (properties && properties.values) {
-        const timeProperty = find(properties.values, p => p.name === 'tiempoSimulacion');
-        if (timeProperty && timeProperty.value) {
-          time = parseInt(timeProperty.value, 10);
-        }
-      }
+    if (!businessObject.extensionElements || !businessObject.extensionElements.values) {
+      return 0;
     }
+
+    console.log(`[Heatmap] Checking element ${element.id}`);
+    const properties = find(businessObject.extensionElements.values, v => is(v, 'camunda:Properties'));
+    if (!properties || !properties.values) {
+      console.log(`[Heatmap] -> No <camunda:Properties> found.`);
+      return 0;
+    }
+
+    const timeProperty = find(properties.values, p => p.name === 'tiempoSimulacion');
+    if (!timeProperty || !timeProperty.value) {
+      console.log(`[Heatmap] -> No 'tiempoSimulacion' property found.`);
+      return 0;
+    }
+
+    time = parseInt(timeProperty.value, 10);
+    console.log(`[Heatmap] -> Found time: ${time}`);
     return isNaN(time) ? 0 : time;
   }
 
@@ -184,6 +194,11 @@ export default class Heatmap {
 
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
+      // Fix: Set canvas size to the full diagram size
+      const bbox = this._canvas.getAbsoluteBBox();
+      this._heatmapCanvas.style.width = `${bbox.width}px`;
+      this._heatmapCanvas.style.height = `${bbox.height}px`;
+
       this._heatmapCanvas.style.pointerEvents = 'none';
       this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
@@ -194,7 +209,6 @@ export default class Heatmap {
   destroyHeatmap() {
     if (!this._heatmap) return;
 
-    // The heatmap instance is gone, so we manually find and remove the canvas
     if (this._heatmapCanvas && this._heatmapCanvas.parentNode) {
       this._heatmapCanvas.parentNode.removeChild(this._heatmapCanvas);
     }
