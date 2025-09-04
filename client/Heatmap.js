@@ -130,6 +130,9 @@ export default class Heatmap {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
+    // Get BBox to make coordinates relative
+    const bbox = this._getBBox(allSupportedElements);
+
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
 
@@ -140,9 +143,9 @@ export default class Heatmap {
 
       return {
         elementId: element.id,
-        // ABSOLUTE coordinates, not relative to bbox
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
+        // RELATIVE coordinates, adjusted by bbox
+        x: Math.round(element.x + element.width / 2) - bbox.x,
+        y: Math.round(element.y + element.height / 2) - bbox.y,
         value: value,
         radius: Math.round(Math.max(element.width, element.height) / 1.2)
       };
