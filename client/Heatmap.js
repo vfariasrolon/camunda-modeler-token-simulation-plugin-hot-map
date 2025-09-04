@@ -146,7 +146,7 @@ export default class Heatmap {
     };
   }
 
-  _getHeatmapData(bbox) {
+  _getHeatmapData() {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
@@ -160,8 +160,9 @@ export default class Heatmap {
       if (value > max) max = value;
 
       return {
-        x: Math.round((element.x + element.width / 2) - bbox.x),
-        y: Math.round((element.y + element.height / 2) - bbox.y),
+        elementId: element.id, // Add ID for logging
+        x: Math.round(element.x + element.width / 2),
+        y: Math.round(element.y + element.height / 2),
         value: value,
         radius: Math.round(Math.max(element.width, element.height) / 1.2)
       };
@@ -171,31 +172,18 @@ export default class Heatmap {
   }
 
   _updateDataAndRedraw() {
-    if (!this._heatmap) return;
     if (this._toggleMode.active) {
       console.warn('[Heatmap] Please stop simulation before generating a heatmap.');
       return;
     }
 
-    const elementsWithData = this._elementRegistry.filter(e => this._getSimulationTime(e) > 0);
-
-    if (!elementsWithData.length) {
-      this.clear();
-      console.log('[Heatmap] No elements with simulation data found.');
-      return;
+    // Ensure heatmap exists before proceeding
+    if (!this._heatmap) {
+      this.createHeatmap();
+      if (!this._heatmap) return; // createHeatmap can fail
     }
 
-    const bbox = this._getBBox(elementsWithData);
-    console.log('[Heatmap] Canvas BBox:', bbox);
-
-    if (this._heatmapCanvas) {
-      this._heatmapCanvas.style.width = `${bbox.width}px`;
-      this._heatmapCanvas.style.height = `${bbox.height}px`;
-      this._heatmapCanvas.style.top = `${bbox.y}px`;
-      this._heatmapCanvas.style.left = `${bbox.x}px`;
-    }
-
-    const { dataPoints, max } = this._getHeatmapData(bbox);
+    const { dataPoints, max } = this._getHeatmapData();
     console.log('[Heatmap] Generated data:', { dataPoints, max });
 
     this._heatmap.setData({ max: max, data: dataPoints });
@@ -203,9 +191,6 @@ export default class Heatmap {
   }
 
   showHeatmapFromProperties() {
-    if (!this._heatmap) {
-      this.createHeatmap();
-    }
     this._updateDataAndRedraw();
   }
 
@@ -222,6 +207,15 @@ export default class Heatmap {
 
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
+      // Size the canvas to the full diagram dimensions
+      const allShapes = this._elementRegistry.filter(e => !!e.width);
+      const bbox = this._getBBox(allShapes);
+
+      console.log('[Heatmap] Sizing canvas to BBox:', bbox);
+
+      this._heatmapCanvas.style.width = `${bbox.width}px`;
+      this._heatmapCanvas.style.height = `${bbox.height}px`;
+
       this._heatmapCanvas.style.pointerEvents = 'none';
       this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
@@ -239,12 +233,6 @@ export default class Heatmap {
     this._heatmap = null;
     this._heatmapCanvas = null;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
-  }
-
-  clear() {
-    if (this._heatmap) {
-      this._heatmap.setData({ max: 0, data: [] });
-    }
   }
 }
 
