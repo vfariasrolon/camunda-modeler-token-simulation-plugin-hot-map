@@ -131,6 +131,7 @@ export default class Heatmap {
 
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
+
       if (value > 0) {
         console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
       }
@@ -138,7 +139,7 @@ export default class Heatmap {
 
       return {
         elementId: element.id,
-        // Use absolute coordinates
+        // ABSOLUTE coordinates, not relative to bbox
         x: Math.round(element.x + element.width / 2),
         y: Math.round(element.y + element.height / 2),
         value: value,
@@ -161,13 +162,6 @@ export default class Heatmap {
     }
 
     const { dataPoints, max } = this._getHeatmapData();
-
-    if (!dataPoints.length) {
-      this.clear();
-      console.log('[Heatmap] No elements with simulation data found.');
-      return;
-    }
-
     console.log('[Heatmap] Generated data:', { dataPoints, max });
 
     this._heatmap.setData({ max: max, data: dataPoints });
@@ -217,9 +211,16 @@ export default class Heatmap {
 
     this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
-      // Use a large, fixed-size canvas to act as the drawing plane
-      this._heatmapCanvas.style.width = '10000px';
-      this._heatmapCanvas.style.height = '10000px';
+      // Sizing the canvas to the full diagram dimensions ONCE
+      const allShapes = this._elementRegistry.filter(e => !!e.width);
+      if (allShapes.length > 0) {
+        const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
+        console.log('[Heatmap] Sizing canvas to BBox:', bbox);
+        this._heatmapCanvas.style.width = '10000px';
+        this._heatmapCanvas.style.height = '10000px';
+        // NO "top" or "left" style here. Position is handled by transform.
+      }
+
       this._heatmapCanvas.style.pointerEvents = 'none';
       this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
