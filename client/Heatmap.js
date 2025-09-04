@@ -45,6 +45,7 @@ export default class Heatmap {
 
     this._heatmap = null;
     this._heatmapCanvas = null;
+    this._heatmapContainer = null;
 
     this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
 
@@ -199,31 +200,44 @@ export default class Heatmap {
   }
 
   createHeatmap() {
-    const djsContainer = query('.djs-container');
-    if (!djsContainer) {
+    const parentContainer = query('.djs-container');
+    if (!parentContainer) {
       console.error('[Heatmap] Could not find .djs-container to initialize heatmap.');
       return;
     }
 
+    // 1. Calculate BBox of the whole diagram
+    const allShapes = this._elementRegistry.filter(e =>
+      e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
+    );
+
+    if (!allShapes.length) {
+      return; // No shapes, no heatmap
+    }
+
+    const bbox = this._getBBox(allShapes);
+    console.log('[Heatmap] Creating heatmap container with BBox:', bbox);
+
+    // 2. Create and style our dedicated container
+    const heatmapContainer = domify('<div class="heatmap-container" style="position: absolute;"></div>');
+
+    heatmapContainer.style.left = `${bbox.x}px`;
+    heatmapContainer.style.top = `${bbox.y}px`;
+    heatmapContainer.style.width = `${bbox.width}px`;
+    heatmapContainer.style.height = `${bbox.height}px`;
+    heatmapContainer.style.pointerEvents = 'none';
+
+    // 3. Append to parent and store reference
+    parentContainer.appendChild(heatmapContainer);
+    this._heatmapContainer = heatmapContainer; // Store for later removal
+
+    // 4. Create heatmap instance in our new container
     this._heatmap = h337.create({
-      container: djsContainer
+      container: heatmapContainer
     });
 
-    this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
+    this._heatmapCanvas = heatmapContainer.querySelector('.heatmap-canvas');
     if (this._heatmapCanvas) {
-      // Sizing the canvas to the full diagram dimensions ONCE
-      const allShapes = this._elementRegistry.filter(e =>
-        e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
-      );
-      if (allShapes.length > 0) {
-        const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
-        console.log('[Heatmap] Sizing canvas to BBox:', bbox);
-        this._heatmapCanvas.style.width = '';
-        this._heatmapCanvas.style.height = '';
-        // NO "top" or "left" style here. Position is handled by transform.
-      }
-
-      this._heatmapCanvas.style.pointerEvents = 'none';
       this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
     }
 
@@ -233,12 +247,13 @@ export default class Heatmap {
   destroyHeatmap() {
     if (!this._heatmap) return;
 
-    if (this._heatmapCanvas && this._heatmapCanvas.parentNode) {
-      this._heatmapCanvas.parentNode.removeChild(this._heatmapCanvas);
+    if (this._heatmapContainer && this._heatmapContainer.parentNode) {
+      this._heatmapContainer.parentNode.removeChild(this._heatmapContainer);
     }
 
     this._heatmap = null;
     this._heatmapCanvas = null;
+    this._heatmapContainer = null;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
