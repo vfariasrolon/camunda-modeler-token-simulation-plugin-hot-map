@@ -275,7 +275,3 @@ export default class Heatmap {
 }
 
 Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
-
-function isAny(element, types) {
-  return types.some(t => is(element, t));
-}
