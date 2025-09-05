@@ -93,7 +93,7 @@ class Heatmap {
         <select id="heatmap-view-selector" style="width: 100%; background: #f7f7f7; border: 1px solid #ccc;">
           <option value="cycleTime">Tiempo de Ciclo</option>
           <option value="cost">Costo</option>
-          <option value="bottleneck" disabled>Cuellos de Botella</option>
+          <option value="bottleneck">Cuellos de Botella</option>
           <option value="frequency" disabled>Frecuencia</option>
         </select>
       </div>
@@ -344,8 +344,7 @@ class SimulationEngine {
       case 'cost':
         return this._calculateCost(simulationData);
       case 'bottleneck':
-        // Placeholder for future implementation
-        return 0;
+        return this._calculateBottleneck(simulationData);
       case 'frequency':
         // Placeholder for future implementation
         return 0;
@@ -365,6 +364,25 @@ class SimulationEngine {
           }
           break;
         // Add other distributions here in the future
+        case 'fixed':
+          return value || 0;
+      }
+    }
+    return 0;
+  }
+
+  _calculateBottleneck(simulationData) {
+    if (simulationData && simulationData.waitingTime) {
+      const { distribution, min, mode, max, value } = simulationData.waitingTime;
+
+      // For now, we'll just use the raw values, similar to cycle time.
+      // A real simulation would generate this data.
+       switch (distribution) {
+        case 'triangular':
+          if (typeof min === 'number' && typeof mode === 'number' && typeof max === 'number') {
+            return (min + mode + max) / 3;
+          }
+          break;
         case 'fixed':
           return value || 0;
       }

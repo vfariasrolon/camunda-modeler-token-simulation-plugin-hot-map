@@ -84,7 +84,7 @@ export default class Heatmap {
         <select id="heatmap-view-selector" style="width: 100%; background: #f7f7f7; border: 1px solid #ccc;">
           <option value="cycleTime">Tiempo de Ciclo</option>
           <option value="cost">Costo</option>
-          <option value="bottleneck" disabled>Cuellos de Botella</option>
+          <option value="bottleneck">Cuellos de Botella</option>
           <option value="frequency" disabled>Frecuencia</option>
         </select>
       </div>

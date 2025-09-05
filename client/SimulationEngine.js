@@ -41,8 +41,7 @@ export default class SimulationEngine {
       case 'cost':
         return this._calculateCost(simulationData);
       case 'bottleneck':
-        // Placeholder for future implementation
-        return 0;
+        return this._calculateBottleneck(simulationData);
       case 'frequency':
         // Placeholder for future implementation
         return 0;
@@ -62,6 +61,25 @@ export default class SimulationEngine {
           }
           break;
         // Add other distributions here in the future
+        case 'fixed':
+          return value || 0;
+      }
+    }
+    return 0;
+  }
+
+  _calculateBottleneck(simulationData) {
+    if (simulationData && simulationData.waitingTime) {
+      const { distribution, min, mode, max, value } = simulationData.waitingTime;
+
+      // For now, we'll just use the raw values, similar to cycle time.
+      // A real simulation would generate this data.
+       switch (distribution) {
+        case 'triangular':
+          if (typeof min === 'number' && typeof mode === 'number' && typeof max === 'number') {
+            return (min + mode + max) / 3;
+          }
+          break;
         case 'fixed':
           return value || 0;
       }
