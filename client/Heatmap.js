@@ -167,15 +167,19 @@ export default class Heatmap {
   }
 
   createHeatmap() {
-    const viewport = query('g.djs-viewport', this._canvas.getContainer());
+    // Get the layer for overlays. This is the robust, API-approved way.
+    const layer = this._canvas.getLayer('overlays');
 
-    if (!viewport) {
-      console.error('[Heatmap Plugin] Could not find SVG viewport to attach heatmap layer.');
+    if (!layer) {
+      console.error('[Heatmap Plugin] Could not find overlays layer to attach heatmap.');
       return;
     }
 
     this._heatmapLayer = domify('<g class="heatmap-layer"></g>');
-    viewport.prepend(this._heatmapLayer); // Prepend to draw underneath other elements like text
+
+    // Prepend to the layer. This ensures our heatmap is drawn below
+    // other overlays (like context pads) but above the diagram elements.
+    layer.prepend(this._heatmapLayer);
 
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
