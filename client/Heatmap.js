@@ -223,6 +223,12 @@ export default class Heatmap {
 
         this._heatmapBBox = bbox; // Store the bbox for coordinate translation
 
+        // Position the canvas element at the top-left corner of the diagram's content.
+        // The transform for pan/zoom will be applied on top of this base position.
+        this._heatmapCanvas.style.position = 'absolute';
+        this._heatmapCanvas.style.left = `${bbox.x}px`;
+        this._heatmapCanvas.style.top = `${bbox.y}px`;
+
         // Set the canvas drawing buffer size to the full diagram size
         this._heatmapCanvas.width = bbox.width;
         this._heatmapCanvas.height = bbox.height;
