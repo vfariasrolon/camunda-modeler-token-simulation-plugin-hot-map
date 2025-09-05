@@ -31,6 +31,8 @@ __webpack_require__.r(__webpack_exports__);
 // SVG Icons for buttons
 const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
 const BrushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34c-.39-.39-1.02-.39-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>`;
+const PlusIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
+const MinusIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M19 13H5v-2h14v2z"/></svg>`;
 
 function createIcon(svg) {
   return function Icon(className = '') {
@@ -40,6 +42,8 @@ function createIcon(svg) {
 
 const BroomIcon = createIcon(BroomIconSVG);
 const BrushIcon = createIcon(BrushIconSVG);
+const PlusIcon = createIcon(PlusIconSVG);
+const MinusIcon = createIcon(MinusIconSVG);
 
 class Heatmap {
   constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
@@ -50,6 +54,8 @@ class Heatmap {
     this._toggleMode = toggleMode;
 
     this._heatmap = null;
+    this._radius = 20;
+    this._blur = 10;
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
@@ -64,7 +70,7 @@ class Heatmap {
 
   _init() {
     const generateButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
-      <div class="bts-entry" title="Generate Heatmap from Extension Properties">
+      <div class="bts-entry" title="Generate Heatmap">
         ${BrushIcon()}
       </div>
     `);
@@ -78,6 +84,40 @@ class Heatmap {
     `);
     min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(clearButton, 'click', () => this.destroyHeatmap());
     this._tokenSimulationPalette.addEntry(clearButton, 5);
+
+    // Add separator
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)('<hr class="bts-entry-separator">'), 6);
+
+    // Add controls
+    const radiusPlusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Increase Radius">${PlusIcon('radius-plus')}</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(radiusPlusButton, 'click', () => this._adjustRadius(5));
+    this._tokenSimulationPalette.addEntry(radiusPlusButton, 7);
+
+    const radiusMinusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Decrease Radius">${MinusIcon('radius-minus')}</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(radiusMinusButton, 'click', () => this._adjustRadius(-5));
+    this._tokenSimulationPalette.addEntry(radiusMinusButton, 8);
+
+    const blurPlusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Increase Blur">${PlusIcon('blur-plus')}</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(blurPlusButton, 'click', () => this._adjustBlur(5));
+    this._tokenSimulationPalette.addEntry(blurPlusButton, 9);
+
+    const blurMinusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Decrease Blur">${MinusIcon('blur-minus')}</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(blurMinusButton, 'click', () => this._adjustBlur(-5));
+    this._tokenSimulationPalette.addEntry(blurMinusButton, 10);
+  }
+
+  _adjustRadius(amount) {
+    this._radius = Math.max(1, this._radius + amount);
+    if (this._heatmap) {
+      this.showHeatmapFromProperties();
+    }
+  }
+
+  _adjustBlur(amount) {
+    this._blur = Math.max(0, this._blur + amount);
+    if (this._heatmap) {
+      this.showHeatmapFromProperties();
+    }
   }
 
   _isSupported(element) {
@@ -135,7 +175,8 @@ class Heatmap {
       this.createHeatmap();
     }
 
-    this.clear();
+    // Don't clear here, allow redraws on top
+    // this.clear();
 
     const { dataPoints, max } = this._getHeatmapData();
 
@@ -147,7 +188,7 @@ class Heatmap {
     this._heatmap
       .data(dataPoints)
       .max(max)
-      .radius(40, 15) // Example: 40px radius, 15px blur
+      .radius(this._radius, this._blur)
       .draw();
   }
 
@@ -172,8 +213,6 @@ class Heatmap {
 
     (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
   }
-
-
 
   clear() {
     if (this._heatmap) {
