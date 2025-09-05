@@ -91,13 +91,13 @@ export default class Heatmap {
   }
 
   _updateTransform() {
-    if (!this._heatmapCanvas) {
+    if (!this._heatmapContainer) {
       return;
     }
     const overlayContainer = query('.djs-overlay-container');
     if (overlayContainer) {
-      this._heatmapCanvas.style.transform = overlayContainer.style.transform;
-      this._heatmapCanvas.style.transformOrigin = overlayContainer.style.transformOrigin;
+      this._heatmapContainer.style.transform = overlayContainer.style.transform;
+      this._heatmapContainer.style.transformOrigin = overlayContainer.style.transformOrigin;
     }
   }
 
