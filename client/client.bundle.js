@@ -137,6 +137,8 @@ class Heatmap {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
+    const bbox = this._heatmapBBox || { x: 0, y: 0 };
+
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
 
@@ -147,9 +149,9 @@ class Heatmap {
 
       return {
         elementId: element.id,
-        // ABSOLUTE coordinates, not relative to bbox
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
+        // Coordinates are now relative to the BBox, which is the canvas's origin
+        x: Math.round(element.x + element.width / 2) - bbox.x,
+        y: Math.round(element.y + element.height / 2) - bbox.y,
         value: value,
         radius: Math.round(Math.max(element.width, element.height) / 1.2)
       };
@@ -226,9 +228,21 @@ class Heatmap {
       if (allShapes.length > 0) {
         const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
         console.log('[Heatmap] Sizing canvas to BBox:', bbox);
-        this._heatmapCanvas.style.width = '99999';
-        this._heatmapCanvas.style.height = '99999999';
-        // NO "top" or "left" style here. Position is handled by transform.
+
+        this._heatmapBBox = bbox; // Store the bbox for coordinate translation
+
+        // Set the canvas drawing buffer size to the full diagram size
+        this._heatmapCanvas.width = bbox.width;
+        this._heatmapCanvas.height = bbox.height;
+
+        // Set the canvas element's display style to match the buffer size.
+        // This prevents the browser from scaling the canvas, which would cause distortion.
+        this._heatmapCanvas.style.width = `${bbox.width}px`;
+        this._heatmapCanvas.style.height = `${bbox.height}px`;
+
+        // The canvas position will be handled by the transform, which is copied
+        // from the bpmn-js viewport. This transform includes the translation (pan)
+        // and scale (zoom). The data points will be translated in the next step.
       }
 
       this._heatmapCanvas.style.pointerEvents = 'none';
@@ -247,6 +261,7 @@ class Heatmap {
 
     this._heatmap = null;
     this._heatmapCanvas = null;
+    this._heatmapBBox = null;
     (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
