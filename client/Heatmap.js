@@ -10,7 +10,8 @@ import {
 } from 'min-dash';
 
 import {
-  is
+  is,
+  isAny
 } from 'bpmn-js/lib/util/ModelUtil';
 
 import {
@@ -33,7 +34,7 @@ function createIcon(svg) {
 const BroomIcon = createIcon(BroomIconSVG);
 const BrushIcon = createIcon(BrushIconSVG);
 
-const DEBOUNCE_DELAY = 10;
+const DEBOUNCE_DELAY = 50; // ms
 
 export default class Heatmap {
   constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
@@ -46,10 +47,10 @@ export default class Heatmap {
     this._heatmap = null;
     this._heatmapContainer = null;
 
-    this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
+    this._debouncedRenderManually = this._debounce(this.renderManually.bind(this), DEBOUNCE_DELAY);
 
-    eventBus.on('canvas.viewbox.changed', this._debouncedUpdateTransform, this);
-    eventBus.on('canvas.resized', this._debouncedUpdateTransform, this);
+    eventBus.on('canvas.viewbox.changed', this._debouncedRenderManually, this);
+    eventBus.on('canvas.resized', this._debouncedRenderManually, this);
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
@@ -89,7 +90,6 @@ export default class Heatmap {
     };
   }
 
-
   _isSupported(element) {
     return isAny(element, [
       'bpmn:Task', 'bpmn:CallActivity', 'bpmn:StartEvent', 'bpmn:EndEvent',
@@ -119,6 +119,12 @@ export default class Heatmap {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
+    const bbox = this._getBBox(allSupportedElements);
+
+    if (!bbox.width || !bbox.height) {
+      return { dataPoints: [], max: 0, bbox };
+    }
+
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
 
@@ -129,25 +135,62 @@ export default class Heatmap {
 
       return {
         elementId: element.id,
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
+        x: Math.round(element.x + element.width / 2) - bbox.x,
+        y: Math.round(element.y + element.height / 2) - bbox.y,
         value: value,
         radius: Math.round(Math.max(element.width, element.height) / 2)
       };
     }).filter(point => point.value > 0);
 
-    return { dataPoints, max: max || 100 };
+    return { dataPoints, max: max || 100, bbox };
   }
 
-  _updateTransform() {
-    if (!this._heatmapContainer) {
+  renderManually() {
+    if (!this._heatmap) {
       return;
     }
-    const overlayContainer = query('.djs-overlay-container');
-    if (overlayContainer) {
-      this._heatmapContainer.style.transform = overlayContainer.style.transform;
-      this._heatmapContainer.style.transformOrigin = overlayContainer.style.transformOrigin;
+
+    const viewbox = this._canvas.viewbox();
+    const scale = viewbox.scale;
+
+    const {
+      dataPoints,
+      max,
+      bbox
+    } = this._getHeatmapData();
+
+    if (!bbox || !bbox.width || !bbox.height) {
+      this._heatmap.setData({ max: 0, data: [] });
+      return;
     }
+
+    const newWidth = Math.round(bbox.width * scale);
+    const newHeight = Math.round(bbox.height * scale);
+    const newX = (bbox.x - viewbox.x) * scale;
+    const newY = (bbox.y - viewbox.y) * scale;
+
+    this._heatmapContainer.style.left = `${newX}px`;
+    this._heatmapContainer.style.top = `${newY}px`;
+    this._heatmapContainer.style.width = `${newWidth}px`;
+    this._heatmapContainer.style.height = `${newHeight}px`;
+
+    const heatmapCanvas = this._heatmapContainer.querySelector('.heatmap-canvas');
+    if (heatmapCanvas) {
+      heatmapCanvas.width = newWidth;
+      heatmapCanvas.height = newHeight;
+    }
+
+    const scaledDataPoints = dataPoints.map(p => ({
+      x: Math.round(p.x * scale),
+      y: Math.round(p.y * scale),
+      value: p.value,
+      radius: Math.round(p.radius * scale)
+    }));
+
+    this._heatmap.setData({
+      max: max,
+      data: scaledDataPoints
+    });
   }
 
   _updateDataAndRedraw() {
@@ -160,18 +203,37 @@ export default class Heatmap {
       this.createHeatmap();
     }
 
-    // if heatmap could not be created
-    if (!this._heatmap) {
-      return;
-    }
-
-    const { dataPoints, max } = this._getHeatmapData();
-
-    this._heatmap.setData({ max: max, data: dataPoints });
+    this.renderManually();
   }
 
   showHeatmapFromProperties() {
     this._updateDataAndRedraw();
+  }
+
+  // A robust, manual bounding box calculation
+  _getBBox(elements) {
+    if (!elements.length) {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+
+    let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+
+    elements.forEach(element => {
+      minX = Math.min(minX, element.x);
+      minY = Math.min(minY, element.y);
+      maxX = Math.max(maxX, element.x + element.width);
+      maxY = Math.max(maxY, element.y + element.height);
+    });
+
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
   }
 
   createHeatmap() {
@@ -181,20 +243,14 @@ export default class Heatmap {
       return;
     }
 
-    this._heatmap = h337.create({ container: parentContainer });
+    // Create a container that we can position and size manually.
+    const heatmapContainer = domify('<div class="heatmap-container" style="position: absolute; top: 0; left: 0;"></div>');
+    heatmapContainer.style.pointerEvents = 'none';
 
-    const canvas = parentContainer.querySelector('.heatmap-canvas');
+    parentContainer.appendChild(heatmapContainer);
+    this._heatmapContainer = heatmapContainer;
 
-    if (canvas) {
-      domClasses(canvas).add('token-simulation-heatmap');
-      this._heatmapContainer = canvas;
-
-      // apply transform on creation
-      this._updateTransform();
-    } else {
-      // failed to create heatmap
-      this._heatmap = null;
-    }
+    this._heatmap = h337.create({ container: heatmapContainer });
 
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
