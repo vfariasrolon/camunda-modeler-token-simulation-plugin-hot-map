@@ -22,8 +22,6 @@ import SimpleHeatSVG from './simpleheat-svg.js';
 // SVG Icons for buttons
 const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
 const BrushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34c-.39-.39-1.02-.39-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>`;
-const PlusIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
-const MinusIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M19 13H5v-2h14v2z"/></svg>`;
 
 function createIcon(svg) {
   return function Icon(className = '') {
@@ -33,8 +31,6 @@ function createIcon(svg) {
 
 const BroomIcon = createIcon(BroomIconSVG);
 const BrushIcon = createIcon(BrushIconSVG);
-const PlusIcon = createIcon(PlusIconSVG);
-const MinusIcon = createIcon(MinusIconSVG);
 
 export default class Heatmap {
   constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
@@ -80,19 +76,19 @@ export default class Heatmap {
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 6);
 
     // Add controls
-    const radiusPlusButton = domify(`<div class="bts-entry" title="Increase Radius">${PlusIcon('radius-plus')}</div>`);
+    const radiusPlusButton = domify(`<div class="bts-entry" title="Increase Radius">R+</div>`);
     domEvent.bind(radiusPlusButton, 'click', () => this._adjustRadius(5));
     this._tokenSimulationPalette.addEntry(radiusPlusButton, 7);
 
-    const radiusMinusButton = domify(`<div class="bts-entry" title="Decrease Radius">${MinusIcon('radius-minus')}</div>`);
+    const radiusMinusButton = domify(`<div class="bts-entry" title="Decrease Radius">R-</div>`);
     domEvent.bind(radiusMinusButton, 'click', () => this._adjustRadius(-5));
     this._tokenSimulationPalette.addEntry(radiusMinusButton, 8);
 
-    const blurPlusButton = domify(`<div class="bts-entry" title="Increase Blur">${PlusIcon('blur-plus')}</div>`);
+    const blurPlusButton = domify(`<div class="bts-entry" title="Increase Blur">B+</div>`);
     domEvent.bind(blurPlusButton, 'click', () => this._adjustBlur(5));
     this._tokenSimulationPalette.addEntry(blurPlusButton, 9);
 
-    const blurMinusButton = domify(`<div class="bts-entry" title="Decrease Blur">${MinusIcon('blur-minus')}</div>`);
+    const blurMinusButton = domify(`<div class="bts-entry" title="Decrease Blur">B-</div>`);
     domEvent.bind(blurMinusButton, 'click', () => this._adjustBlur(-5));
     this._tokenSimulationPalette.addEntry(blurMinusButton, 10);
   }
