@@ -18,7 +18,7 @@ import {
   TOGGLE_MODE_EVENT
 } from 'bpmn-js-token-simulation/lib/util/EventHelper';
 
-import h337 from 'heatmap.js';
+import simpleheat from './simpleheat.js';
 
 // SVG Icons for buttons
 const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
@@ -139,15 +139,13 @@ export default class Heatmap {
       }
       if (value > max) max = value;
 
-      return {
-        elementId: element.id,
-        // Coordinates are now relative to the BBox, which is the canvas's origin
-        x: Math.round(element.x + element.width / 2) - bbox.x,
-        y: Math.round(element.y + element.height / 2) - bbox.y,
-        value: value,
-        radius: Math.round(Math.max(element.width, element.height) / 1.2)
-      };
-    }).filter(point => point.value > 0);
+      // simpleheat expects [x, y, value]
+      return [
+        Math.round(element.x + element.width / 2) - bbox.x, // x
+        Math.round(element.y + element.height / 2) - bbox.y, // y
+        value // value
+      ];
+    }).filter(point => point[2] > 0); // Filter points with no value
 
     return { dataPoints, max: max || 100 };
   }
@@ -166,7 +164,12 @@ export default class Heatmap {
     const { dataPoints, max } = this._getHeatmapData();
     console.log('[Heatmap] Generated data:', { dataPoints, max });
 
-    this._heatmap.setData({ max: max, data: dataPoints });
+    this._heatmap
+      .data(dataPoints)
+      .max(max)
+      .radius(83, 25) // Set radius and blur based on user feedback
+      .draw(0.05); // Draw with a minimum opacity
+
     this._updateTransform(); // Apply the current pan/zoom transform
   }
 
@@ -207,45 +210,38 @@ export default class Heatmap {
       return;
     }
 
-    this._heatmap = h337.create({
-      container: djsContainer
-    });
+    // Manually create canvas element
+    const canvas = domify('<canvas class="heatmap-canvas"></canvas>');
+    this._heatmapCanvas = canvas;
 
-    this._heatmapCanvas = djsContainer.querySelector('.heatmap-canvas');
-    if (this._heatmapCanvas) {
-      // Sizing the canvas to the full diagram dimensions ONCE
-      const allShapes = this._elementRegistry.filter(e =>
-        e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
-      );
-      if (allShapes.length > 0) {
-        const bbox = this._getBBox(allShapes); // Using the manual, safe BBox function
-        console.log('[Heatmap] Sizing canvas to BBox:', bbox);
+    djsContainer.appendChild(canvas);
 
-        this._heatmapBBox = bbox; // Store the bbox for coordinate translation
+    // Sizing the canvas to the full diagram dimensions
+    const allShapes = this._elementRegistry.filter(e =>
+      e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
+    );
 
-        // Position the canvas element at the top-left corner of the diagram's content.
-        // The transform for pan/zoom will be applied on top of this base position.
-        this._heatmapCanvas.style.position = 'absolute';
-        this._heatmapCanvas.style.left = `${bbox.x}px`;
-        this._heatmapCanvas.style.top = `${bbox.y}px`;
+    if (allShapes.length > 0) {
+      const bbox = this._getBBox(allShapes);
+      console.log('[Heatmap] Sizing canvas to BBox:', bbox);
 
-        // Set the canvas drawing buffer size to the full diagram size
-        this._heatmapCanvas.width = bbox.width;
-        this._heatmapCanvas.height = bbox.height;
+      this._heatmapBBox = bbox;
 
-        // Set the canvas element's display style to match the buffer size.
-        // This prevents the browser from scaling the canvas, which would cause distortion.
-        this._heatmapCanvas.style.width = `${bbox.width}px`;
-        this._heatmapCanvas.style.height = `${bbox.height}px`;
+      // Set the canvas drawing buffer size
+      canvas.width = bbox.width;
+      canvas.height = bbox.height;
 
-        // The canvas position will be handled by the transform, which is copied
-        // from the bpmn-js viewport. This transform includes the translation (pan)
-        // and scale (zoom). The data points will be translated in the next step.
-      }
+      // Set the canvas element's display style to match the buffer size
+      canvas.style.width = `${bbox.width}px`;
+      canvas.style.height = `${bbox.height}px`;
 
-      this._heatmapCanvas.style.pointerEvents = 'none';
-      this._heatmapCanvas.getContext('2d', { willReadFrequently: true });
+      // The canvas position will be handled by the transform
     }
+
+    canvas.style.pointerEvents = 'none';
+
+    // Initialize simpleheat with the created canvas
+    this._heatmap = simpleheat(canvas);
 
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
@@ -265,7 +261,8 @@ export default class Heatmap {
 
   clear() {
     if (this._heatmap) {
-      this._heatmap.setData({ max: 0, data: [] });
+      this._heatmap.clear();
+      this._heatmap.draw(); // Redraw the empty canvas
     }
   }
 }
