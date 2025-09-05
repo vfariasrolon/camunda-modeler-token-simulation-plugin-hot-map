@@ -131,6 +131,11 @@ export default class Heatmap {
 
     const { dataPoints, max } = this._getHeatmapData();
 
+    // ensure layer exists before drawing
+    if (!this._heatmapLayer) {
+      return;
+    }
+
     // draw new heatmap
     dataPoints.forEach(point => {
 
