@@ -12,14 +12,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ Heatmap)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
 /* harmony import */ var min_dash__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dash */ "./node_modules/min-dash/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
-/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
-/* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./simpleheat-svg.js */ "./client/simpleheat-svg.js");
-/* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
-
-
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
 
 
 
@@ -41,19 +37,24 @@ function createIcon(svg) {
 const BroomIcon = createIcon(BroomIconSVG);
 const BrushIcon = createIcon(BrushIconSVG);
 
+const LOW_COLOR = '#54b454'; // green
+const MID_COLOR = '#ffc800'; // yellow
+const HIGH_COLOR = '#cc4237'; // red
+
 class Heatmap {
-  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
+  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode, modeling) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
+    this._modeling = modeling;
 
-    this._heatmap = null;
+    this._originalColors = new Map();
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
-    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
-    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.TOGGLE_MODE_EVENT, event => {
+    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
+    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.TOGGLE_MODE_EVENT, event => {
       if (!event.active) {
         this.destroyHeatmap();
       }
@@ -63,20 +64,20 @@ class Heatmap {
   }
 
   _init() {
-    const generateButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+    const generateButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)(`
       <div class="bts-entry" title="Generate Heatmap from Extension Properties">
         ${BrushIcon()}
       </div>
     `);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(generateButton, 'click', () => this.showHeatmapFromProperties());
+    min_dom__WEBPACK_IMPORTED_MODULE_1__.event.bind(generateButton, 'click', () => this.showHeatmapFromProperties());
     this._tokenSimulationPalette.addEntry(generateButton, 4);
 
-    const clearButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+    const clearButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)(`
       <div class="bts-entry" title="Clear Heatmap">
         ${BroomIcon()}
       </div>
     `);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(clearButton, 'click', () => this.destroyHeatmap());
+    min_dom__WEBPACK_IMPORTED_MODULE_1__.event.bind(clearButton, 'click', () => this.destroyHeatmap());
     this._tokenSimulationPalette.addEntry(clearButton, 5);
   }
 
@@ -89,11 +90,11 @@ class Heatmap {
   }
 
   _getSimulationTime(element) {
-    const businessObject = element.businessObject;
+    const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.getBusinessObject)(element);
     if (!businessObject.extensionElements || !businessObject.extensionElements.values) {
       return 0;
     }
-    const properties = (0,min_dash__WEBPACK_IMPORTED_MODULE_3__.find)(businessObject.extensionElements.values, v => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(v, 'camunda:Properties'));
+    const properties = (0,min_dash__WEBPACK_IMPORTED_MODULE_3__.find)(businessObject.extensionElements.values, v => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(v, 'camunda:Properties'));
     if (!properties || !properties.values) {
       return 0;
     }
@@ -111,81 +112,111 @@ class Heatmap {
 
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
-
       if (value > max) max = value;
-
-      // The new library expects data as [x, y, value]
-      return [
-        Math.round(element.x + element.width / 2),
-        Math.round(element.y + element.height / 2),
-        value
-      ];
-    }).filter(point => point[2] > 0);
+      return { element, value };
+    }).filter(point => point.value > 0);
 
     return { dataPoints, max: max || 1 };
   }
 
   _updateDataAndRedraw() {
     if (this._toggleMode.active) {
-      // console.warn('[Heatmap Plugin] Please stop simulation before generating a heatmap.');
       return;
     }
 
-    if (!this._heatmap) {
-      this.createHeatmap();
-    }
-
+    // Always clear previous state before drawing new one
     this.clear();
 
     const { dataPoints, max } = this._getHeatmapData();
 
-    if (!this._heatmap) {
-      return;
-    }
+    const elementsToColor = [];
 
-    // configure and draw new heatmap
-    this._heatmap
-      .data(dataPoints)
-      .max(max)
-      .radius(40, 15) // Example: 40px radius, 15px blur
-      .draw();
+    dataPoints.forEach(point => {
+      const { element, value } = point;
+      const newColor = this._getColor(value, max);
+      const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.getBusinessObject)(element);
+
+      // Store original color if not already stored
+      if (!this._originalColors.has(element.id)) {
+        const originalColor = {
+          fill: businessObject.get('di:fill'),
+          stroke: businessObject.get('di:stroke')
+        };
+        this._originalColors.set(element.id, originalColor);
+      }
+
+      elementsToColor.push({
+        element: element,
+        colors: {
+          fill: newColor,
+          stroke: '#000000' // Keep stroke black for better visibility
+        }
+      });
+    });
+
+    // Apply colors individually.
+    // The setColor command is recorded on the command stack, so this is undo-able.
+    if (elementsToColor.length > 0) {
+      elementsToColor.forEach(c => {
+        this._modeling.setColor([c.element], {
+          fill: c.colors.fill,
+          stroke: c.colors.stroke
+        });
+      });
+
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    }
+  }
+
+  _getColor(value, max) {
+    const ratio = value / max;
+    if (ratio < 0.5) {
+      return LOW_COLOR;
+    } else if (ratio < 0.8) {
+      return MID_COLOR;
+    } else {
+      return HIGH_COLOR;
+    }
   }
 
   showHeatmapFromProperties() {
     this._updateDataAndRedraw();
   }
 
-  createHeatmap() {
-    if (this._heatmap) {
+  destroyHeatmap() {
+    if (this._originalColors.size === 0) {
       return;
     }
 
-    this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).add('heatmap-shown');
-  }
-
-  destroyHeatmap() {
-    if (this._heatmap) {
-      this._heatmap.destroy();
-      this._heatmap = null;
+    const elementsToRestore = [];
+    for (const [id, colors] of this._originalColors.entries()) {
+      const element = this._elementRegistry.get(id);
+      if (element) {
+        elementsToRestore.push({ element, colors });
+      }
     }
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
+    // Restore colors individually
+    elementsToRestore.forEach(item => {
+      this._modeling.setColor([item.element], {
+        fill: item.colors.fill,
+        stroke: item.colors.stroke
+      });
+    });
+
+    this._originalColors.clear();
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
   }
-
-
 
   clear() {
-    if (this._heatmap) {
-      this._heatmap.clear();
-    }
+    this.destroyHeatmap();
   }
 }
 
-Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
+Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode', 'modeling'];
 
 function isAny(element, types) {
-  return types.some(t => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, t));
+  return types.some(t => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, t));
 }
 
 
@@ -320,259 +351,6 @@ TimeTracker.prototype.getRecordedTimes = function() {
 TimeTracker.$inject = [
   'eventBus'
 ];
-
-
-/***/ }),
-
-/***/ "./client/simpleheat-svg.js":
-/*!**********************************!*\
-  !*** ./client/simpleheat-svg.js ***!
-  \**********************************/
-/***/ ((module) => {
-
-"use strict";
-
-
-// Default gradient copied from the original example
-const defaultGradient = {
-  0.4: 'blue',
-  0.6: 'cyan',
-  0.7: 'lime',
-  0.8: 'yellow',
-  1.0: 'red'
-};
-
-/**
- * A customized version of simpleheatSVG, adapted to work with bpmn-js.
- * Instead of an SVG element ID, it takes a bpmn-js `canvas` object.
- *
- * @param {Canvas} canvas The bpmn-js canvas.
- */
-function SimpleHeatSVG(canvas) {
-  if (!canvas) {
-    throw new Error('bpmn-js canvas required');
-  }
-
-  if (!(this instanceof SimpleHeatSVG)) {
-    return new SimpleHeatSVG(canvas);
-  }
-
-  this._canvas = canvas;
-
-  // Robustly find the <defs> element within the canvas's SVG container.
-  const svg = canvas.getContainer().querySelector('svg');
-  if (!svg) {
-    throw new Error('Could not find SVG element in canvas container.');
-  }
-
-  let defs = svg.querySelector('defs');
-  if (!defs) {
-    // If <defs> does not exist, create and append it. This is a fallback.
-    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    svg.prepend(defs);
-  }
-  this._defs = defs;
-
-  this._layer = canvas.getLayer('overlays');
-
-  if (!this._layer) {
-    throw new Error('Could not get overlays layer from canvas.');
-  }
-
-  this._max = 1;
-  this._data = [];
-  this._heatGroup = null;
-
-  this._setupSVG();
-}
-
-SimpleHeatSVG.prototype = {
-
-  defaultRadius: 25,
-  defaultBlur: 15,
-
-  _setupSVG: function() {
-    const ns = 'http://www.w3.org/2000/svg';
-
-    // --- Create Gradient ---
-    // Check if gradient already exists to avoid duplicates
-    if (!this._defs.querySelector('#heatmap-blur-gradient')) {
-      const radialGradient = document.createElementNS(ns, 'radialGradient');
-      radialGradient.id = 'heatmap-blur-gradient';
-      this._defs.appendChild(radialGradient);
-      this._blurGradient = radialGradient;
-    } else {
-      this._blurGradient = this._defs.querySelector('#heatmap-blur-gradient');
-    }
-
-    // --- Create Filter ---
-    // Check if filter already exists
-    if (!this._defs.querySelector('#heatmap-colorize')) {
-      const filter = document.createElementNS(ns, 'filter');
-      filter.id = 'heatmap-colorize';
-      this._defs.appendChild(filter);
-
-      const feComponentTransferAlpha = document.createElementNS(ns, 'feComponentTransfer');
-      feComponentTransferAlpha.setAttribute('in', 'SourceGraphic');
-      feComponentTransferAlpha.setAttribute('result', 'boostedAlpha');
-      filter.appendChild(feComponentTransferAlpha);
-
-      const feFuncA = document.createElementNS(ns, 'feFuncA');
-      feFuncA.setAttribute('type', 'gamma');
-      feFuncA.setAttribute('exponent', '0.75');
-      feComponentTransferAlpha.appendChild(feFuncA);
-
-      const feColorMatrix = document.createElementNS(ns, 'feColorMatrix');
-      feColorMatrix.setAttribute('type', 'matrix');
-      feColorMatrix.setAttribute('values', '0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 1 0');
-      feColorMatrix.setAttribute('in', 'boostedAlpha');
-      feColorMatrix.setAttribute('result', 'grayscale');
-      filter.appendChild(feColorMatrix);
-
-      const feComponentTransferColor = document.createElementNS(ns, 'feComponentTransfer');
-      feComponentTransferColor.setAttribute('in', 'grayscale');
-      feComponentTransferColor.setAttribute('result', 'colorized');
-      filter.appendChild(feComponentTransferColor);
-
-      this._feFuncR = document.createElementNS(ns, 'feFuncR');
-      this._feFuncR.setAttribute('type', 'table');
-      feComponentTransferColor.appendChild(this._feFuncR);
-
-      this._feFuncG = document.createElementNS(ns, 'feFuncG');
-      this._feFuncG.setAttribute('type', 'table');
-      feComponentTransferColor.appendChild(this._feFuncG);
-
-      this._feFuncB = document.createElementNS(ns, 'feFuncB');
-      this._feFuncB.setAttribute('type', 'table');
-      feComponentTransferColor.appendChild(this._feFuncB);
-    } else {
-      // If filter exists, just get the references to the color functions
-      this._feFuncR = this._defs.querySelector('#heatmap-colorize feFuncR');
-      this._feFuncG = this._defs.querySelector('#heatmap-colorize feFuncG');
-      this._feFuncB = this._defs.querySelector('#heatmap-colorize feFuncB');
-    }
-
-    // --- Create Heatmap Group ---
-    // This is the group where the circles will be drawn.
-    this._heatGroup = document.createElementNS(ns, 'g');
-    this._heatGroup.setAttribute('class', 'heatmap-layer');
-    this._heatGroup.setAttribute('filter', 'url(#heatmap-colorize)');
-
-    // Prepend to the layer to be below other overlays.
-    this._layer.prepend(this._heatGroup);
-
-    // Set default gradient
-    this.gradient(defaultGradient);
-  },
-
-  data: function(data) {
-    this._data = data;
-    return this;
-  },
-
-  max: function(max) {
-    this._max = max;
-    return this;
-  },
-
-  add: function(point) {
-    this._data.push(point);
-    return this;
-  },
-
-  clear: function() {
-    this._data = [];
-    if (this._heatGroup) {
-      this._heatGroup.innerHTML = '';
-    }
-    return this;
-  },
-
-  radius: function(r, blur) {
-    blur = blur === undefined ? this.defaultBlur : blur;
-    r = r === undefined ? this.defaultRadius : r;
-    this._r = r + blur;
-
-    const blurStopRatio = r / this._r;
-
-    // Use domify from min-dom would be better, but to keep this standalone, use innerHTML
-    this._blurGradient.innerHTML = `
-      <stop offset="0%" stop-color="white" stop-opacity="1"></stop>
-      <stop offset="${blurStopRatio * 100}%" stop-color="white" stop-opacity="1"></stop>
-      <stop offset="100%" stop-color="white" stop-opacity="0"></stop>
-    `;
-
-    return this;
-  },
-
-  gradient: function(grad) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const gradient = ctx.createLinearGradient(0, 0, 0, 256);
-
-    canvas.width = 1;
-    canvas.height = 256;
-
-    for (var i in grad) {
-      gradient.addColorStop(+i, grad[i]);
-    }
-
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 1, 256);
-
-    const pixels = ctx.getImageData(0, 0, 1, 256).data;
-    const r = [], g = [], b = [];
-
-    for (let i = 0; i < pixels.length; i += 4) {
-      r.push(pixels[i] / 255);
-      g.push(pixels[i + 1] / 255);
-      b.push(pixels[i + 2] / 255);
-    }
-
-    this._feFuncR.setAttribute('tableValues', r.join(' '));
-    this._feFuncG.setAttribute('tableValues', g.join(' '));
-    this._feFuncB.setAttribute('tableValues', b.join(' '));
-
-    return this;
-  },
-
-  draw: function(minOpacity) {
-    if (!this._r) this.radius(this.defaultRadius, this.defaultBlur);
-
-    const ns = 'http://www.w3.org/2000/svg';
-    minOpacity = minOpacity === undefined ? 0.05 : minOpacity;
-
-    // clear previous heatmap content
-    this._heatGroup.innerHTML = '';
-
-    for (var i = 0, len = this._data.length, p; i < len; i++) {
-      p = this._data[i];
-
-      const circle = document.createElementNS(ns, 'circle');
-      circle.setAttribute('cx', p[0]);
-      circle.setAttribute('cy', p[1]);
-      circle.setAttribute('r', this._r);
-      circle.setAttribute('fill', 'url(#heatmap-blur-gradient)');
-
-      const opacity = Math.min(Math.max(p[2] / this._max, minOpacity), 1);
-      circle.setAttribute('opacity', opacity);
-
-      this._heatGroup.appendChild(circle);
-    }
-    return this;
-  },
-
-  destroy: function() {
-    if (this._heatGroup) {
-      this._heatGroup.remove();
-      this._heatGroup = null;
-    }
-    // Note: We are not removing the defs (filter, gradient) because other
-    // instances might be using them. They are lightweight anyway.
-  }
-};
-
-module.exports = SimpleHeatSVG;
 
 
 /***/ }),
