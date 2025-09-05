@@ -161,14 +161,16 @@ export default class Heatmap {
       if (!this._heatmap) return; // createHeatmap could have failed
     }
 
-    const { dataPoints, max } = this._getHeatmapData();
-    console.log('[Heatmap Plugin] Generated data:', { dataPoints, max });
-
-    this._heatmap
-      .data(dataPoints)
-      .max(max)
-      .radius(83, 25) // Set radius and blur based on user feedback
-      .draw(0.05); // Draw with a minimum opacity
+    // --- CANVAS RENDER TEST ---
+    console.log(`[Heatmap Plugin] Performing canvas render test. Size: ${this._heatmapCanvas.width}x${this._heatmapCanvas.height}`);
+    const ctx = this._heatmapCanvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+      ctx.fillRect(0, 0, this._heatmapCanvas.width, this._heatmapCanvas.height);
+    } else {
+      console.error('[Heatmap Plugin] Could not get 2D context for canvas render test.');
+    }
+    // --- END CANVAS RENDER TEST ---
 
     this._updateTransform(); // Apply the current pan/zoom transform
   }
@@ -204,9 +206,9 @@ export default class Heatmap {
   }
 
   createHeatmap() {
-    const djsContainer = query('.djs-container');
-    if (!djsContainer) {
-      console.error('[Heatmap Plugin] Could not find .djs-container to initialize heatmap.');
+    const overlayContainer = query('.djs-overlay-container');
+    if (!overlayContainer) {
+      console.error('[Heatmap Plugin] Could not find .djs-overlay-container to initialize heatmap.');
       return;
     }
 
@@ -214,7 +216,7 @@ export default class Heatmap {
     const canvas = domify('<canvas class="heatmap-canvas"></canvas>');
     this._heatmapCanvas = canvas;
 
-    djsContainer.appendChild(canvas);
+    overlayContainer.appendChild(canvas);
 
     // Sizing the canvas to the full diagram dimensions
     const allShapes = this._elementRegistry.filter(e =>
@@ -239,9 +241,12 @@ export default class Heatmap {
     }
 
     canvas.style.pointerEvents = 'none';
+    canvas.style.position = 'absolute';
+    canvas.style.zIndex = 9500;
 
     // Initialize simpleheat with the created canvas
     this._heatmap = simpleheat(canvas);
+    console.log('[Heatmap Plugin] simpleheat library initialized on canvas:', canvas);
 
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
