@@ -42,13 +42,12 @@ const MID_COLOR = '#ffc800'; // yellow
 const HIGH_COLOR = '#cc4237'; // red
 
 class Heatmap {
-  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode, modeling) {
+  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
-    this._modeling = modeling;
 
     this._originalColors = new Map();
 
@@ -129,41 +128,26 @@ class Heatmap {
 
     const { dataPoints, max } = this._getHeatmapData();
 
-    const elementsToColor = [];
-
     dataPoints.forEach(point => {
       const { element, value } = point;
       const newColor = this._getColor(value, max);
-      const businessObject = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.getBusinessObject)(element);
+
+      const gfx = this._elementRegistry.getGraphics(element);
 
       // Store original color if not already stored
       if (!this._originalColors.has(element.id)) {
-        const originalColor = {
-          fill: businessObject.get('di:fill'),
-          stroke: businessObject.get('di:stroke')
-        };
-        this._originalColors.set(element.id, originalColor);
+        this._originalColors.set(element.id, {
+          fill: gfx.style.fill,
+          stroke: gfx.style.stroke
+        });
       }
 
-      elementsToColor.push({
-        element: element,
-        colors: {
-          fill: newColor,
-          stroke: '#000000' // Keep stroke black for better visibility
-        }
-      });
+      // Directly manipulate SVG attributes, bypassing the modeling service
+      gfx.style.fill = newColor;
+      gfx.style.stroke = '#000000'; // Keep stroke black
     });
 
-    // Apply colors individually.
-    // The setColor command is recorded on the command stack, so this is undo-able.
-    if (elementsToColor.length > 0) {
-      elementsToColor.forEach(c => {
-        this._modeling.setColor([c.element], {
-          fill: c.colors.fill,
-          stroke: c.colors.stroke
-        });
-      });
-
+    if (dataPoints.length > 0) {
       (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).add('heatmap-shown');
     }
   }
@@ -188,21 +172,14 @@ class Heatmap {
       return;
     }
 
-    const elementsToRestore = [];
     for (const [id, colors] of this._originalColors.entries()) {
       const element = this._elementRegistry.get(id);
       if (element) {
-        elementsToRestore.push({ element, colors });
+        const gfx = this._elementRegistry.getGraphics(element);
+        gfx.style.fill = colors.fill;
+        gfx.style.stroke = colors.stroke;
       }
     }
-
-    // Restore colors individually
-    elementsToRestore.forEach(item => {
-      this._modeling.setColor([item.element], {
-        fill: item.colors.fill,
-        stroke: item.colors.stroke
-      });
-    });
 
     this._originalColors.clear();
     (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
@@ -213,7 +190,7 @@ class Heatmap {
   }
 }
 
-Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode', 'modeling'];
+Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
 
 function isAny(element, types) {
   return types.some(t => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, t));
