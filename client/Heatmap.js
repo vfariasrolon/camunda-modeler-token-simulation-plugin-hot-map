@@ -18,6 +18,8 @@ import {
   TOGGLE_MODE_EVENT
 } from 'bpmn-js-token-simulation/lib/util/EventHelper';
 
+import simpleheatSVG from './simpleheatSVG.js';
+
 // SVG Icons for buttons
 const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
 const BrushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34c-.39-.39-1.02-.39-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>`;
@@ -39,7 +41,7 @@ export default class Heatmap {
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
 
-    this._heatmapLayer = null;
+    this._heatmap = null;
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
@@ -101,98 +103,37 @@ export default class Heatmap {
 
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
-
       if (value > max) max = value;
-
-      return {
-        // Absolute coordinates, relative to the diagram origin
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
-        value: value,
-        radius: Math.round(Math.max(element.width, element.height) / 1.2)
-      };
-    }).filter(point => point.value > 0);
+      return [
+        Math.round(element.x + element.width / 2),
+        Math.round(element.y + element.height / 2),
+        value
+      ];
+    }).filter(point => point[2] > 0);
 
     return { dataPoints, max: max || 100 };
   }
 
   _updateDataAndRedraw() {
     if (this._toggleMode.active) {
-      // console.warn('[Heatmap Plugin] Please stop simulation before generating a heatmap.');
       return;
     }
 
-    if (!this._heatmapLayer) {
+    if (!this._heatmap) {
       this.createHeatmap();
     }
 
-    // clear previous heatmap
-    this.clear();
-
-    const { dataPoints, max } = this._getHeatmapData();
-
-    // Update the filter with the correct gradient
-    const grad = this._createGradient(this.defaultGradient);
-    const r = query('feFuncR', this._filter);
-    const g = query('feFuncG', this._filter);
-    const b = query('feFuncB', this._filter);
-    r.setAttribute('tableValues', grad.r);
-    g.setAttribute('tableValues', grad.g);
-    b.setAttribute('tableValues', grad.b);
-
-    // ensure layer exists before drawing
-    if (!this._heatmapLayer) {
+    if (!this._heatmap) {
       return;
     }
 
-    // draw new heatmap
-    dataPoints.forEach(point => {
-      const circle = domify(
-        `<circle cx="${point.x}" cy="${point.y}" r="${point.radius}" fill="black" fill-opacity="${point.value / max}" />`
-      );
-      this._heatmapLayer.appendChild(circle);
-    });
-  }
+    const { dataPoints, max } = this._getHeatmapData();
 
-
-  defaultGradient = {
-    0.4: 'blue',
-    0.6: 'cyan',
-    0.7: 'lime',
-    0.8: 'yellow',
-    1.0: 'red'
-  }
-
-  _createGradient(grad) {
-    const canvas = domify('<canvas></canvas>');
-    const ctx = canvas.getContext('2d');
-    const gradient = ctx.createLinearGradient(0, 0, 0, 256);
-
-    canvas.width = 1;
-    canvas.height = 256;
-
-    for (const i in grad) {
-      gradient.addColorStop(parseFloat(i), grad[i]);
-    }
-
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 1, 256);
-
-    const data = ctx.getImageData(0, 0, 1, 256).data;
-    const len = data.length;
-    const table = { r: [], g: [], b: [] };
-
-    for (let i = 0; i < len; i += 4) {
-      table.r.push((data[i] / 255).toFixed(4));
-      table.g.push((data[i + 1] / 255).toFixed(4));
-      table.b.push((data[i + 2] / 255).toFixed(4));
-    }
-
-    return {
-      r: table.r.join(' '),
-      g: table.g.join(' '),
-      b: table.b.join(' ')
-    };
+    this._heatmap
+      .data(dataPoints)
+      .max(max)
+      .radius(80, 25)
+      .draw();
   }
 
   showHeatmapFromProperties() {
@@ -200,60 +141,27 @@ export default class Heatmap {
   }
 
   createHeatmap() {
-    const layer = this._canvas.getLayer('overlays');
     const svg = query('svg', this._canvas.getContainer());
-
-    if (!layer || !svg) {
-      console.error('[Heatmap Plugin] Could not find SVG layer or root to attach heatmap.');
+    if (!svg) {
+      console.error('[Heatmap Plugin] Could not find root SVG element.');
       return;
     }
-
-    // Create defs for filters if not present
-    let defs = query('defs', svg);
-    if (!defs) {
-      defs = domify('<defs></defs>');
-      svg.prepend(defs);
-    }
-
-    // Create and append the heatmap filter
-    // Note: The gradient values will be populated later.
-    const filter = domify(`
-      <filter id="heatmap-filter">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="15" result="blurred" />
-        <feComponentTransfer in="blurred" result="colored">
-          <feFuncR type="table" tableValues="0 1 1" />
-          <feFuncG type="table" tableValues="0 1 0" />
-          <feFuncB type="table" tableValues="0 0 0" />
-        </feComponentTransfer>
-      </filter>
-    `);
-    this._filter = filter;
-    defs.appendChild(filter);
-
-    this._heatmapLayer = domify('<g class="heatmap-layer"></g>');
-    this._heatmapLayer.setAttribute('filter', 'url(#heatmap-filter)');
-    layer.prepend(this._heatmapLayer);
-
+    this._heatmap = simpleheatSVG(svg);
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   destroyHeatmap() {
-    if (this._heatmapLayer) {
-      this._heatmapLayer.remove();
-      this._heatmapLayer = null;
+    if (this._heatmap) {
+      this.clear();
+      // The library's internal defs and group are not easily removable without modification
+      // For now, clearing is sufficient to hide it.
     }
-
-    if (this._filter) {
-      this._filter.remove();
-      this._filter = null;
-    }
-
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
   clear() {
-    if (this._heatmapLayer) {
-      this._heatmapLayer.innerHTML = '';
+    if (this._heatmap) {
+      this._heatmap.clear().draw();
     }
   }
 }
