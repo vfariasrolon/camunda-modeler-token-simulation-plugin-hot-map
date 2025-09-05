@@ -18,8 +18,6 @@ import {
   TOGGLE_MODE_EVENT
 } from 'bpmn-js-token-simulation/lib/util/EventHelper';
 
-import simpleheat from './simpleheat.js';
-
 // SVG Icons for buttons
 const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
 const BrushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34c-.39-.39-1.02-.39-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>`;
@@ -33,8 +31,6 @@ function createIcon(svg) {
 const BroomIcon = createIcon(BroomIconSVG);
 const BrushIcon = createIcon(BrushIconSVG);
 
-const DEBOUNCE_DELAY = 10;
-
 export default class Heatmap {
   constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
     this._canvas = canvas;
@@ -43,13 +39,7 @@ export default class Heatmap {
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
 
-    this._heatmap = null;
-    this._heatmapCanvas = null;
-
-    this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
-
-    eventBus.on('canvas.viewbox.changed', this._debouncedUpdateTransform, this);
-    eventBus.on('canvas.resized', this._debouncedUpdateTransform, this);
+    this._heatmapLayer = null;
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
@@ -78,26 +68,6 @@ export default class Heatmap {
     `);
     domEvent.bind(clearButton, 'click', () => this.destroyHeatmap());
     this._tokenSimulationPalette.addEntry(clearButton, 5);
-  }
-
-  _debounce(func, delay) {
-    let timeout;
-    return function(...args) {
-      const context = this;
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func.apply(context, args), delay);
-    };
-  }
-
-  _updateTransform() {
-    if (!this._heatmapCanvas) {
-      return;
-    }
-    const overlayContainer = query('.djs-overlay-container');
-    if (overlayContainer) {
-      this._heatmapCanvas.style.transform = overlayContainer.style.transform;
-      this._heatmapCanvas.style.transformOrigin = overlayContainer.style.transformOrigin;
-    }
   }
 
   _isSupported(element) {
@@ -129,143 +99,94 @@ export default class Heatmap {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
-    const bbox = this._heatmapBBox || { x: 0, y: 0 };
-
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
 
-      if (value > 0) {
-        console.log(`[Heatmap Plugin] -> Element ID: ${element.id}, Time: ${value}`);
-      }
       if (value > max) max = value;
 
-      // simpleheat expects [x, y, value]
-      return [
-        Math.round(element.x + element.width / 2) - bbox.x, // x
-        Math.round(element.y + element.height / 2) - bbox.y, // y
-        value // value
-      ];
-    }).filter(point => point[2] > 0); // Filter points with no value
+      return {
+        // Absolute coordinates, relative to the diagram origin
+        x: Math.round(element.x + element.width / 2),
+        y: Math.round(element.y + element.height / 2),
+        value: value,
+        radius: Math.round(Math.max(element.width, element.height) / 1.2)
+      };
+    }).filter(point => point.value > 0);
 
     return { dataPoints, max: max || 100 };
   }
 
   _updateDataAndRedraw() {
     if (this._toggleMode.active) {
-      console.warn('[Heatmap Plugin] Please stop simulation before generating a heatmap.');
+      // console.warn('[Heatmap Plugin] Please stop simulation before generating a heatmap.');
       return;
     }
 
-    if (!this._heatmap) {
+    if (!this._heatmapLayer) {
       this.createHeatmap();
-      if (!this._heatmap) return; // createHeatmap could have failed
     }
 
+    // clear previous heatmap
+    this.clear();
+
     const { dataPoints, max } = this._getHeatmapData();
-    console.log('[Heatmap Plugin] Generated data:', { dataPoints, max });
 
-    this._heatmap
-      .data(dataPoints)
-      .max(max)
-      .radius(83, 25) // Set radius and blur based on user feedback
-      .draw(0.05); // Draw with a minimum opacity
+    // draw new heatmap
+    dataPoints.forEach(point => {
 
-    this._updateTransform(); // Apply the current pan/zoom transform
+      const color = this._getColor(point.value, max);
+
+      const circle = domify(
+        `<circle cx="${point.x}" cy="${point.y}" r="${point.radius}" fill="${color}" />`
+      );
+
+      this._heatmapLayer.appendChild(circle);
+    });
+  }
+
+  _getColor(value, max) {
+    const ratio = value / max;
+
+    // simple green-yellow-red gradient
+    if (ratio < 0.5) {
+      return 'rgba(0, 255, 0, 0.5)';
+    } else if (ratio < 0.8) {
+      return 'rgba(255, 255, 0, 0.5)';
+    } else {
+      return 'rgba(255, 0, 0, 0.5)';
+    }
   }
 
   showHeatmapFromProperties() {
     this._updateDataAndRedraw();
   }
 
-  // A robust, manual bounding box calculation
-  _getBBox(elements) {
-    if (!elements.length) {
-      return { x: 0, y: 0, width: 0, height: 0 };
-    }
-
-    let minX = Infinity,
-        minY = Infinity,
-        maxX = -Infinity,
-        maxY = -Infinity;
-
-    elements.forEach(element => {
-      minX = Math.min(minX, element.x);
-      minY = Math.min(minY, element.y);
-      maxX = Math.max(maxX, element.x + element.width);
-      maxY = Math.max(maxY, element.y + element.height);
-    });
-
-    return {
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY
-    };
-  }
-
   createHeatmap() {
-    const overlayContainer = query('.djs-overlay-container');
-    if (!overlayContainer) {
-      console.error('[Heatmap Plugin] Could not find .djs-overlay-container to initialize heatmap.');
+    const viewport = query('g.djs-viewport', this._canvas.getContainer());
+
+    if (!viewport) {
+      console.error('[Heatmap Plugin] Could not find SVG viewport to attach heatmap layer.');
       return;
     }
 
-    // Manually create canvas element
-    const canvas = domify('<canvas class="heatmap-canvas"></canvas>');
-    this._heatmapCanvas = canvas;
-
-    overlayContainer.appendChild(canvas);
-
-    // Sizing the canvas to the full diagram dimensions
-    const allShapes = this._elementRegistry.filter(e =>
-      e && typeof e.x === 'number' && typeof e.y === 'number' && typeof e.width === 'number' && typeof e.height === 'number'
-    );
-
-    if (allShapes.length > 0) {
-      const bbox = this._getBBox(allShapes);
-      console.log('[Heatmap Plugin] Sizing canvas to BBox:', bbox);
-
-      this._heatmapBBox = bbox;
-
-      // Set the canvas drawing buffer size
-      canvas.width = bbox.width;
-      canvas.height = bbox.height;
-
-      // Set the canvas element's display style to match the buffer size
-      canvas.style.width = `${bbox.width}px`;
-      canvas.style.height = `${bbox.height}px`;
-
-      // The canvas position will be handled by the transform
-    }
-
-    canvas.style.pointerEvents = 'none';
-    canvas.style.position = 'absolute';
-    canvas.style.zIndex = 9500;
-
-    // Initialize simpleheat with the created canvas
-    this._heatmap = simpleheat(canvas);
-    console.log('[Heatmap Plugin] simpleheat library initialized on canvas:', canvas);
+    this._heatmapLayer = domify('<g class="heatmap-layer"></g>');
+    viewport.prepend(this._heatmapLayer); // Prepend to draw underneath other elements like text
 
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   destroyHeatmap() {
-    if (!this._heatmap) return;
-
-    if (this._heatmapCanvas && this._heatmapCanvas.parentNode) {
-      this._heatmapCanvas.parentNode.removeChild(this._heatmapCanvas);
+    if (this._heatmapLayer) {
+      this._heatmapLayer.remove();
+      this._heatmapLayer = null;
     }
 
-    this._heatmap = null;
-    this._heatmapCanvas = null;
-    this._heatmapBBox = null;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
   clear() {
-    if (this._heatmap) {
-      this._heatmap.clear();
-      this._heatmap.draw(); // Redraw the empty canvas
+    if (this._heatmapLayer) {
+      this._heatmapLayer.innerHTML = '';
     }
   }
 }
