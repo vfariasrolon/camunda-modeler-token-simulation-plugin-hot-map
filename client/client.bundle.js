@@ -12,12 +12,13 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ Heatmap)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var min_dash__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dash */ "./node_modules/min-dash/dist/index.esm.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
 /* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
-/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
+/* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _SimulationEngine_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./SimulationEngine.js */ "./client/SimulationEngine.js");
+
 
 
 
@@ -52,10 +53,12 @@ class Heatmap {
     this._heatmap = null;
     this._radius = 20;
     this._blur = 10;
+    this._simulationEngine = new _SimulationEngine_js__WEBPACK_IMPORTED_MODULE_1__["default"]();
+    this._activeMetric = 'cycleTime';
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
-    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
-    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_1__.TOGGLE_MODE_EVENT, event => {
+    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_2__.RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
+    eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_2__.TOGGLE_MODE_EVENT, event => {
       if (!event.active) {
         this.destroyHeatmap();
       }
@@ -65,45 +68,66 @@ class Heatmap {
   }
 
   _init() {
-    const generateButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+    const generateButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`
       <div class="bts-entry" title="Generate Heatmap">
         ${BrushIcon()}
       </div>
     `);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(generateButton, 'click', () => this.showHeatmapFromProperties());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(generateButton, 'click', () => this.showHeatmapFromProperties());
     this._tokenSimulationPalette.addEntry(generateButton, 4);
 
-    const clearButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+    const clearButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`
       <div class="bts-entry" title="Clear Heatmap">
         ${BroomIcon()}
       </div>
     `);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(clearButton, 'click', () => this.destroyHeatmap());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(clearButton, 'click', () => this.destroyHeatmap());
     this._tokenSimulationPalette.addEntry(clearButton, 5);
 
     // Add separator
-    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)('<hr class="bts-entry-separator">'), 6);
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)('<hr class="bts-entry-separator">'), 6);
+
+    // Add View Selector
+    const viewSelector = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`
+      <div class="bts-entry" title="Select Heatmap View">
+        <select id="heatmap-view-selector" style="width: 100%; background: #f7f7f7; border: 1px solid #ccc;">
+          <option value="cycleTime">Tiempo de Ciclo</option>
+          <option value="cost">Costo</option>
+          <option value="bottleneck" disabled>Cuellos de Botella</option>
+          <option value="frequency" disabled>Frecuencia</option>
+        </select>
+      </div>
+    `);
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(viewSelector.querySelector('select'), 'change', (event) => this._onViewChange(event));
+    this._tokenSimulationPalette.addEntry(viewSelector, 7);
 
     // Add controls
-    const radiusPlusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Increase Radius">R+</div>`);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(radiusPlusButton, 'click', () => this._adjustRadius(5));
-    this._tokenSimulationPalette.addEntry(radiusPlusButton, 7);
+    const radiusPlusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`<div class="bts-entry" title="Increase Radius">R+</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(radiusPlusButton, 'click', () => this._adjustRadius(5));
+    this._tokenSimulationPalette.addEntry(radiusPlusButton, 8);
 
-    const radiusMinusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Decrease Radius">R-</div>`);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(radiusMinusButton, 'click', () => this._adjustRadius(-5));
+    const radiusMinusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`<div class="bts-entry" title="Decrease Radius">R-</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(radiusMinusButton, 'click', () => this._adjustRadius(-5));
     this._tokenSimulationPalette.addEntry(radiusMinusButton, 8);
 
-    const blurPlusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Increase Blur">B+</div>`);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(blurPlusButton, 'click', () => this._adjustBlur(5));
+    const blurPlusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`<div class="bts-entry" title="Increase Blur">B+</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(blurPlusButton, 'click', () => this._adjustBlur(5));
     this._tokenSimulationPalette.addEntry(blurPlusButton, 9);
 
-    const blurMinusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="bts-entry" title="Decrease Blur">B-</div>`);
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(blurMinusButton, 'click', () => this._adjustBlur(-5));
+    const blurMinusButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`<div class="bts-entry" title="Decrease Blur">B-</div>`);
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(blurMinusButton, 'click', () => this._adjustBlur(-5));
     this._tokenSimulationPalette.addEntry(blurMinusButton, 10);
   }
 
   _adjustRadius(amount) {
     this._radius = Math.max(1, this._radius + amount);
+    if (this._heatmap) {
+      this.showHeatmapFromProperties();
+    }
+  }
+
+  _onViewChange(event) {
+    this._activeMetric = event.target.value;
     if (this._heatmap) {
       this.showHeatmapFromProperties();
     }
@@ -124,39 +148,25 @@ class Heatmap {
     ]);
   }
 
-  _getSimulationTime(element) {
-    const businessObject = element.businessObject;
-    if (!businessObject.extensionElements || !businessObject.extensionElements.values) {
-      return 0;
-    }
-    const properties = (0,min_dash__WEBPACK_IMPORTED_MODULE_3__.find)(businessObject.extensionElements.values, v => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(v, 'camunda:Properties'));
-    if (!properties || !properties.values) {
-      return 0;
-    }
-    const timeProperty = (0,min_dash__WEBPACK_IMPORTED_MODULE_3__.find)(properties.values, p => p.name === 'tiempoSimulacion');
-    if (!timeProperty || !timeProperty.value) {
-      return 0;
-    }
-    const time = parseInt(timeProperty.value, 10);
-    return isNaN(time) ? 0 : time;
-  }
-
   _getHeatmapData() {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
+
+    const results = this._simulationEngine.run(allSupportedElements, this._activeMetric);
+
     let max = 0;
+    results.forEach(r => {
+      if (r.value > max) {
+        max = r.value;
+      }
+    });
 
-    const dataPoints = allSupportedElements.map(element => {
-      const value = this._getSimulationTime(element);
-
-      if (value > max) max = value;
-
-      // The new library expects data as [x, y, value]
+    const dataPoints = results.map(r => {
       return [
-        Math.round(element.x + element.width / 2),
-        Math.round(element.y + element.height / 2),
-        value
+        Math.round(r.element.x + r.element.width / 2),
+        Math.round(r.element.y + r.element.height / 2),
+        r.value
       ];
-    }).filter(point => point[2] > 0);
+    });
 
     return { dataPoints, max: max || 1 };
   }
@@ -198,7 +208,7 @@ class Heatmap {
     }
 
     this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   destroyHeatmap() {
@@ -207,7 +217,7 @@ class Heatmap {
       this._heatmap = null;
     }
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
   clear() {
@@ -279,6 +289,107 @@ HideModelerElements.$inject = [
   'eventBus',
   'toggleMode'
 ];
+
+/***/ }),
+
+/***/ "./client/SimulationEngine.js":
+/*!************************************!*\
+  !*** ./client/SimulationEngine.js ***!
+  \************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (/* binding */ SimulationEngine)
+/* harmony export */ });
+/* harmony import */ var min_dash__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! min-dash */ "./node_modules/min-dash/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+
+
+
+
+class SimulationEngine {
+
+  run(elements, metric) {
+    const results = elements.map(element => {
+      const businessObject = element.businessObject;
+      let value = 0;
+
+      if (businessObject.extensionElements && businessObject.extensionElements.values) {
+        const properties = (0,min_dash__WEBPACK_IMPORTED_MODULE_0__.find)(businessObject.extensionElements.values, v => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(v, 'camunda:Properties'));
+        if (properties && properties.values) {
+          const dataProperty = (0,min_dash__WEBPACK_IMPORTED_MODULE_0__.find)(properties.values, p => p.name === 'simulationData');
+          if (dataProperty && dataProperty.value) {
+            try {
+              const simulationData = JSON.parse(dataProperty.value);
+              value = this._calculateMetric(simulationData, metric);
+            } catch (e) {
+              console.error('Error parsing simulationData JSON for element ' + element.id, e);
+            }
+          }
+        }
+      }
+
+      return { element, value };
+    });
+
+    return results.filter(r => r.value > 0);
+  }
+
+  _calculateMetric(simulationData, metric) {
+    switch (metric) {
+      case 'cycleTime':
+        return this._calculateCycleTime(simulationData);
+      case 'cost':
+        return this._calculateCost(simulationData);
+      case 'bottleneck':
+        // Placeholder for future implementation
+        return 0;
+      case 'frequency':
+        // Placeholder for future implementation
+        return 0;
+      default:
+        return 0;
+    }
+  }
+
+  _calculateCycleTime(simulationData) {
+    if (simulationData && simulationData.processingTime) {
+      const { distribution, min, mode, max, mean, stdDev, value } = simulationData.processingTime;
+
+      switch (distribution) {
+        case 'triangular':
+          if (typeof min === 'number' && typeof mode === 'number' && typeof max === 'number') {
+            return (min + mode + max) / 3;
+          }
+          break;
+        // Add other distributions here in the future
+        case 'fixed':
+          return value || 0;
+      }
+    }
+    return 0;
+  }
+
+  _calculateCost(simulationData) {
+    if (simulationData && simulationData.cost) {
+      const { type, value } = simulationData.cost;
+
+      if (type === 'fixed') {
+        return value || 0;
+      }
+
+      if (type === 'perHour') {
+        const processingTimeMinutes = this._calculateCycleTime(simulationData);
+        const processingTimeHours = processingTimeMinutes / 60;
+        return (value || 0) * processingTimeHours;
+      }
+    }
+    return 0;
+  }
+}
+
 
 /***/ }),
 
