@@ -143,7 +143,7 @@ class Heatmap {
       const value = this._getSimulationTime(element);
 
       if (value > 0) {
-        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
+        console.log(`[Heatmap Plugin] -> Element ID: ${element.id}, Time: ${value}`);
       }
       if (value > max) max = value;
 
@@ -160,7 +160,7 @@ class Heatmap {
 
   _updateDataAndRedraw() {
     if (this._toggleMode.active) {
-      console.warn('[Heatmap] Please stop simulation before generating a heatmap.');
+      console.warn('[Heatmap Plugin] Please stop simulation before generating a heatmap.');
       return;
     }
 
@@ -170,7 +170,7 @@ class Heatmap {
     }
 
     const { dataPoints, max } = this._getHeatmapData();
-    console.log('[Heatmap] Generated data:', { dataPoints, max });
+    console.log('[Heatmap Plugin] Generated data:', { dataPoints, max });
 
     this._heatmap
       .data(dataPoints)
@@ -214,7 +214,7 @@ class Heatmap {
   createHeatmap() {
     const djsContainer = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.query)('.djs-container');
     if (!djsContainer) {
-      console.error('[Heatmap] Could not find .djs-container to initialize heatmap.');
+      console.error('[Heatmap Plugin] Could not find .djs-container to initialize heatmap.');
       return;
     }
 
@@ -231,7 +231,7 @@ class Heatmap {
 
     if (allShapes.length > 0) {
       const bbox = this._getBBox(allShapes);
-      console.log('[Heatmap] Sizing canvas to BBox:', bbox);
+      console.log('[Heatmap Plugin] Sizing canvas to BBox:', bbox);
 
       this._heatmapBBox = bbox;
 
