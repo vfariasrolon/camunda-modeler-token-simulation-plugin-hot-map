@@ -137,6 +137,15 @@ class Heatmap {
 
     const { dataPoints, max } = this._getHeatmapData();
 
+    // Update the filter with the correct gradient
+    const grad = this._createGradient(this.defaultGradient);
+    const r = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.query)('feFuncR', this._filter);
+    const g = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.query)('feFuncG', this._filter);
+    const b = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.query)('feFuncB', this._filter);
+    r.setAttribute('tableValues', grad.r);
+    g.setAttribute('tableValues', grad.g);
+    b.setAttribute('tableValues', grad.b);
+
     // ensure layer exists before drawing
     if (!this._heatmapLayer) {
       return;
@@ -144,28 +153,52 @@ class Heatmap {
 
     // draw new heatmap
     dataPoints.forEach(point => {
-
-      const color = this._getColor(point.value, max);
-
       const circle = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)(
-        `<circle cx="${point.x}" cy="${point.y}" r="${point.radius}" fill="${color}" />`
+        `<circle cx="${point.x}" cy="${point.y}" r="${point.radius}" fill="black" fill-opacity="${point.value / max}" />`
       );
-
       this._heatmapLayer.appendChild(circle);
     });
   }
 
-  _getColor(value, max) {
-    const ratio = value / max;
 
-    // simple green-yellow-red gradient
-    if (ratio < 0.5) {
-      return 'rgba(0, 255, 0, 0.5)';
-    } else if (ratio < 0.8) {
-      return 'rgba(255, 255, 0, 0.5)';
-    } else {
-      return 'rgba(255, 0, 0, 0.5)';
+  defaultGradient = {
+    0.4: 'blue',
+    0.6: 'cyan',
+    0.7: 'lime',
+    0.8: 'yellow',
+    1.0: 'red'
+  }
+
+  _createGradient(grad) {
+    const canvas = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)('<canvas></canvas>');
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+
+    canvas.width = 1;
+    canvas.height = 256;
+
+    for (const i in grad) {
+      gradient.addColorStop(parseFloat(i), grad[i]);
     }
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 1, 256);
+
+    const data = ctx.getImageData(0, 0, 1, 256).data;
+    const len = data.length;
+    const table = { r: [], g: [], b: [] };
+
+    for (let i = 0; i < len; i += 4) {
+      table.r.push((data[i] / 255).toFixed(4));
+      table.g.push((data[i + 1] / 255).toFixed(4));
+      table.b.push((data[i + 2] / 255).toFixed(4));
+    }
+
+    return {
+      r: table.r.join(' '),
+      g: table.g.join(' '),
+      b: table.b.join(' ')
+    };
   }
 
   showHeatmapFromProperties() {
@@ -173,18 +206,38 @@ class Heatmap {
   }
 
   createHeatmap() {
-    // Get the layer for overlays. This is the robust, API-approved way.
     const layer = this._canvas.getLayer('overlays');
+    const svg = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.query)('svg', this._canvas.getContainer());
 
-    if (!layer) {
-      console.error('[Heatmap Plugin] Could not find overlays layer to attach heatmap.');
+    if (!layer || !svg) {
+      console.error('[Heatmap Plugin] Could not find SVG layer or root to attach heatmap.');
       return;
     }
 
-    this._heatmapLayer = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)('<g class="heatmap-layer"></g>');
+    // Create defs for filters if not present
+    let defs = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.query)('defs', svg);
+    if (!defs) {
+      defs = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)('<defs></defs>');
+      svg.prepend(defs);
+    }
 
-    // Prepend to the layer. This ensures our heatmap is drawn below
-    // other overlays (like context pads) but above the diagram elements.
+    // Create and append the heatmap filter
+    // Note: The gradient values will be populated later.
+    const filter = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)(`
+      <filter id="heatmap-filter">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="15" result="blurred" />
+        <feComponentTransfer in="blurred" result="colored">
+          <feFuncR type="table" tableValues="0 1 1" />
+          <feFuncG type="table" tableValues="0 1 0" />
+          <feFuncB type="table" tableValues="0 0 0" />
+        </feComponentTransfer>
+      </filter>
+    `);
+    this._filter = filter;
+    defs.appendChild(filter);
+
+    this._heatmapLayer = (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.domify)('<g class="heatmap-layer"></g>');
+    this._heatmapLayer.setAttribute('filter', 'url(#heatmap-filter)');
     layer.prepend(this._heatmapLayer);
 
     (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).add('heatmap-shown');
@@ -194,6 +247,11 @@ class Heatmap {
     if (this._heatmapLayer) {
       this._heatmapLayer.remove();
       this._heatmapLayer = null;
+    }
+
+    if (this._filter) {
+      this._filter.remove();
+      this._filter = null;
     }
 
     (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
