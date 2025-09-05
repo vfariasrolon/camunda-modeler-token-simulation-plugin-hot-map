@@ -1,6 +1,5 @@
 import {
   domify,
-  query,
   classes as domClasses,
   event as domEvent
 } from 'min-dom';
@@ -17,6 +16,8 @@ import {
   RESET_SIMULATION_EVENT,
   TOGGLE_MODE_EVENT
 } from 'bpmn-js-token-simulation/lib/util/EventHelper';
+
+import SimpleHeatSVG from './simpleheat-svg.js';
 
 // SVG Icons for buttons
 const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
@@ -39,7 +40,7 @@ export default class Heatmap {
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
 
-    this._heatmapLayer = null;
+    this._heatmap = null;
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
@@ -104,16 +105,15 @@ export default class Heatmap {
 
       if (value > max) max = value;
 
-      return {
-        // Absolute coordinates, relative to the diagram origin
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
-        value: value,
-        radius: Math.round(Math.max(element.width, element.height) / 1.2)
-      };
-    }).filter(point => point.value > 0);
+      // The new library expects data as [x, y, value]
+      return [
+        Math.round(element.x + element.width / 2),
+        Math.round(element.y + element.height / 2),
+        value
+      ];
+    }).filter(point => point[2] > 0);
 
-    return { dataPoints, max: max || 100 };
+    return { dataPoints, max: max || 1 };
   }
 
   _updateDataAndRedraw() {
@@ -122,44 +122,24 @@ export default class Heatmap {
       return;
     }
 
-    if (!this._heatmapLayer) {
+    if (!this._heatmap) {
       this.createHeatmap();
     }
 
-    // clear previous heatmap
     this.clear();
 
     const { dataPoints, max } = this._getHeatmapData();
 
-    // ensure layer exists before drawing
-    if (!this._heatmapLayer) {
+    if (!this._heatmap) {
       return;
     }
 
-    // draw new heatmap
-    dataPoints.forEach(point => {
-
-      const color = this._getColor(point.value, max);
-
-      const circle = domify(
-        `<circle cx="${point.x}" cy="${point.y}" r="${point.radius}" fill="${color}" />`
-      );
-
-      this._heatmapLayer.appendChild(circle);
-    });
-  }
-
-  _getColor(value, max) {
-    const ratio = value / max;
-
-    // simple green-yellow-red gradient
-    if (ratio < 0.5) {
-      return 'rgba(0, 255, 0, 0.5)';
-    } else if (ratio < 0.8) {
-      return 'rgba(255, 255, 0, 0.5)';
-    } else {
-      return 'rgba(255, 0, 0, 0.5)';
-    }
+    // configure and draw new heatmap
+    this._heatmap
+      .data(dataPoints)
+      .max(max)
+      .radius(40, 15) // Example: 40px radius, 15px blur
+      .draw();
   }
 
   showHeatmapFromProperties() {
@@ -167,35 +147,28 @@ export default class Heatmap {
   }
 
   createHeatmap() {
-    // Get the layer for overlays. This is the robust, API-approved way.
-    const layer = this._canvas.getLayer('overlays');
-
-    if (!layer) {
-      console.error('[Heatmap Plugin] Could not find overlays layer to attach heatmap.');
+    if (this._heatmap) {
       return;
     }
 
-    this._heatmapLayer = domify('<g class="heatmap-layer"></g>');
-
-    // Prepend to the layer. This ensures our heatmap is drawn below
-    // other overlays (like context pads) but above the diagram elements.
-    layer.prepend(this._heatmapLayer);
-
+    this._heatmap = new SimpleHeatSVG(this._canvas);
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   destroyHeatmap() {
-    if (this._heatmapLayer) {
-      this._heatmapLayer.remove();
-      this._heatmapLayer = null;
+    if (this._heatmap) {
+      this._heatmap.destroy();
+      this._heatmap = null;
     }
 
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
+
+
   clear() {
-    if (this._heatmapLayer) {
-      this._heatmapLayer.innerHTML = '';
+    if (this._heatmap) {
+      this._heatmap.clear();
     }
   }
 }
