@@ -41,15 +41,18 @@ const LOW_COLOR = '#54b454'; // green
 const MID_COLOR = '#ffc800'; // yellow
 const HIGH_COLOR = '#cc4237'; // red
 
+const HEATMAP_ID = 'heatmap';
+
 class Heatmap {
-  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
+  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode, elementColors) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
+    this._elementColors = elementColors;
 
-    this._originalColors = new Map();
+    this._heatmapVisible = false;
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_0__.RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
@@ -132,22 +135,14 @@ class Heatmap {
       const { element, value } = point;
       const newColor = this._getColor(value, max);
 
-      const gfx = this._elementRegistry.getGraphics(element);
-
-      // Store original color if not already stored
-      if (!this._originalColors.has(element.id)) {
-        this._originalColors.set(element.id, {
-          fill: gfx.style.fill,
-          stroke: gfx.style.stroke
-        });
-      }
-
-      // Directly manipulate SVG attributes, bypassing the modeling service
-      gfx.style.fill = newColor;
-      gfx.style.stroke = '#000000'; // Keep stroke black
+      this._elementColors.add(element, HEATMAP_ID, {
+        fill: newColor,
+        stroke: '#000000'
+      });
     });
 
     if (dataPoints.length > 0) {
+      this._heatmapVisible = true;
       (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).add('heatmap-shown');
     }
   }
@@ -168,20 +163,13 @@ class Heatmap {
   }
 
   destroyHeatmap() {
-    if (this._originalColors.size === 0) {
+    if (!this._heatmapVisible) {
       return;
     }
 
-    for (const [id, colors] of this._originalColors.entries()) {
-      const element = this._elementRegistry.get(id);
-      if (element) {
-        const gfx = this._elementRegistry.getGraphics(element);
-        gfx.style.fill = colors.fill;
-        gfx.style.stroke = colors.stroke;
-      }
-    }
+    this._elementColors.remove(HEATMAP_ID);
 
-    this._originalColors.clear();
+    this._heatmapVisible = false;
     (0,min_dom__WEBPACK_IMPORTED_MODULE_1__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
@@ -190,7 +178,7 @@ class Heatmap {
   }
 }
 
-Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
+Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode', 'elementColors'];
 
 function isAny(element, types) {
   return types.some(t => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, t));
@@ -12913,10 +12901,11 @@ var __webpack_exports__ = {};
   \**************************/
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! camunda-modeler-plugin-helpers */ "./node_modules/camunda-modeler-plugin-helpers/index.js");
-/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/bpmn-js-token-simulation/lib/modeler.js");
+/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/bpmn-js-token-simulation/lib/modeler.js");
 /* harmony import */ var _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./HideModelerElements */ "./client/HideModelerElements.js");
 /* harmony import */ var _Heatmap__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./Heatmap */ "./client/Heatmap.js");
 /* harmony import */ var _TimeTracker__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./TimeTracker */ "./client/TimeTracker.js");
+/* harmony import */ var bpmn_js_token_simulation_lib_features_element_colors_ElementColors__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/features/element-colors/ElementColors */ "./node_modules/bpmn-js-token-simulation/lib/features/element-colors/ElementColors.js");
 
 
 
@@ -12930,7 +12919,10 @@ const TokenSimulationPluginModule = {
   hideModelerElements: [ 'type', _HideModelerElements__WEBPACK_IMPORTED_MODULE_1__["default"] ]
 };
 
+
+
 const HeatmapPluginModule = {
+  __depends__: [ bpmn_js_token_simulation_lib_features_element_colors_ElementColors__WEBPACK_IMPORTED_MODULE_4__["default"] ],
   __init__: [ 'heatmap' ],
   heatmap: [ 'type', _Heatmap__WEBPACK_IMPORTED_MODULE_2__["default"] ]
 };
@@ -12941,7 +12933,7 @@ const TimeTrackerPluginModule = {
 };
 
 // Register the BpmnJS modules
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_4__["default"]);
+(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_5__["default"]);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(HeatmapPluginModule);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TimeTrackerPluginModule);
 

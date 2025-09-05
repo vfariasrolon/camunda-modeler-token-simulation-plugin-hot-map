@@ -35,15 +35,18 @@ const LOW_COLOR = '#54b454'; // green
 const MID_COLOR = '#ffc800'; // yellow
 const HIGH_COLOR = '#cc4237'; // red
 
+const HEATMAP_ID = 'heatmap';
+
 export default class Heatmap {
-  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
+  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode, elementColors) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
+    this._elementColors = elementColors;
 
-    this._originalColors = new Map();
+    this._heatmapVisible = false;
 
     eventBus.on('diagram.init', () => this.destroyHeatmap());
     eventBus.on(RESET_SIMULATION_EVENT, () => this.destroyHeatmap());
@@ -126,22 +129,14 @@ export default class Heatmap {
       const { element, value } = point;
       const newColor = this._getColor(value, max);
 
-      const gfx = this._elementRegistry.getGraphics(element);
-
-      // Store original color if not already stored
-      if (!this._originalColors.has(element.id)) {
-        this._originalColors.set(element.id, {
-          fill: gfx.style.fill,
-          stroke: gfx.style.stroke
-        });
-      }
-
-      // Directly manipulate SVG attributes, bypassing the modeling service
-      gfx.style.fill = newColor;
-      gfx.style.stroke = '#000000'; // Keep stroke black
+      this._elementColors.add(element, HEATMAP_ID, {
+        fill: newColor,
+        stroke: '#000000'
+      });
     });
 
     if (dataPoints.length > 0) {
+      this._heatmapVisible = true;
       domClasses(this._canvas.getContainer()).add('heatmap-shown');
     }
   }
@@ -162,20 +157,13 @@ export default class Heatmap {
   }
 
   destroyHeatmap() {
-    if (this._originalColors.size === 0) {
+    if (!this._heatmapVisible) {
       return;
     }
 
-    for (const [id, colors] of this._originalColors.entries()) {
-      const element = this._elementRegistry.get(id);
-      if (element) {
-        const gfx = this._elementRegistry.getGraphics(element);
-        gfx.style.fill = colors.fill;
-        gfx.style.stroke = colors.stroke;
-      }
-    }
+    this._elementColors.remove(HEATMAP_ID);
 
-    this._originalColors.clear();
+    this._heatmapVisible = false;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
@@ -184,7 +172,7 @@ export default class Heatmap {
   }
 }
 
-Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
+Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode', 'elementColors'];
 
 function isAny(element, types) {
   return types.some(t => is(element, t));

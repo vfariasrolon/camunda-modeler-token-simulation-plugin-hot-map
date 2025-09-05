@@ -13,7 +13,10 @@ const TokenSimulationPluginModule = {
   hideModelerElements: [ 'type', HideModelerElements ]
 };
 
+import ElementColors from 'bpmn-js-token-simulation/lib/features/element-colors/ElementColors';
+
 const HeatmapPluginModule = {
+  __depends__: [ ElementColors ],
   __init__: [ 'heatmap' ],
   heatmap: [ 'type', Heatmap ]
 };
