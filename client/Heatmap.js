@@ -34,7 +34,7 @@ function createIcon(svg) {
 const BroomIcon = createIcon(BroomIconSVG);
 const BrushIcon = createIcon(BrushIconSVG);
 
-const DEBOUNCE_DELAY = 50; // ms
+const DEBOUNCE_DELAY = 50;
 
 export default class Heatmap {
   constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
@@ -129,12 +129,11 @@ export default class Heatmap {
       const value = this._getSimulationTime(element);
 
       if (value > 0) {
-        console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
+        // console.log(`[Heatmap] -> Element ID: ${element.id}, Time: ${value}`);
       }
       if (value > max) max = value;
 
       return {
-        elementId: element.id,
         x: Math.round(element.x + element.width / 2) - bbox.x,
         y: Math.round(element.y + element.height / 2) - bbox.y,
         value: value,
@@ -210,7 +209,6 @@ export default class Heatmap {
     this._updateDataAndRedraw();
   }
 
-  // A robust, manual bounding box calculation
   _getBBox(elements) {
     if (!elements.length) {
       return { x: 0, y: 0, width: 0, height: 0 };
@@ -224,8 +222,8 @@ export default class Heatmap {
     elements.forEach(element => {
       minX = Math.min(minX, element.x);
       minY = Math.min(minY, element.y);
-      maxX = Math.max(maxX, element.x + element.width);
-      maxY = Math.max(maxY, element.y + element.height);
+      maxX = Math.max(maxX, element.x + (element.width || 0));
+      maxY = Math.max(maxY, element.y + (element.height || 0));
     });
 
     return {
@@ -243,7 +241,6 @@ export default class Heatmap {
       return;
     }
 
-    // Create a container that we can position and size manually.
     const heatmapContainer = domify('<div class="heatmap-container" style="position: absolute; top: 0; left: 0;"></div>');
     heatmapContainer.style.pointerEvents = 'none';
 
@@ -275,3 +272,7 @@ export default class Heatmap {
 }
 
 Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode'];
+
+function isAny(element, types) {
+  return types.some(t => is(element, t));
+}
