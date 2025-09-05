@@ -203,9 +203,9 @@ export default class Heatmap {
   }
 
   createHeatmap() {
-    const parentContainer = query('.djs-container');
+    const parentContainer = query('.djs-overlay-container');
     if (!parentContainer) {
-      console.error('[Heatmap] Could not find .djs-container to initialize heatmap.');
+      console.error('[Heatmap] Could not find .djs-overlay-container to initialize heatmap.');
       return;
     }
 
