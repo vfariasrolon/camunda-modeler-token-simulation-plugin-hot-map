@@ -46,7 +46,6 @@ export default class Heatmap {
     this._heatmap = null;
     this._heatmapCanvas = null;
     this._heatmapContainer = null;
-    this._debugBox = null;
 
     this._debouncedUpdateTransform = this._debounce(this._updateTransform.bind(this), DEBOUNCE_DELAY);
 
@@ -131,6 +130,9 @@ export default class Heatmap {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
     let max = 0;
 
+    // Get BBox to make coordinates relative
+    const bbox = this._getBBox(allSupportedElements);
+
     const dataPoints = allSupportedElements.map(element => {
       const value = this._getSimulationTime(element);
 
@@ -141,9 +143,9 @@ export default class Heatmap {
 
       return {
         elementId: element.id,
-        // ABSOLUTE coordinates, not relative to bbox
-        x: Math.round(element.x + element.width / 2),
-        y: Math.round(element.y + element.height / 2),
+        // RELATIVE coordinates, adjusted by bbox
+        x: Math.round(element.x + element.width / 2) - bbox.x,
+        y: Math.round(element.y + element.height / 2) - bbox.y,
         value: value,
         radius: Math.round(Math.max(element.width, element.height) / 1.2)
       };
@@ -214,27 +216,13 @@ export default class Heatmap {
     if (!allShapes.length) return;
 
     const bbox = this._getBBox(allShapes);
-    console.log('[DEBUG] Diagram BBox calculated:', bbox);
 
-    // Blue box to visualize the BBox
-    const debugBox = domify('<div style="position: absolute; border: 2px dashed blue; pointer-events: none; z-index: 10;"></div>');
-    debugBox.style.left = `${bbox.x}px`;
-    debugBox.style.top = `${bbox.y}px`;
-    debugBox.style.width = `${bbox.width}px`;
-    debugBox.style.height = `${bbox.height}px`;
-    parentContainer.appendChild(debugBox);
-    this._debugBox = debugBox;
+    // Create and style our dedicated container
+    const heatmapContainer = domify('<div class="heatmap-container" style="position: absolute;"></div>');
 
-    // Red box to visualize the heatmap container. For this test, we align it with the debug box.
-    const heatmapContainer = domify('<div class="heatmap-container" style="position: absolute; border: 2px solid red; pointer-events: none;"></div>');
-
-    // Approach 1 Test: Set top/left on container.
-    heatmapContainer.style.left = `${bbox.x}px`;
-    heatmapContainer.style.top = `${bbox.y}px`;
     heatmapContainer.style.width = `${bbox.width}px`;
     heatmapContainer.style.height = `${bbox.height}px`;
-
-    console.log('[DEBUG] Heatmap container (red border) created with full BBox attributes.');
+    heatmapContainer.style.pointerEvents = 'none';
 
     parentContainer.appendChild(heatmapContainer);
     this._heatmapContainer = heatmapContainer;
@@ -256,14 +244,9 @@ export default class Heatmap {
       this._heatmapContainer.parentNode.removeChild(this._heatmapContainer);
     }
 
-    if (this._debugBox && this._debugBox.parentNode) {
-      this._debugBox.parentNode.removeChild(this._debugBox);
-    }
-
     this._heatmap = null;
     this._heatmapCanvas = null;
     this._heatmapContainer = null;
-    this._debugBox = null;
     domClasses(this._canvas.getContainer()).remove('heatmap-shown');
   }
 
