@@ -43,8 +43,7 @@ export default class SimulationEngine {
       case 'bottleneck':
         return this._calculateBottleneck(simulationData);
       case 'frequency':
-        // Placeholder for future implementation
-        return 0;
+        return this._calculateFrequency(simulationData);
       default:
         return 0;
     }
@@ -64,6 +63,13 @@ export default class SimulationEngine {
         case 'fixed':
           return value || 0;
       }
+    }
+    return 0;
+  }
+
+  _calculateFrequency(simulationData) {
+    if (simulationData && typeof simulationData.executionCount === 'number') {
+      return simulationData.executionCount;
     }
     return 0;
   }

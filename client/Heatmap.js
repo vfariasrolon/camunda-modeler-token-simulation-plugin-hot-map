@@ -85,7 +85,7 @@ export default class Heatmap {
           <option value="cycleTime">Tiempo de Ciclo</option>
           <option value="cost">Costo</option>
           <option value="bottleneck">Cuellos de Botella</option>
-          <option value="frequency" disabled>Frecuencia</option>
+          <option value="frequency">Frecuencia</option>
         </select>
       </div>
     `);

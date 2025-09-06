@@ -94,7 +94,7 @@ class Heatmap {
           <option value="cycleTime">Tiempo de Ciclo</option>
           <option value="cost">Costo</option>
           <option value="bottleneck">Cuellos de Botella</option>
-          <option value="frequency" disabled>Frecuencia</option>
+          <option value="frequency">Frecuencia</option>
         </select>
       </div>
     `);
@@ -346,8 +346,7 @@ class SimulationEngine {
       case 'bottleneck':
         return this._calculateBottleneck(simulationData);
       case 'frequency':
-        // Placeholder for future implementation
-        return 0;
+        return this._calculateFrequency(simulationData);
       default:
         return 0;
     }
@@ -367,6 +366,13 @@ class SimulationEngine {
         case 'fixed':
           return value || 0;
       }
+    }
+    return 0;
+  }
+
+  _calculateFrequency(simulationData) {
+    if (simulationData && typeof simulationData.executionCount === 'number') {
+      return simulationData.executionCount;
     }
     return 0;
   }
