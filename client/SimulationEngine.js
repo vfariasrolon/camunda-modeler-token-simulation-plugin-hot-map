@@ -8,7 +8,27 @@ import {
 
 export default class SimulationEngine {
 
-  run(elements, metric) {
+  run(elements, globalData, metric) {
+
+    let resourcePools = {};
+    if (globalData) {
+      try {
+        const parsed = JSON.parse(globalData);
+        if (parsed.resourcePools) {
+          resourcePools = parsed.resourcePools.reduce((acc, pool) => {
+            acc[pool.name] = pool.capacity;
+            return acc;
+          }, {});
+        }
+      } catch (e) {
+        console.error('Error parsing simulationGlobalData JSON', e);
+      }
+    }
+
+    // For now, resourcePools are parsed but not yet used in calculations.
+    // This will be used in the full simulation logic.
+    console.log("Initialized Resource Pools:", resourcePools);
+
     const results = elements.map(element => {
       const businessObject = element.businessObject;
       let value = 0;

@@ -13,6 +13,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "default": () => (/* binding */ Heatmap)
 /* harmony export */ });
 /* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var min_dash__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! min-dash */ "./node_modules/min-dash/dist/index.esm.js");
 /* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var bpmn_js_token_simulation_lib_util_EventHelper__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js-token-simulation/lib/util/EventHelper */ "./node_modules/bpmn-js-token-simulation/lib/util/EventHelper.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./simpleheat-svg.js */ "./client/simpleheat-svg.js");
@@ -150,8 +151,23 @@ class Heatmap {
 
   _getHeatmapData() {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
+    const processElement = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Process'));
+    let globalData = null;
 
-    const results = this._simulationEngine.run(allSupportedElements, this._activeMetric);
+    if (processElement) {
+      const businessObject = processElement.businessObject;
+      if (businessObject.extensionElements && businessObject.extensionElements.values) {
+        const properties = (0,min_dash__WEBPACK_IMPORTED_MODULE_5__.find)(businessObject.extensionElements.values, v => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(v, 'camunda:Properties'));
+        if (properties && properties.values) {
+          const dataProperty = (0,min_dash__WEBPACK_IMPORTED_MODULE_5__.find)(properties.values, p => p.name === 'simulationGlobalData');
+          if (dataProperty && dataProperty.value) {
+            globalData = dataProperty.value;
+          }
+        }
+      }
+    }
+
+    const results = this._simulationEngine.run(allSupportedElements, globalData, this._activeMetric);
 
     let max = 0;
     results.forEach(r => {
@@ -311,7 +327,27 @@ __webpack_require__.r(__webpack_exports__);
 
 class SimulationEngine {
 
-  run(elements, metric) {
+  run(elements, globalData, metric) {
+
+    let resourcePools = {};
+    if (globalData) {
+      try {
+        const parsed = JSON.parse(globalData);
+        if (parsed.resourcePools) {
+          resourcePools = parsed.resourcePools.reduce((acc, pool) => {
+            acc[pool.name] = pool.capacity;
+            return acc;
+          }, {});
+        }
+      } catch (e) {
+        console.error('Error parsing simulationGlobalData JSON', e);
+      }
+    }
+
+    // For now, resourcePools are parsed but not yet used in calculations.
+    // This will be used in the full simulation logic.
+    console.log("Initialized Resource Pools:", resourcePools);
+
     const results = elements.map(element => {
       const businessObject = element.businessObject;
       let value = 0;

@@ -141,8 +141,23 @@ export default class Heatmap {
 
   _getHeatmapData() {
     const allSupportedElements = this._elementRegistry.filter(element => this._isSupported(element));
+    const processElement = this._elementRegistry.find(el => is(el, 'bpmn:Process'));
+    let globalData = null;
 
-    const results = this._simulationEngine.run(allSupportedElements, this._activeMetric);
+    if (processElement) {
+      const businessObject = processElement.businessObject;
+      if (businessObject.extensionElements && businessObject.extensionElements.values) {
+        const properties = find(businessObject.extensionElements.values, v => is(v, 'camunda:Properties'));
+        if (properties && properties.values) {
+          const dataProperty = find(properties.values, p => p.name === 'simulationGlobalData');
+          if (dataProperty && dataProperty.value) {
+            globalData = dataProperty.value;
+          }
+        }
+      }
+    }
+
+    const results = this._simulationEngine.run(allSupportedElements, globalData, this._activeMetric);
 
     let max = 0;
     results.forEach(r => {
