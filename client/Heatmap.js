@@ -23,6 +23,7 @@ import SimulationEngine from './SimulationEngine.js';
 // SVG Icons for buttons
 const BroomIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="none" d="M0 0h24v24H0z"/><path fill="currentColor" d="M19.36 2.72l-2.08 2.08c-1.17-0.37-2.44-0.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-0.37 1.17-0.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17 0.37 2.44 0.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c0.37-1.17 0.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg>`;
 const BrushIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34c-.39-.39-1.02-.39-1.41 0L9 12.25 11.75 15l8.96-8.96c.39-.39.39-1.02 0-1.41z"/></svg>`;
+const TestDataIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path d="M0 0h24v24H0z" fill="none"/><path fill="currentColor" d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm-1 13h-2v-2h2v2zm0-4h-2V5h2v6z"/></svg>`;
 
 function createIcon(svg) {
   return function Icon(className = '') {
@@ -32,14 +33,16 @@ function createIcon(svg) {
 
 const BroomIcon = createIcon(BroomIconSVG);
 const BrushIcon = createIcon(BrushIconSVG);
+const TestDataIcon = createIcon(TestDataIconSVG);
 
 export default class Heatmap {
-  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode) {
+  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode, modeling) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._toggleMode = toggleMode;
+    this._modeling = modeling;
 
     this._heatmap = null;
     this._radius = 20;
@@ -108,6 +111,74 @@ export default class Heatmap {
     const blurMinusButton = domify(`<div class="bts-entry" title="Decrease Blur">B-</div>`);
     domEvent.bind(blurMinusButton, 'click', () => this._adjustBlur(-5));
     this._tokenSimulationPalette.addEntry(blurMinusButton, 10);
+
+    // Add separator
+    this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
+
+    const loadTestDataButton = domify(`<div class="bts-entry" title="Load Hardcoded Test Data">${TestDataIcon('test-data')}</div>`);
+    domEvent.bind(loadTestDataButton, 'click', () => this._loadTestData());
+    this._tokenSimulationPalette.addEntry(loadTestDataButton, 12);
+  }
+
+  _loadTestData() {
+    if (this._toggleMode.active) {
+      alert('Please stop the simulation before loading test data.');
+      return;
+    }
+
+    const allElements = this._elementRegistry.getAll();
+    const tasks = allElements.filter(el => is(el, 'bpmn:Task'));
+    const process = allElements.find(el => is(el, 'bpmn:Process'));
+
+    // Hardcoded global data
+    const globalData = {
+      resourcePools: [
+        { name: "Analistas", capacity: 3 },
+        { name: "Sistemas", capacity: 1 }
+      ]
+    };
+
+    if (process) {
+      this._modeling.updateProperties(process, {
+        'camunda:properties': {
+          values: [
+            { name: 'simulationGlobalData', value: JSON.stringify(globalData, null, 2) }
+          ]
+        }
+      });
+    }
+
+    // Hardcoded data for each task
+    tasks.forEach((task, index) => {
+      const data = {
+        processingTime: {
+          distribution: "triangular",
+          unit: "minutes",
+          min: 5 * (index + 1),
+          mode: 10 * (index + 1),
+          max: 25 * (index + 1)
+        },
+        cost: {
+          type: "perHour",
+          value: 10 * (index + 1)
+        },
+        waitingTime: {
+          distribution: "fixed",
+          value: 2 * (index + 1)
+        },
+        executionCount: index + 1
+      };
+
+      this._modeling.updateProperties(task, {
+        'camunda:properties': {
+          values: [
+            { name: 'simulationData', value: JSON.stringify(data, null, 2) }
+          ]
+        }
+      });
+    });
+
+    alert('Test data loaded successfully!');
   }
 
   _adjustRadius(amount) {
