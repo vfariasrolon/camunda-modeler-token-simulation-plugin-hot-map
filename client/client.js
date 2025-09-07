@@ -2,41 +2,38 @@ import {
   registerBpmnJSPlugin,
 } from 'camunda-modeler-plugin-helpers';
 
+// Polyfill for TextEncoder which is required by bpmn-js-token-simulation
+import 'text-encoding-polyfill';
+
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
-import HideModelerElements from './HideModelerElements';
+// All our custom modules
 import Heatmap from './Heatmap';
-import TimeTracker from './TimeTracker';
 import SimulationController from './SimulationController';
 import RandomDataGenerator from './RandomDataGenerator';
 import SimulationConfigReader from './SimulationConfigReader';
+import SimulationPalette from './SimulationPalette';
+import SimulationModeToggle from './SimulationModeToggle';
 
-const TokenSimulationPluginModule = {
-  __init__: [ 'hideModelerElements' ],
-  hideModelerElements: [ 'type', HideModelerElements ]
-};
-
-const HeatmapPluginModule = {
-  __init__: [ 'heatmap' ],
-  heatmap: [ 'type', Heatmap ]
-};
-
-const TimeTrackerPluginModule = {
-  __init__: [ 'timeTracker' ],
-  timeTracker: [ 'type', TimeTracker ]
-};
-
-// Módulo principal de Simulación que agrupa la nueva lógica
-const SimulationPluginModule = {
-  __init__: [ 'simulationController' ],
+// Unify all simulation analysis components into a single module
+// This ensures they can be injected into each other correctly.
+const SimulationAnalysisModule = {
+  __init__: [
+    'heatmap',
+    'simulationController',
+    'simulationPalette',
+    'simulationModeToggle'
+  ],
+  heatmap: [ 'type', Heatmap ],
   simulationController: [ 'type', SimulationController ],
   randomDataGenerator: [ 'type', RandomDataGenerator ],
-  simulationConfigReader: [ 'type', SimulationConfigReader ]
+  simulationConfigReader: [ 'type', SimulationConfigReader ],
+  simulationPalette: [ 'type', SimulationPalette ],
+  simulationModeToggle: [ 'type', SimulationModeToggle ]
 };
 
-
-// Register the BpmnJS modules
+// Register the original token simulation module
 registerBpmnJSPlugin(TokenSimulationModule);
-registerBpmnJSPlugin(HeatmapPluginModule);
-registerBpmnJSPlugin(TimeTrackerPluginModule);
-registerBpmnJSPlugin(SimulationPluginModule);
+
+// Register our new, unified simulation analysis module
+registerBpmnJSPlugin(SimulationAnalysisModule);

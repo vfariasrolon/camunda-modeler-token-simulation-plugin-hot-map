@@ -2,6 +2,10 @@ import {
   is
 } from 'bpmn-js/lib/util/ModelUtil';
 
+import {
+  find
+} from 'min-dash';
+
 /**
  * Genera datos de simulación aleatorios para un diagrama BPMN.
  */

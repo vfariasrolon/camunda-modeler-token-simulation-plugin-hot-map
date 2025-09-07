@@ -530,6 +530,67 @@
 
 /* --- ESTILOS PARA SIMULACIÓN --- */
 
+.simulation-toggle-mode {
+  cursor: pointer;
+  position: absolute;
+  top: 20px;
+  left: 55px; /* Al lado del toggle de token simulation */
+  background-color: var(--token-simulation-silver-darken-94, #EFEFEF);
+  border-radius: 2px;
+  padding: 6px;
+  font-size: 14px;
+  color: var(--token-simulation-grey-darken-30, #212121);
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.simulation-toggle-mode:hover,
+.simulation-toggle-mode.active {
+  background-color: #c82333; /* Un rojo para distinguirlo */
+  color: var(--token-simulation-white, #FFFFFF);
+}
+
+.simulation-toggle-mode .bts-icon {
+    margin-right: .25em;
+}
+
+.simulation-palette {
+  position: absolute;
+  top: 60px;
+  left: 20px;
+}
+
+.simulation-palette.hidden {
+  display: none;
+}
+
+.simulation-palette .bts-entry {
+  cursor: pointer;
+  background-color: var(--token-simulation-silver-darken-94, #EFEFEF);
+  border-radius: 2px;
+  padding: 6px 0;
+  margin-bottom: 6px;
+  font-size: 16px;
+  color: var(--token-simulation-grey-darken-30, #212121);
+  user-select: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 30px;
+  box-sizing: border-box;
+  transition: all 0.1s ease;
+}
+
+.simulation-palette .bts-entry:last-child {
+  margin-bottom: 0;
+}
+
+.simulation-palette .bts-entry:not(.disabled):hover {
+  color: var(--token-simulation-white, #FFFFFF);
+  background-color: #c82333;
+}
+
 .simulation-overlay {
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid #ccc;

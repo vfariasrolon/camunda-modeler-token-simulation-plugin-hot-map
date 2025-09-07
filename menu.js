@@ -31,5 +31,12 @@ module.exports = function (electronApp, menuState) {
     action: function () {
       electronApp.emit('menu:action', 'resetTokenSimulation');
     }
+  }, {
+    label: 'Toggle Simulation Analysis',
+    accelerator: 's',
+    enabled,
+    action: function() {
+      electronApp.emit('menu:action', 'toggleSimulationAnalysis');
+    }
   }];
 };

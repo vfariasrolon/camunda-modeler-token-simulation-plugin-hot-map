@@ -32,8 +32,7 @@ export default class SimulationController {
    * @param {string} viewType - El tipo de vista a mostrar (cost, waitTime, etc.).
    */
   runSimulation(viewType) {
-    // Si ya tenemos resultados, no volver a simular a menos que sea necesario.
-    // Por ahora, simulamos siempre para reflejar cualquier cambio manual.
+    // El chequeo de modo activo ya no es necesario aquí.
     console.log("Iniciando simulación...");
 
     // 1. Leer la configuración actual del diagrama

@@ -45,13 +45,10 @@ const RandomDataIcon = createIcon(RandomDataIconSVG);
 
 
 export default class Heatmap {
-  constructor(canvas, eventBus, elementRegistry, tokenSimulationPalette, toggleMode, simulationController, overlays) {
+  constructor(canvas, eventBus, elementRegistry, overlays) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
-    this._tokenSimulationPalette = tokenSimulationPalette;
-    this._toggleMode = toggleMode;
-    this._simulationController = simulationController;
     this._overlays = overlays;
 
     this._heatmap = null;
@@ -61,41 +58,8 @@ export default class Heatmap {
 
     eventBus.on('diagram.init', () => this.destroyVisualization());
     eventBus.on(RESET_SIMULATION_EVENT, () => this.destroyVisualization());
-    eventBus.on(TOGGLE_MODE_EVENT, event => {
-      if (!event.active) {
-        this.destroyVisualization();
-      }
-    });
 
-    this._init();
-  }
-
-  _init() {
-    const createButton = (title, icon, action, position) => {
-      const button = domify(`
-        <div class="bts-entry" title="${title}">
-          ${icon}
-        </div>
-      `);
-      domEvent.bind(button, 'click', action);
-      this._tokenSimulationPalette.addEntry(button, position);
-    };
-
-    createButton('Ver Mapa de Calor de Costo Total', CostIcon(), () => this._simulationController.runSimulation('cost'), 4);
-    createButton('Ver Mapa de Calor de Tiempos de Espera (Cuellos de Botella)', WaitTimeIcon(), () => this._simulationController.runSimulation('waitTime'), 5);
-    createButton('Ver Mapa de Calor de Tiempo de Ciclo', CycleTimeIcon(), () => this._simulationController.runSimulation('cycleTime'), 6);
-    createButton('Ver Mapa de Calor de Frecuencia de Ejecución', FrequencyIcon(), () => this._simulationController.runSimulation('frequency'), 7);
-    createButton('Ver Mapa de Calor de Tiempo de Proceso', BrushIcon(), () => this._simulationController.runSimulation('processTime'), 8);
-
-    createButton('Limpiar Visualización', BroomIcon(), () => this.destroyVisualization(), 9);
-    this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 10);
-    createButton('Probar con Datos Aleatorios', RandomDataIcon(), () => this._simulationController.generateRandomData(), 11);
-    this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 12);
-
-    createButton('Aumentar Radio', 'R+', () => this._adjustRadius(5), 13);
-    createButton('Disminuir Radio', 'R-', () => this._adjustRadius(-5), 14);
-    createButton('Aumentar Desenfoque', 'B+', () => this._adjustBlur(5), 15);
-    createButton('Disminuir Desenfoque', 'B-', () => this._adjustBlur(-5), 16);
+    // El toggle se maneja ahora por nuestro propio toggle, no el de token simulation
   }
 
   _adjustRadius(amount) {
@@ -124,9 +88,7 @@ export default class Heatmap {
   }
 
   displayResults(results, viewType) {
-    if (this._toggleMode.active) {
-      return;
-    }
+    // Ya no se necesita el chequeo de _toggleMode.active
     this._currentView = { results, type: viewType };
     const metric = this._getMetricForView(viewType);
     this._renderVisualization(results, metric.key);
@@ -228,7 +190,7 @@ export default class Heatmap {
   }
 }
 
-Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'tokenSimulationPalette', 'toggleMode', 'simulationController', 'overlays'];
+Heatmap.$inject = ['canvas', 'eventBus', 'elementRegistry', 'overlays'];
 
 function isAny(element, types) {
   return types.some(t => is(element, t));
