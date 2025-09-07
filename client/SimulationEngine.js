@@ -38,7 +38,7 @@ export default class SimulationEngine {
   }
 
   _initResults() {
-    for (const element of this._elementRegistry.toArray()) {
+    for (const element of this._elementRegistry.getAll()) {
       this._results.set(element.id, {
         executionCount: 0,
         totalWaitTime: 0,
