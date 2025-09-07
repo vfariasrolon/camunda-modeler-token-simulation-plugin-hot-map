@@ -28,7 +28,7 @@ export default class RandomDataGenerator {
    * Genera y aplica datos aleatorios a todos los elementos compatibles del diagrama.
    */
   generateData() {
-    const elements = this._elementRegistry.toArray();
+    const elements = this._elementRegistry.getAll();
     const updates = new Map();
 
     // 1. Generar datos para cada elemento

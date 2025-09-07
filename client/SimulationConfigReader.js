@@ -54,7 +54,7 @@ export default class SimulationConfigReader {
    * @returns {{global: Object, elements: Map<string, Object>}}
    */
   readAll() {
-    const allElements = this._elementRegistry.toArray();
+    const allElements = this._elementRegistry.getAll();
     const config = {
       global: {},
       elements: new Map()
