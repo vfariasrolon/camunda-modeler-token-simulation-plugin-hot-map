@@ -22,7 +22,6 @@ export default class SimulationEngine {
     this._instanceCounter = 0;
 
     this._initResourcePools();
-    this._initResults();
   }
 
   _initResourcePools() {
@@ -59,6 +58,7 @@ export default class SimulationEngine {
    * Ejecuta la simulación completa.
    */
   run() {
+    this._initResults(); // Inicializar aquí para asegurar que el elementRegistry esté poblado.
     console.log("Iniciando motor de simulación con configuración:", this._config);
     this._scheduleInitialEvents();
 

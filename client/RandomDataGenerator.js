@@ -75,7 +75,7 @@ export default class RandomDataGenerator {
       };
     }
 
-    if (is(element, 'bpmn:UserTask') || is(element, 'bpmn:ServiceTask')) {
+    if (is(element, 'bpmn:Task')) {
       const min = this._getRandomInt(5, 10);
       const mode = min + this._getRandomInt(5, 15);
       const max = mode + this._getRandomInt(5, 20);
