@@ -7,6 +7,9 @@ import TokenSimulationModule from 'bpmn-js-token-simulation';
 import HideModelerElements from './HideModelerElements';
 import Heatmap from './Heatmap';
 import TimeTracker from './TimeTracker';
+import SimulationController from './SimulationController';
+import RandomDataGenerator from './RandomDataGenerator';
+import SimulationConfigReader from './SimulationConfigReader';
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
@@ -23,7 +26,17 @@ const TimeTrackerPluginModule = {
   timeTracker: [ 'type', TimeTracker ]
 };
 
+// Módulo principal de Simulación que agrupa la nueva lógica
+const SimulationPluginModule = {
+  __init__: [ 'simulationController' ],
+  simulationController: [ 'type', SimulationController ],
+  randomDataGenerator: [ 'type', RandomDataGenerator ],
+  simulationConfigReader: [ 'type', SimulationConfigReader ]
+};
+
+
 // Register the BpmnJS modules
 registerBpmnJSPlugin(TokenSimulationModule);
 registerBpmnJSPlugin(HeatmapPluginModule);
 registerBpmnJSPlugin(TimeTrackerPluginModule);
+registerBpmnJSPlugin(SimulationPluginModule);
