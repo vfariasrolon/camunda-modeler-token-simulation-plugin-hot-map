@@ -34,7 +34,11 @@ export default class SimulationModeToggle {
     });
 
     // Escuchar el evento del menú superior
-    this._eventBus.on('toggleSimulationAnalysis', () => this.toggle());
+    this._eventBus.on('menu:action', (context) => {
+      if (context.action === 'toggleSimulationAnalysis') {
+        this.toggle();
+      }
+    });
   }
 
   toggle() {
