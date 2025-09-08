@@ -47,9 +47,11 @@ export default class SimulationController {
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
 
-    this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 4);
-    this._tokenSimulationPalette.addEntry(runButton, 5);
-    this._tokenSimulationPalette.addEntry(showButton, 6);
+    // Add a separator before our button for visual distinction
+    // Use high indices to avoid conflicts with other plugins
+    this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry(runButton, 12);
+    this._tokenSimulationPalette.addEntry(showButton, 13);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));

@@ -9,7 +9,7 @@ const ClockIcon = '<path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0
 const CycleTimeIcon = '<path d="M12 4V1L8 5l4 4V6c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6H4c0 4.4 3.6 8 8 8s8-3.6 8-8-3.6-8-8-8z"/>';
 const FrequencyIcon = '<path d="M21 8H3V4h18v4zm0 2H3v4h18v-4zm0 6H3v4h18v-4z"/>';
 const BugIcon = '<path d="M14,12h-4v-2h4V12z M19,9h-2.1c-0.5-1.2-1.4-2.2-2.6-2.9l1.5-1.5L14.4,3.1l-1.5,1.5C12.3,4.2,11.7,4,11,4 s-1.3,0.2-1.9,0.6L7.6,3.1L6.2,4.5l1.5,1.5C6.4,6.8,5.5,7.8,5.1,9H3v2h2.1c0.1,0.7,0.3,1.4,0.6,2H3v2h2.7c0.8,1,1.8,1.8,2.9,2.4 l-1.5,1.5L9.6,20.9l1.5-1.5c0.6,0.4,1.3,0.6,2,0.6s1.3-0.2,2-0.6l1.5,1.5l1.4-1.4l-1.5-1.5c1-0.6,1.9-1.4,2.6-2.4H21v-2h-2.1 c-0.3-0.6-0.5-1.3-0.6-2H21V9z"/>';
-const ClearIcon = '<path d="M19.36 2.72l-2.08 2.08c-1.17-.37-2.44-.37-3.61 0l-2.4-2.4c-1.56-1.56-4.09-1.56-5.66 0l-2.83 2.83c-1.56 1.56-1.56 4.09 0 5.66l2.4 2.4c-.37 1.17-.37 2.44 0 3.61l-2.08 2.08c-1.56 1.56-1.56 4.09 0 5.66l2.83 2.83c1.56 1.56 4.09 1.56 5.66 0l2.08-2.08c1.17.37 2.44.37 3.61 0l2.4 2.4c1.56 1.56 4.09 1.56 5.66 0l2.83-2.83c1.56-1.56-1.56-4.09 0-5.66l-2.4-2.4c.37-1.17.37-2.44 0-3.61l2.08-2.08c1.56-1.56 1.56-4.09 0-5.66l-2.83-2.83c-1.56-1.57-4.09-1.57-5.66 0zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/>';
+const BackIcon = '<path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />';
 
 const PALETTE_CLS = 'simulation-palette';
 const PALETTE_OPEN_CLS = 'open';
@@ -29,6 +29,14 @@ export default class SimulationPalette {
     const container = this._canvas.getContainer();
     const palette = this._palette = domify(`<div class="${PALETTE_CLS}"></div>`);
     container.appendChild(palette);
+
+    this.addEntry({
+      title: 'Atrás',
+      icon: BackIcon,
+      isBack: true
+    });
+
+    this.addSeparator();
 
     this.addEntry({
       title: 'Visualizar Costos',
@@ -65,7 +73,7 @@ export default class SimulationPalette {
 
     this.addEntry({
       title: 'Limpiar Visualización',
-      icon: ClearIcon,
+      text: 'Limpiar',
       isClear: true
     });
 
@@ -80,7 +88,7 @@ export default class SimulationPalette {
   }
 
   addEntry(options) {
-    const { title, icon, text, metric, isClear } = options;
+    const { title, icon, text, metric, isClear, isBack } = options;
 
     let content;
     if (icon) {
@@ -96,11 +104,9 @@ export default class SimulationPalette {
     `);
 
     domEvent.bind(button, 'click', () => {
-        if (isClear) {
-            this._clearCallback();
-        } else {
-            this._metricCallback(metric);
-        }
+        if (isClear) this._clearCallback();
+        else if (isBack) this.close();
+        else this._metricCallback(metric);
     });
 
     this._palette.appendChild(button);

@@ -1,10 +1,4 @@
 /* New Simulation Buttons */
-.simulation-run-button,
-.simulation-show-button {
-    border: none !important;
-    padding: 2px !important;
-}
-
 .simulation-run-button svg {
     color: #e91e63; /* Pinkish */
 }
@@ -16,8 +10,8 @@
 /* Simulation Palette */
 .simulation-palette {
   position: absolute;
-  top: 60px; /* Positioned below the main toolbar */
-  left: 20px;
+  top: 20px;
+  left: 80px; /* Positioned to the right of the main palette */
   background: #fff;
   border: 1px solid #ccc;
   border-radius: 4px;
