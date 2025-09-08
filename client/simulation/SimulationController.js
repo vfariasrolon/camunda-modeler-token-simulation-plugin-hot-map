@@ -6,8 +6,11 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 
+const RunIcon = '<path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M10,8V16L16,12L10,8Z" />';
+const ShowIcon = '<path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.7,7.6 1,12C2.7,16.4 7,19.5 12,19.5C17,19.5 21.3,16.4 23,12C21.3,7.6 17,4.5 12,4.5Z" />';
+
 export default class SimulationController {
-  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette) {
+  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._simulationPalette = simulationPalette;
@@ -15,6 +18,7 @@ export default class SimulationController {
     this._elementRegistry = elementRegistry;
     this._overlays = overlays;
     this._tokenSimulationPalette = tokenSimulationPalette;
+    this._notifications = notifications;
 
     this._heatmap = null;
     this._radius = 20;
@@ -28,49 +32,56 @@ export default class SimulationController {
   }
 
   init() {
-    // New button that integrates with the existing palette
-    const analysisButton = domify(`
-      <button class="bts-entry" title="Análisis de Simulación">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M5 3v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2zm2 2h10v14H7V5zm2 2v2h6V7H9zm0 4v2h6v-2H9zm0 4v2h4v-2H9z" fill="currentColor"/></svg>
+    const runButton = domify(`
+      <button class="bts-entry simulation-run-button" title="Ejecutar Simulación">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${RunIcon}</svg>
       </button>
     `);
 
-    domEvent.bind(analysisButton, 'click', (event) => {
-        event.stopPropagation();
-        this._simulationPalette.toggle();
-    });
+    const showButton = domify(`
+      <button class="bts-entry simulation-show-button" title="Mostrar Análisis">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ShowIcon}</svg>
+      </button>
+    `);
 
-    // Add a separator before our button for visual distinction
+    domEvent.bind(runButton, 'click', () => this.runSimulation());
+    domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
+
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 4);
-    this._tokenSimulationPalette.addEntry(analysisButton, 5);
+    this._tokenSimulationPalette.addEntry(runButton, 5);
+    this._tokenSimulationPalette.addEntry(showButton, 6);
 
-    // Setup callbacks for our custom palette
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
   }
 
-  adjustHeatmap(type, amount) {
-      if (type === 'radius') {
-          this._radius = Math.max(1, this._radius + amount);
-      } else if (type === 'blur') {
-          this._blur = Math.max(0, this._blur + amount);
-      }
-
-      if (this.lastMetric) {
-          this.showMetric(this.lastMetric, false); // don't re-run simulation
-      }
+  runSimulation() {
+    this.clear();
+    this.simulationResults = this._simulationEngine.run();
+    this._notifications.showNotification({
+        text: 'Simulación completada',
+        type: 'info',
+        duration: 3000
+    });
   }
 
-  showMetric(metric, runSimulation = true) {
-    this.clear(false); // don't clear results
+  adjustHeatmap(type, amount) {
+      if (type === 'radius') this._radius = Math.max(1, this._radius + amount);
+      else if (type === 'blur') this._blur = Math.max(0, this._blur + amount);
+      if (this.lastMetric) this.showMetric(this.lastMetric);
+  }
+
+  showMetric(metric) {
+    this.clearOverlaysAndHeatmap();
     this.lastMetric = metric;
 
-    if (runSimulation) {
-        this.simulationResults = this._simulationEngine.run();
-    }
-
     if (!this.simulationResults) {
+        this._notifications.showNotification({
+            text: 'Por favor, ejecute una simulación primero',
+            type: 'warning',
+            duration: 4000
+        });
         return;
     }
 
@@ -84,25 +95,17 @@ export default class SimulationController {
         let value = 0;
         if (metric === 'frequency') value = result.executionCount;
         else if (metric === 'cost') value = result.totalCost;
-        else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000; // avg seconds
-        else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000; // avg seconds
-        else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000; // avg seconds
-        else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1); // as a ratio
+        else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000;
+        else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
+        else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
+        else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
 
         if (value > max) max = value;
-
-        if (value > 0) {
-            dataPoints.push([
-                Math.round(element.x + element.width / 2),
-                Math.round(element.y + element.height / 2),
-                value
-            ]);
-        }
+        if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
     });
 
     this.createHeatmap();
     this._heatmap.data(dataPoints).max(max || 1).radius(this._radius, this._blur).draw();
-
     this.showOverlays(metric);
   }
 
@@ -110,7 +113,6 @@ export default class SimulationController {
       this.simulationResults.forEach((result, elementId) => {
           const element = this._elementRegistry.get(elementId);
           if (!element) return;
-
           let overlayText = '';
 
           if (is(element, 'bpmn:Task')) {
@@ -118,48 +120,35 @@ export default class SimulationController {
               else if (metric === 'waitTime') overlayText = `Espera: ${(result.totalWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
               else if (metric === 'processTime') overlayText = `Proceso: ${(result.totalProcessingTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
               else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
-              else if (metric === 'failureRate') {
-                  if (result.executionCount > 0) {
-                      const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
-                      overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
-                  }
+              else if (metric === 'failureRate' && result.executionCount > 0) {
+                  const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
+                  overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
               }
-          } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime') {
-              const avgCycleTime = result.totalCycleTime / (result.executionCount || 1) / 1000;
-              if (avgCycleTime > 0) {
-                overlayText = `Ciclo: ${avgCycleTime.toFixed(1)}s`;
-              }
+          } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+              overlayText = `Ciclo: ${(result.totalCycleTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
           }
 
-          if (overlayText) {
-              this._overlays.add(element, 'simulation-overlay', {
-                  position: { bottom: -5, left: element.width / 2 - 20 },
-                  html: `<div class="simulation-overlay-text">${overlayText}</div>`
-              });
-          }
+          if (overlayText) this._overlays.add(element, 'simulation-overlay', { position: { bottom: -5, left: element.width / 2 - 20 }, html: `<div class="simulation-overlay-text">${overlayText}</div>` });
 
           if (is(element, 'bpmn:ExclusiveGateway')) {
-              const totalExecutions = result.executionCount;
               element.outgoing.forEach(flow => {
                   const flowResult = this.simulationResults.get(flow.id);
-                  if (flowResult && totalExecutions > 0 && flowResult.executionCount > 0) {
-                      const percentage = (flowResult.executionCount / totalExecutions * 100).toFixed(1);
-                      const overlayText = `${flowResult.executionCount} (${percentage}%)`;
-                       this._overlays.add(flow.id, 'simulation-overlay', {
-                          position: { top: -15, left: -20 },
-                          html: `<div class="simulation-overlay-text">${overlayText}</div>`
-                      });
+                  if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
+                      const percentage = (flowResult.executionCount / result.executionCount * 100).toFixed(1);
+                      this._overlays.add(flow.id, 'simulation-overlay', { position: { top: -15, left: -20 }, html: `<div class="simulation-overlay-text">${flowResult.executionCount} (${percentage}%)</div>` });
                   }
               });
           }
       });
   }
 
-  clear(clearResults = true) {
+  clear() {
     this.lastMetric = null;
-    if (clearResults) {
-        this.simulationResults = null;
-    }
+    this.simulationResults = null;
+    this.clearOverlaysAndHeatmap();
+  }
+
+  clearOverlaysAndHeatmap() {
     if (this._heatmap) {
       this._heatmap.destroy();
       this._heatmap = null;
@@ -182,5 +171,6 @@ SimulationController.$inject = [
   'simulationEngine',
   'elementRegistry',
   'overlays',
-  'tokenSimulationPalette'
+  'tokenSimulationPalette',
+  'notifications'
 ];

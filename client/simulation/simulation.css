@@ -1,8 +1,23 @@
+/* New Simulation Buttons */
+.simulation-run-button,
+.simulation-show-button {
+    border: none !important;
+    padding: 2px !important;
+}
+
+.simulation-run-button svg {
+    color: #e91e63; /* Pinkish */
+}
+
+.simulation-show-button svg {
+    color: #2196f3; /* Blue */
+}
+
 /* Simulation Palette */
 .simulation-palette {
   position: absolute;
-  top: 20px;
-  left: 70px; /* Positioned to the right of the main palette */
+  top: 60px; /* Positioned below the main toolbar */
+  left: 20px;
   background: #fff;
   border: 1px solid #ccc;
   border-radius: 4px;
@@ -27,6 +42,11 @@
   min-width: 30px;
   border: none;
   background: none;
+}
+
+.simulation-palette .bts-entry-text {
+    font-size: 18px;
+    font-weight: bold;
 }
 
 .simulation-palette .bts-entry:hover {
