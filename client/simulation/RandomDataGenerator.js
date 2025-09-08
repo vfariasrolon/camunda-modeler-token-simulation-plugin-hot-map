@@ -3,10 +3,11 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 const random = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 
 export default class RandomDataGenerator {
-  constructor(elementRegistry, modeling, bpmnFactory, editorActions) {
+  constructor(elementRegistry, modeling, bpmnFactory, editorActions, canvas) {
     this._elementRegistry = elementRegistry;
     this._modeling = modeling;
     this._bpmnFactory = bpmnFactory;
+    this._canvas = canvas;
 
     editorActions.register({
       generateRandomSimulationData: () => this.generate()
@@ -15,28 +16,28 @@ export default class RandomDataGenerator {
 
   generate() {
     const allElements = [];
-    const rootElements = this._elementRegistry.getRoot().children;
+    const rootElement = this._canvas.getRootElement();
 
-    rootElements.forEach(rootElement => {
-      if (is(rootElement, 'bpmn:Participant')) {
-        // Handle collaboration diagrams with pools
-        const process = rootElement.businessObject.processRef;
-        if (process && process.flowElements) {
-          process.flowElements.forEach(flowElement => {
-            const element = this._elementRegistry.get(flowElement.id);
-            if (element) {
-              allElements.push(element);
+    if (is(rootElement, 'bpmn:Collaboration')) {
+        rootElement.children.forEach(participant => {
+            if (is(participant, 'bpmn:Participant')) {
+                const process = participant.businessObject.processRef;
+                if (process && process.flowElements) {
+                    process.flowElements.forEach(flowElement => {
+                        const element = this._elementRegistry.get(flowElement.id);
+                        if (element) {
+                            allElements.push(element);
+                        }
+                    });
+                }
+                allElements.push(participant);
             }
-          });
-        }
-        // Add participant itself for global config
-        allElements.push(rootElement);
-      } else if (is(rootElement, 'bpmn:Process')) {
-        // Handle simple process diagrams
+        });
+    } else if (is(rootElement, 'bpmn:Process')) {
         rootElement.children.forEach(child => allElements.push(child));
         allElements.push(rootElement);
-      }
-    });
+    }
+
 
     // Add general process info to the first process or participant
     const processRoot = allElements.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
@@ -99,7 +100,6 @@ export default class RandomDataGenerator {
       extensionElements.get('values').push(properties);
     }
 
-    // Remove existing simulationData property if it exists
     const existingProperty = properties.get('values').find(p => p.name === 'simulationData');
     if (existingProperty) {
         const index = properties.get('values').indexOf(existingProperty);
@@ -123,5 +123,6 @@ RandomDataGenerator.$inject = [
   'elementRegistry',
   'modeling',
   'bpmnFactory',
-  'editorActions'
+  'editorActions',
+  'canvas'
 ];
