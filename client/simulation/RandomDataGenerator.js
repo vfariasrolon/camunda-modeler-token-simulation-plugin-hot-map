@@ -3,14 +3,13 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 const random = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 
 export default class RandomDataGenerator {
-  constructor(eventBus, elementRegistry, modeling, bpmnFactory) {
-    this._eventBus = eventBus;
+  constructor(elementRegistry, modeling, bpmnFactory, editorActions) {
     this._elementRegistry = elementRegistry;
     this._modeling = modeling;
     this._bpmnFactory = bpmnFactory;
 
-    this._eventBus.on('generateRandomSimulationData', () => {
-      this.generate();
+    editorActions.register({
+      generateRandomSimulationData: () => this.generate()
     });
   }
 
@@ -103,8 +102,8 @@ export default class RandomDataGenerator {
 }
 
 RandomDataGenerator.$inject = [
-  'eventBus',
   'elementRegistry',
   'modeling',
-  'bpmnFactory'
+  'bpmnFactory',
+  'editorActions'
 ];

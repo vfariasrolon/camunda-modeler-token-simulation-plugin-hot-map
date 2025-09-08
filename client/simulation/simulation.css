@@ -1,31 +1,8 @@
-/* Main Toggle Button */
-.simulation-toggle {
-  position: absolute;
-  top: 20px;
-  left: 20px;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 5px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  z-index: 100;
-}
-
-.simulation-toggle:hover {
-  background: #f8f8f8;
-}
-
-.simulation-toggle svg {
-  margin-right: 5px;
-}
-
 /* Simulation Palette */
 .simulation-palette {
   position: absolute;
-  top: 60px;
-  left: 20px;
+  top: 20px;
+  left: 70px; /* Positioned to the right of the main palette */
   background: #fff;
   border: 1px solid #ccc;
   border-radius: 4px;
@@ -35,7 +12,8 @@
 }
 
 .simulation-palette.open {
-  display: block;
+  display: flex;
+  flex-direction: column;
 }
 
 .simulation-palette .bts-entry {
@@ -47,6 +25,8 @@
   align-items: center;
   justify-content: center;
   min-width: 30px;
+  border: none;
+  background: none;
 }
 
 .simulation-palette .bts-entry:hover {
@@ -61,6 +41,10 @@
 .simulation-palette .bts-entry-separator {
   margin: 5px 0;
   border-top: 1px solid #ccc;
+  border-bottom: none;
+  border-left: none;
+  border-right: none;
+  padding: 0;
 }
 
 

@@ -7,13 +7,14 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 
 export default class SimulationController {
-  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays) {
+  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._simulationPalette = simulationPalette;
     this._simulationEngine = simulationEngine;
     this._elementRegistry = elementRegistry;
     this._overlays = overlays;
+    this._tokenSimulationPalette = tokenSimulationPalette;
 
     this._heatmap = null;
     this._radius = 20;
@@ -27,21 +28,23 @@ export default class SimulationController {
   }
 
   init() {
-    const parent = this._canvas.getContainer().parentNode;
-
-    const button = domify(`
-      <button class="simulation-toggle" title="Análisis de Simulación">
+    // New button that integrates with the existing palette
+    const analysisButton = domify(`
+      <button class="bts-entry" title="Análisis de Simulación">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path d="M5 3v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-2-2-2H7c-1.1 0-2 .9-2 2zm2 2h10v14H7V5zm2 2v2h6V7H9zm0 4v2h6v-2H9zm0 4v2h4v-2H9z" fill="currentColor"/></svg>
-        <span>Análisis de Simulación</span>
       </button>
     `);
 
-    parent.appendChild(button);
-
-    domEvent.bind(button, 'click', () => {
-      this._simulationPalette.toggle();
+    domEvent.bind(analysisButton, 'click', (event) => {
+        event.stopPropagation();
+        this._simulationPalette.toggle();
     });
 
+    // Add a separator before our button for visual distinction
+    this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 4);
+    this._tokenSimulationPalette.addEntry(analysisButton, 5);
+
+    // Setup callbacks for our custom palette
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
@@ -160,7 +163,7 @@ export default class SimulationController {
 
   createHeatmap() {
     if (this._heatmap) return;
-    this._heatmap = new SimpleHeatSVG(this._canvas.getContainer());
+    this._heatmap = new SimpleHeatSVG(this._canvas);
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
 }
@@ -171,5 +174,6 @@ SimulationController.$inject = [
   'simulationPalette',
   'simulationEngine',
   'elementRegistry',
-  'overlays'
+  'overlays',
+  'tokenSimulationPalette'
 ];
