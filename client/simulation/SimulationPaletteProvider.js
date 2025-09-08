@@ -8,7 +8,9 @@ export default class SimulationPaletteProvider {
     this._selection = selection;
     this._propertiesPanel = propertiesPanel;
 
-    palette.registerProvider(this);
+    // This was the cause of the crash. The provider is registered
+    // automatically by being included in the __init__ array of the module.
+    // palette.registerProvider(this);
   }
 
   getPaletteEntries(element) {
