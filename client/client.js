@@ -8,18 +8,12 @@ import './simulation/simulation.css';
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
 import HideModelerElements from './HideModelerElements';
-import Heatmap from './Heatmap';
 import TimeTracker from './TimeTracker';
 import SimulationAnalysisModule from './simulation';
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
   hideModelerElements: [ 'type', HideModelerElements ]
-};
-
-const HeatmapPluginModule = {
-  __init__: [ 'heatmap' ],
-  heatmap: [ 'type', Heatmap ]
 };
 
 const TimeTrackerPluginModule = {
@@ -29,6 +23,5 @@ const TimeTrackerPluginModule = {
 
 // Register the BpmnJS modules
 registerBpmnJSPlugin(TokenSimulationModule);
-// registerBpmnJSPlugin(HeatmapPluginModule); // Disabled to avoid duplicate buttons
 registerBpmnJSPlugin(TimeTrackerPluginModule);
 registerBpmnJSPlugin(SimulationAnalysisModule);
