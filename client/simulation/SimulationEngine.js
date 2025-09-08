@@ -113,7 +113,8 @@ export default class SimulationEngine {
       return null;
     }
 
-    // Handle exclusive gateways with branching probability
+    let chosenFlow = null;
+
     if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = Math.random();
       let cumulativeProbability = 0;
@@ -122,14 +123,27 @@ export default class SimulationEngine {
         const probability = data ? data.branchingProbability : (1 / element.outgoing.length);
         cumulativeProbability += probability;
         if (rand <= cumulativeProbability) {
-          return flow.target;
+          chosenFlow = flow;
+          break;
         }
       }
-      return element.outgoing[element.outgoing.length-1].target; // fallback
+      if (!chosenFlow) {
+        chosenFlow = element.outgoing[element.outgoing.length - 1]; // fallback
+      }
+    } else {
+        chosenFlow = element.outgoing[0];
     }
 
-    // Default: take the first outgoing path
-    return element.outgoing[0].target;
+    // This is the fix: increment the count for the chosen flow
+    if (chosenFlow) {
+        const flowResults = this.results.get(chosenFlow.id);
+        if (flowResults) {
+            flowResults.executionCount++;
+        }
+        return chosenFlow.target;
+    }
+
+    return null;
   }
 
   processEvent(event) {
@@ -143,14 +157,12 @@ export default class SimulationEngine {
       this.completedInstances++;
       const instanceCycleTime = this.clock - startTime;
       elementResults.totalCycleTime += instanceCycleTime;
-      // We could add cycle time to the process root element as well
       return;
     }
 
     const nextElement = this.findNextElement(element);
 
     if (!nextElement) {
-        // This is an end event or a dead end
         this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime });
         return;
     }
@@ -177,14 +189,10 @@ export default class SimulationEngine {
             cost
         };
 
-        // Handle resources
         if (data.resources && this.resourcePools.has(data.resources.pool)) {
             const pool = this.resourcePools.get(data.resources.pool);
             if (!pool.request(taskEvent)) {
-                // Resource not available, task is queued. Update wait time.
-                const waitStart = this.clock;
-                // a bit of a hack: store wait time start on the event
-                taskEvent.waitStart = waitStart;
+                taskEvent.waitStart = this.clock;
             } else {
                 this.eventQueue.add(taskEvent);
             }
@@ -193,10 +201,8 @@ export default class SimulationEngine {
         }
 
     } else if (is(nextElement, 'bpmn:Gateway') || is(nextElement, 'bpmn:IntermediateCatchEvent') || is(nextElement, 'bpmn:StartEvent') || is(nextElement, 'bpmn:EndEvent')) {
-        // Gateways, events are considered to have zero processing time
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
     } else {
-        // Unrecognized elements also have zero processing time
         if (nextElement.id) {
             this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
@@ -224,7 +230,6 @@ export default class SimulationEngine {
     const arrivalData = getSimulationData(startEvent);
     const arrivalInterval = arrivalData ? minutesToMilliseconds(arrivalData.arrivalRate.value) : 600000;
 
-    // Schedule first arrival
     this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
 
     let instanceCounter = 1;
@@ -241,19 +246,17 @@ export default class SimulationEngine {
               elementResults.totalWaitTime += (this.clock - event.waitStart);
           }
 
-          // Release resource and check if a waiting task can start
           if (getSimulationData(event.element)?.resources) {
               const pool = this.resourcePools.get(getSimulationData(event.element).resources.pool);
               const nextTaskToStart = pool.release();
               if (nextTaskToStart) {
-                  // A waiting task can now start
                   const waitEnd = this.clock;
-                  const waitStart = nextTaskToStart.waitStart || waitEnd; // fallback
+                  const waitStart = nextTaskToStart.waitStart || waitEnd;
                   const waitingTime = waitEnd - waitStart;
                   this.results.get(nextTaskToStart.element.id).totalWaitTime += waitingTime;
 
                   nextTaskToStart.time = this.clock + nextTaskToStart.processingTime;
-                  delete nextTaskToStart.waitStart; // clean up
+                  delete nextTaskToStart.waitStart;
                   this.eventQueue.add(nextTaskToStart);
               }
           }
@@ -265,7 +268,6 @@ export default class SimulationEngine {
         break;
       }
 
-      // Schedule next arrival if the current event is a start event
       if (is(event.element, 'bpmn:StartEvent') && (instanceCounter < runValue)) {
         instanceCounter++;
         const nextArrivalTime = event.time + arrivalInterval;
