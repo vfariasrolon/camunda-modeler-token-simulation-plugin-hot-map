@@ -44,7 +44,7 @@ export default class RandomDataGenerator {
     if (processRoot) {
       const simulationConfig = {
         simulationConfig: { runUntil: "instances", runValue: 1000, runUnit: "instances" },
-        resourcePools: [ { name: "Analistas", quantity: random(2, 5) }, { name: "Gerentes", quantity: random(1, 2) } ]
+        resourcePools: [ { name: "Analistas", quantity: 1 }, { name: "Gerentes", quantity: 1 } ]
       };
       this.setSimulationData(processRoot, simulationConfig);
     }
