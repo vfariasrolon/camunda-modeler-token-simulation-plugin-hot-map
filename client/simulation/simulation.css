@@ -1,11 +1,7 @@
-/* New Simulation Buttons */
-.simulation-run-button svg {
-    color: #e91e63; /* Pinkish */
-}
-
-.simulation-show-button svg {
-    color: #2196f3; /* Blue */
-}
+/*
+* The run/show buttons now use the default .bts-entry style
+* to ensure visual consistency. No custom styles are needed.
+*/
 
 /* Simulation Palette */
 .simulation-palette {
