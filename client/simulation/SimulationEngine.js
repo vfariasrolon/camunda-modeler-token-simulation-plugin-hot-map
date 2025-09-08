@@ -3,6 +3,7 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 // --- Helper Functions ---
 
 const getExtensionProperty = (element, name) => {
+  if (!element || !element.businessObject) return null;
   const businessObject = element.businessObject;
   if (!businessObject.extensionElements || !businessObject.extensionElements.values) {
     return null;
@@ -134,7 +135,6 @@ export default class SimulationEngine {
         chosenFlow = element.outgoing[0];
     }
 
-    // This is the fix: increment the count for the chosen flow
     if (chosenFlow) {
         const flowResults = this.results.get(chosenFlow.id);
         if (flowResults) {
@@ -203,7 +203,7 @@ export default class SimulationEngine {
     } else if (is(nextElement, 'bpmn:Gateway') || is(nextElement, 'bpmn:IntermediateCatchEvent') || is(nextElement, 'bpmn:StartEvent') || is(nextElement, 'bpmn:EndEvent')) {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
     } else {
-        if (nextElement.id) {
+        if (nextElement && nextElement.id) {
             this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
     }
@@ -229,6 +229,10 @@ export default class SimulationEngine {
     }
     const arrivalData = getSimulationData(startEvent);
     const arrivalInterval = arrivalData ? minutesToMilliseconds(arrivalData.arrivalRate.value) : 600000;
+
+    console.log("--- Simulation Starting ---");
+    console.log("Configuration:", configData);
+    console.log("Start Event Arrival:", arrivalData);
 
     this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
 
@@ -275,7 +279,10 @@ export default class SimulationEngine {
       }
     }
 
-    console.log("Simulation finished.");
+    console.log("--- Simulation Finished ---");
+    console.log("Final Results (raw data):");
+    console.table(Object.fromEntries(this.results));
+
     return this.results;
   }
 }
