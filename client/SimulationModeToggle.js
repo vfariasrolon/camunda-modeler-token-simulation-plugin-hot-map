@@ -26,9 +26,9 @@ export default class SimulationModeToggle {
 
     domEvent.bind(this._container, 'click', () => this.toggle());
 
-    this._eventBus.on('canvas.init', ({ canvas }) => {
-      canvas.getContainer().appendChild(this._container);
-      canvas.getContainer().appendChild(this._simulationPalette.getContainer());
+    this._eventBus.on('canvas.init', () => {
+      this._canvas.getContainer().appendChild(this._container);
+      this._canvas.getContainer().appendChild(this._simulationPalette.getContainer());
     });
 
     this._eventBus.on('import.done', () => {
