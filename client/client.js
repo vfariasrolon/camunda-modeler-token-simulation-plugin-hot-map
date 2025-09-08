@@ -7,6 +7,7 @@ import TokenSimulationModule from 'bpmn-js-token-simulation';
 import HideModelerElements from './HideModelerElements';
 import Heatmap from './Heatmap';
 import TimeTracker from './TimeTracker';
+import SimulationAnalysisModule from './simulation';
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
@@ -27,3 +28,4 @@ const TimeTrackerPluginModule = {
 registerBpmnJSPlugin(TokenSimulationModule);
 registerBpmnJSPlugin(HeatmapPluginModule);
 registerBpmnJSPlugin(TimeTrackerPluginModule);
+registerBpmnJSPlugin(SimulationAnalysisModule);

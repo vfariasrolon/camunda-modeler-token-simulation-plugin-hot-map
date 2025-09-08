@@ -1,0 +1,91 @@
+/* Main Toggle Button */
+.simulation-toggle {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  z-index: 100;
+}
+
+.simulation-toggle:hover {
+  background: #f8f8f8;
+}
+
+.simulation-toggle svg {
+  margin-right: 5px;
+}
+
+/* Simulation Palette */
+.simulation-palette {
+  position: absolute;
+  top: 60px;
+  left: 20px;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 5px;
+  display: none; /* Hidden by default */
+  z-index: 100;
+}
+
+.simulation-palette.open {
+  display: block;
+}
+
+.simulation-palette .bts-entry {
+  padding: 5px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+}
+
+.simulation-palette .bts-entry:hover {
+  background: #eee;
+}
+
+.simulation-palette .bts-entry svg {
+  width: 20px;
+  height: 20px;
+}
+
+.simulation-palette .bts-entry-separator {
+  margin: 5px 0;
+  border-top: 1px solid #ccc;
+}
+
+
+/* Overlays */
+.simulation-overlay-text {
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Heatmap container */
+.heatmap-shown svg {
+    overflow: visible !important;
+}
+
+.heatmap-shown .heatmap-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    mix-blend-mode: multiply;
+    opacity: 0.7;
+}
