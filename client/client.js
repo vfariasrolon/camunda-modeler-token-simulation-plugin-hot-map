@@ -2,9 +2,6 @@ import {
   registerBpmnJSPlugin,
 } from 'camunda-modeler-plugin-helpers';
 
-// Polyfill for TextEncoder which is required by bpmn-js-token-simulation
-import 'text-encoding-polyfill';
-
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
 // All our custom modules
