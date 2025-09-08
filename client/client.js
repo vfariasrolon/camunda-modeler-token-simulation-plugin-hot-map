@@ -1,36 +1,29 @@
 import {
-  registerBpmnJSPlugin,
+  registerBpmnJSPlugin
 } from 'camunda-modeler-plugin-helpers';
 
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
-// All our custom modules
 import Heatmap from './Heatmap';
 import SimulationController from './SimulationController';
 import RandomDataGenerator from './RandomDataGenerator';
 import SimulationConfigReader from './SimulationConfigReader';
-import SimulationPalette from './SimulationPalette';
-import SimulationModeToggle from './SimulationModeToggle';
 
-// Unify all simulation analysis components into a single module
-// This ensures they can be injected into each other correctly.
-const SimulationAnalysisModule = {
+// All our custom functionality is bundled into this single module.
+// This ensures that all components can be injected into each other.
+const HeatmapSimulationModule = {
   __init__: [
-    'heatmap',
-    'simulationController',
-    'simulationPalette',
-    'simulationModeToggle'
+    'heatmap', // Initializes the heatmap buttons in the palette
+    'simulationController'
   ],
   heatmap: [ 'type', Heatmap ],
   simulationController: [ 'type', SimulationController ],
   randomDataGenerator: [ 'type', RandomDataGenerator ],
-  simulationConfigReader: [ 'type', SimulationConfigReader ],
-  simulationPalette: [ 'type', SimulationPalette ],
-  simulationModeToggle: [ 'type', SimulationModeToggle ]
+  simulationConfigReader: [ 'type', SimulationConfigReader ]
 };
 
-// Register the original token simulation module
+// Register the original token simulation module first
 registerBpmnJSPlugin(TokenSimulationModule);
 
-// Register our new, unified simulation analysis module
-registerBpmnJSPlugin(SimulationAnalysisModule);
+// Register our heatmap simulation module
+registerBpmnJSPlugin(HeatmapSimulationModule);

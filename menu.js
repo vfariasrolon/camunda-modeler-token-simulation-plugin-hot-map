@@ -32,11 +32,15 @@ module.exports = function (electronApp, menuState) {
       electronApp.emit('menu:action', 'resetTokenSimulation');
     }
   }, {
-    label: 'Toggle Simulation Analysis',
-    accelerator: 's',
+    id: 'separator-simulation-analysis',
+    label: '- - - - - - - - - -',
+    enabled: false
+  }, {
+    label: 'Generar Datos de Simulación Aleatorios',
+    accelerator: 'CmdOrCtrl+G',
     enabled,
     action: function() {
-      electronApp.emit('menu:action', 'toggleSimulationAnalysis');
+      electronApp.emit('menu:action', 'generateRandomData');
     }
   }];
 };

@@ -6,23 +6,38 @@ import SimulationEngine from './SimulationEngine';
  * Controlador principal para orquestar la simulación.
  */
 export default class SimulationController {
-  constructor(injector, elementRegistry, modeling, moddle) {
+  constructor(injector, elementRegistry, modeling, moddle, toggleMode, eventBus) {
     this._injector = injector;
     this._elementRegistry = elementRegistry;
     this._modeling = modeling;
     this._moddle = moddle;
+    this._toggleMode = toggleMode;
+    this._eventBus = eventBus;
 
     this._randomDataGenerator = this._injector.instantiate(RandomDataGenerator);
     this._configReader = this._injector.instantiate(SimulationConfigReader);
 
     this._simulationResults = null;
+
+    // Listen for menu action to generate random data
+    this._eventBus.on('menu:action', (context) => {
+      if (context.action === 'generateRandomData') {
+        this.generateRandomData();
+      }
+    });
   }
 
   /**
    * Ejecuta el generador de datos aleatorios.
    */
   generateRandomData() {
+    // Si la simulación de tokens está activa, la desactivamos primero.
+    if (this._toggleMode.active) {
+      this._toggleMode.toggle();
+    }
+
     this._randomDataGenerator.generateData();
+
     // Invalidar resultados anteriores
     this._simulationResults = null;
   }
@@ -32,7 +47,11 @@ export default class SimulationController {
    * @param {string} viewType - El tipo de vista a mostrar (cost, waitTime, etc.).
    */
   runSimulation(viewType) {
-    // El chequeo de modo activo ya no es necesario aquí.
+    // Si la simulación de tokens está activa, la desactivamos primero.
+    if (this._toggleMode.active) {
+      this._toggleMode.toggle();
+    }
+
     console.log("Iniciando simulación...");
 
     // 1. Leer la configuración actual del diagrama
@@ -56,4 +75,4 @@ export default class SimulationController {
   }
 }
 
-SimulationController.$inject = ['injector', 'elementRegistry', 'modeling', 'moddle'];
+SimulationController.$inject = ['injector', 'elementRegistry', 'modeling', 'moddle', 'toggleMode', 'eventBus'];
