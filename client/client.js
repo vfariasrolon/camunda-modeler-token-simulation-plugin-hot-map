@@ -29,6 +29,6 @@ const TimeTrackerPluginModule = {
 
 // Register the BpmnJS modules
 registerBpmnJSPlugin(TokenSimulationModule);
-registerBpmnJSPlugin(HeatmapPluginModule);
+// registerBpmnJSPlugin(HeatmapPluginModule); // Disabled to avoid duplicate buttons
 registerBpmnJSPlugin(TimeTrackerPluginModule);
 registerBpmnJSPlugin(SimulationAnalysisModule);
