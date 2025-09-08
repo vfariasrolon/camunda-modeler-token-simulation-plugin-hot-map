@@ -100,6 +100,7 @@ export default class SimulationEngine {
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0,
+        failureCount: 0, // new metric
         totalWaitTime: 0,
         totalProcessingTime: 0,
         totalCost: 0,
@@ -175,6 +176,13 @@ export default class SimulationEngine {
             processingTime = minutesToMilliseconds(data.processingTime.value);
         } else if (data.processingTime.distribution === 'triangular') {
             processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
+        }
+
+        // Handle failures and rework
+        if (data.failureRate && Math.random() < data.failureRate) {
+            const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
+            processingTime += reworkTime;
+            this.results.get(nextElement.id).failureCount++;
         }
 
         const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;

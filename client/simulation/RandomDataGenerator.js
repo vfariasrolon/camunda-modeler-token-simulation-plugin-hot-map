@@ -60,7 +60,9 @@ export default class RandomDataGenerator {
         data = {
           processingTime: { distribution: "triangular", unit: "minutes", min: random(5, 10), mode: random(11, 20), max: random(21, 30) },
           resources: { pool: "Analistas", quantityRequired: 1 },
-          cost: { type: "perHour", value: random(20, 50), currency: "USD" }
+          cost: { type: "perHour", value: random(20, 50), currency: "USD" },
+          failureRate: parseFloat((Math.random() * 0.15 + 0.05).toFixed(2)), // 5% to 20% failure rate
+          reworkTime: { distribution: "fixed", unit: "minutes", value: random(15, 60) }
         };
       } else if (is(element, 'bpmn:ExclusiveGateway')) {
         const outgoing = element.outgoing;

@@ -87,6 +87,7 @@ export default class SimulationController {
         else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000; // avg seconds
         else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000; // avg seconds
         else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000; // avg seconds
+        else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1); // as a ratio
 
         if (value > max) max = value;
 
@@ -117,6 +118,12 @@ export default class SimulationController {
               else if (metric === 'waitTime') overlayText = `Espera: ${(result.totalWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
               else if (metric === 'processTime') overlayText = `Proceso: ${(result.totalProcessingTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
               else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
+              else if (metric === 'failureRate') {
+                  if (result.executionCount > 0) {
+                      const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
+                      overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
+                  }
+              }
           } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime') {
               const avgCycleTime = result.totalCycleTime / (result.executionCount || 1) / 1000;
               if (avgCycleTime > 0) {
