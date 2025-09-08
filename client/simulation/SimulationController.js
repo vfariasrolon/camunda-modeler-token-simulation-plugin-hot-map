@@ -6,10 +6,25 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 
-// Replacement icons from FontAwesome to match the editor's style.
-// 'play' for Run Simulation, 'eye' for Show Analysis.
-const RunIcon = '<path d="M1384 609l-1328 -738q-23 -13 -39.5 -3t-16.5 36v1472q0 26 16.5 36t39.5 -3l1328 -738q23 -13 23 -31t-23 -31z" />';
-const ShowIcon = '<path d="M1664 576q-152 236 -381 353q61 -104 61 -225q0 -185 -131.5 -316.5t-316.5 -131.5t-316.5 131.5t-131.5 316.5q0 121 61 225q-229 -117 -381 -353q133 -205 333.5 -326.5t434.5 -121.5t434.5 121.5t333.5 326.5zM944 960q0 20 -14 34t-34 14q-125 0 -214.5 -89.5t-89.5 -214.5q0 -20 14 -34t34 -14t34 14t14 34q0 86 61 147t147 61q20 0 34 14t14 34zM1792 576q0 -34 -20 -69q-140 -230 -376.5 -368.5t-499.5 -138.5t-499.5 139t-376.5 368q-20 35 -20 69t20 69q140 229 376.5 368t499.5 139t499.5 -139t376.5 -368q20 -35 20 -69z" />';
+// Geometric icons to match the look and feel of the editor
+const RunIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" style="width: 100%; height: 100%;">
+      <path d="M 4 2 L 4 14 L 14 8 Z" fill="currentColor" />
+    </svg>
+  </span>
+`;
+
+const ShowIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" style="width: 100%; height: 100%;">
+      <path d="M 1 8 A 7 4 0 0 1 15 8 A 7 4 0 0 1 1 8 Z M 8 8 m -2, 0 a 2,2 0 1,1 4,0 a 2,2 0 1,1 -4,0"
+            stroke="currentColor"
+            stroke-width="1.5"
+            fill="none" />
+    </svg>
+  </span>
+`;
 
 export default class SimulationController {
   constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications) {
@@ -36,13 +51,13 @@ export default class SimulationController {
   init() {
     const runButton = domify(`
       <button class="bts-entry simulation-run-button" title="Ejecutar Simulación">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1792 1792" style="width: 100%; height: 100%;" fill="currentColor">${RunIcon}</svg>
+        ${RunIcon}
       </button>
     `);
 
     const showButton = domify(`
       <button class="bts-entry simulation-show-button" title="Mostrar Análisis">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1792 1792" style="width: 100%; height: 100%;" fill="currentColor">${ShowIcon}</svg>
+        ${ShowIcon}
       </button>
     `);
 
