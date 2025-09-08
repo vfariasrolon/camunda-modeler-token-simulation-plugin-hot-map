@@ -58,11 +58,11 @@ export default class RandomDataGenerator {
         };
       } else if (is(element, 'bpmn:Task')) {
         data = {
-          processingTime: { distribution: "triangular", unit: "minutes", min: random(5, 10), mode: random(11, 20), max: random(21, 30) },
+          processingTime: { distribution: "triangular", unit: "minutes", min: random(2, 20), mode: random(15, 40), max: random(40, 90) },
           resources: { pool: "Analistas", quantityRequired: 1 },
-          cost: { type: "perHour", value: random(20, 50), currency: "USD" },
-          failureRate: parseFloat((Math.random() * 0.15 + 0.05).toFixed(2)), // 5% to 20% failure rate
-          reworkTime: { distribution: "fixed", unit: "minutes", value: random(15, 60) }
+          cost: { type: "perHour", value: random(10, 100), currency: "USD" },
+          failureRate: parseFloat((Math.random() * 0.29 + 0.01).toFixed(2)), // 1% to 30% failure rate
+          reworkTime: { distribution: "fixed", unit: "minutes", value: random(10, 120) }
         };
       } else if (is(element, 'bpmn:ExclusiveGateway')) {
         const outgoing = element.outgoing;
