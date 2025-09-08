@@ -2,6 +2,9 @@ import {
   registerBpmnJSPlugin,
 } from 'camunda-modeler-plugin-helpers';
 
+// new css import
+import './simulation/simulation.css';
+
 import TokenSimulationModule from 'bpmn-js-token-simulation';
 
 import HideModelerElements from './HideModelerElements';
