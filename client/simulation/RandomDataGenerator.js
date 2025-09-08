@@ -14,10 +14,32 @@ export default class RandomDataGenerator {
   }
 
   generate() {
-    const elements = this._elementRegistry.getAll();
+    const allElements = [];
+    const rootElements = this._elementRegistry.getRoot().children;
+
+    rootElements.forEach(rootElement => {
+      if (is(rootElement, 'bpmn:Participant')) {
+        // Handle collaboration diagrams with pools
+        const process = rootElement.businessObject.processRef;
+        if (process && process.flowElements) {
+          process.flowElements.forEach(flowElement => {
+            const element = this._elementRegistry.get(flowElement.id);
+            if (element) {
+              allElements.push(element);
+            }
+          });
+        }
+        // Add participant itself for global config
+        allElements.push(rootElement);
+      } else if (is(rootElement, 'bpmn:Process')) {
+        // Handle simple process diagrams
+        rootElement.children.forEach(child => allElements.push(child));
+        allElements.push(rootElement);
+      }
+    });
 
     // Add general process info to the first process or participant
-    const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process')) || this._elementRegistry.find(el => is(el, 'bpmn:Participant'));
+    const processRoot = allElements.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     if (processRoot) {
       const simulationConfig = {
         simulationConfig: { runUntil: "instances", runValue: 1000, runUnit: "instances" },
@@ -26,7 +48,7 @@ export default class RandomDataGenerator {
       this.setSimulationData(processRoot, simulationConfig);
     }
 
-    elements.forEach(element => {
+    allElements.forEach(element => {
       let data = null;
 
       if (is(element, 'bpmn:StartEvent')) {
@@ -48,7 +70,7 @@ export default class RandomDataGenerator {
             if (index === outgoing.length - 1) {
               probability = remainingProbability;
             } else {
-              probability = Math.random() * remainingProbability * 0.7; // ensure not all is taken by first
+              probability = Math.random() * remainingProbability * 0.7;
               remainingProbability -= probability;
             }
             this.setSimulationData(flow, { branchingProbability: parseFloat(probability.toFixed(2)) });
@@ -64,36 +86,32 @@ export default class RandomDataGenerator {
 
   setSimulationData(element, data) {
     const businessObject = element.businessObject;
-
     const simulationDataString = JSON.stringify(data, null, 2);
-
-    const properties = this._bpmnFactory.create('camunda:Properties', {
-      values: [
-        this._bpmnFactory.create('camunda:Property', {
-          name: 'simulationData',
-          value: simulationDataString
-        })
-      ]
-    });
 
     let extensionElements = businessObject.get('extensionElements');
     if (!extensionElements) {
       extensionElements = this._bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
     }
 
+    let properties = extensionElements.get('values').find(v => is(v, 'camunda:Properties'));
+    if (!properties) {
+      properties = this._bpmnFactory.create('camunda:Properties', { values: [] });
+      extensionElements.get('values').push(properties);
+    }
+
     // Remove existing simulationData property if it exists
-    const existingValues = extensionElements.get('values').filter(v => {
-        if (is(v, 'camunda:Properties')) {
-            const properties = v.get('values').filter(p => p.name === 'simulationData');
-            return properties.length === 0;
-        }
-        return true;
+    const existingProperty = properties.get('values').find(p => p.name === 'simulationData');
+    if (existingProperty) {
+        const index = properties.get('values').indexOf(existingProperty);
+        properties.get('values').splice(index, 1);
+    }
+
+    const newProperty = this._bpmnFactory.create('camunda:Property', {
+        name: 'simulationData',
+        value: simulationDataString
     });
 
-    extensionElements.get('values').length = 0;
-    Array.prototype.push.apply(extensionElements.get('values'), existingValues);
-
-    extensionElements.get('values').push(properties);
+    properties.get('values').push(newProperty);
 
     this._modeling.updateProperties(element, {
       extensionElements
