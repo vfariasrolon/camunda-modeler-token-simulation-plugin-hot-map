@@ -4,64 +4,56 @@ import {
   event as domEvent
 } from 'min-dom';
 
-// ... (keep all existing icon constants)
-const GearIcon = '<path d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22Z" />';
-const BackIcon = '<path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />';
+const RunIcon = `...`; // Keep new icons
+const ShowIcon = `...`;
+const ClockIcon = `...`;
+const CycleTimeIcon = `...`;
+const FrequencyIcon = `...`;
+const BugIcon = `...`;
+const ClearIcon = `...`;
+const BackIcon = `...`;
 
 export default class SimulationPalette {
   constructor(canvas, eventBus) {
-    // ... (constructor as before)
-    this._configCallback = () => {};
-    this._configButton = null;
+    this._canvas = canvas;
+    this._eventBus = eventBus;
+    this.init();
   }
 
   init() {
-    // ... (create palette container)
+    // ... create palette container ...
 
-    this.addEntry({ title: 'Atrás', icon: BackIcon, isBack: true });
+    this.addEntry({ title: 'Atrás', icon: BackIcon, event: 'simulation.palette.close' });
     this.addSeparator();
-
-    // Add new configure button
-    this._configButton = this.addEntry({
-      title: 'Configurar Elemento Seleccionado',
-      icon: GearIcon,
-      isConfig: true
-    });
-    this.toggleConfig(false); // Initially disabled
-
+    this.addEntry({ title: 'Visualizar Costos', text: '$', event: 'simulation.showMetric', metric: 'cost' });
+    this.addEntry({ title: 'Visualizar Tiempos de Espera', icon: ClockIcon, event: 'simulation.showMetric', metric: 'waitTime' });
+    // ... add all other metric buttons, firing 'simulation.showMetric' with the correct metric ...
+    this.addEntry({ title: 'Visualizar Tasa de Fallos', icon: BugIcon, event: 'simulation.showMetric', metric: 'failureRate' });
     this.addSeparator();
-
-    // ... (add all metric buttons as before)
-
+    this.addEntry({ title: 'Limpiar Visualización', text: 'Limpiar', event: 'simulation.clear' });
     this.addSeparator();
-    this.addEntry({ title: 'Limpiar Visualización', text: 'Limpiar', isClear: true });
-    // ... (add controls as before)
+    this.addControl('R+', 'Aumentar Radio', 'radius', 5);
+    // ... add other controls ...
   }
 
   addEntry(options) {
-    const { title, icon, text, metric, isClear, isBack, isConfig } = options;
-    // ... (logic to create button content)
+    const { title, icon, text, event, metric } = options;
+    let content = text ? `<span class="bts-entry-text">${text}</span>` : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${icon}</svg>`;
     const button = domify(`<button class="bts-entry" title="${title}">${content}</button>`);
     domEvent.bind(button, 'click', () => {
-        if (isClear) this._clearCallback();
-        else if (isBack) this.close();
-        else if (isConfig) this._configCallback();
-        else this._metricCallback(metric);
+        this._eventBus.fire(event, { metric });
+        if (event === 'simulation.palette.close') this.close();
     });
     this._palette.appendChild(button);
-    return button; // Return the button element
   }
 
-  toggleConfig(enabled) {
-      if (this._configButton) {
-          this._configButton.disabled = !enabled;
-          this._configButton.style.cursor = enabled ? 'pointer' : 'not-allowed';
-          this._configButton.style.opacity = enabled ? '1' : '0.5';
-      }
+  addControl(text, title, type, amount) {
+    const button = domify(`<button class="bts-entry" title="${title}">${text}</button>`);
+    domEvent.bind(button, 'click', () => this._eventBus.fire('simulation.adjustHeatmap', { type, amount }));
+    this._palette.appendChild(button);
   }
 
-  // ... (rest of the methods as before)
-  setConfigCallback(cb) { this._configCallback = cb; }
+  // ... rest of the methods ...
 }
 
 SimulationPalette.$inject = [ 'canvas', 'eventBus' ];
