@@ -17,11 +17,8 @@ const RunIcon = `
 
 const ShowIcon = `
   <span class="bts-icon">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-      <path d="M 1 8 A 7 4 0 0 1 15 8 A 7 4 0 0 1 1 8 Z M 8 8 m -2, 0 a 2,2 0 1,1 4,0 a 2,2 0 1,1 -4,0"
-            stroke="currentColor"
-            stroke-width="1.5"
-            fill="none" />
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+      <path d="M256 8C119 8 8 119 8 256s111 248 248 248 248-111 248-248S393 8 256 8zM0 256c0 141.4 114.6 256 256 256V0C114.6 0 0 114.6 0 256zm256 128c-44.2 0-80-35.8-80-80s35.8-80 80-80 80 35.8 80 80-35.8 80-80 80zm0-256c44.2 0 80 35.8 80 80s-35.8 80-80 80-80-35.8-80-80 35.8-80 80-80z" fill="currentColor" />
     </svg>
   </span>
 `;
