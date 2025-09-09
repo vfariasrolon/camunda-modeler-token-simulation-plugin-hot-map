@@ -38,47 +38,65 @@ export default class RandomDataGenerator {
         allElements.push(rootElement);
     }
 
-
-    // Add general process info to the first process or participant
     const processRoot = allElements.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     if (processRoot) {
       const simulationConfig = {
         simulationConfig: { runUntil: "instances", runValue: 1000, runUnit: "instances" },
-        resourcePools: [ { name: "Analistas", quantity: 1 }, { name: "Gerentes", quantity: 1 } ]
+        resourcePools: [ { name: "Analistas", quantity: 1 }, { name: "Gerentes", quantity: 1 } ],
+        transportPools: [ { name: "carros_grandes", quantity: 2, capacity: 10 } ]
       };
       this.setSimulationData(processRoot, simulationConfig);
+    }
+
+    let loaderTask = null;
+    let unloaderTask = null;
+
+    // Find a pair of tasks to act as loader/unloader
+    const tasks = allElements.filter(e => is(e, 'bpmn:Task'));
+    if (tasks.length >= 2) {
+        for (const task of tasks) {
+            if (task.outgoing && task.outgoing[0] && task.outgoing[0].target && is(task.outgoing[0].target, 'bpmn:Task')) {
+                loaderTask = task;
+                unloaderTask = task.outgoing[0].target;
+                break;
+            }
+        }
     }
 
     allElements.forEach(element => {
       let data = null;
 
       if (is(element, 'bpmn:StartEvent')) {
-        data = {
-          arrivalRate: { distribution: "fixed", unit: "minutes", value: random(5, 15) }
-        };
+        data = { arrivalRate: { distribution: "fixed", unit: "minutes", value: random(5, 15) } };
       } else if (is(element, 'bpmn:Task')) {
         data = {
           processingTime: { distribution: "triangular", unit: "minutes", min: random(2, 20), mode: random(15, 40), max: random(40, 90) },
           resources: { pool: "Analistas", quantityRequired: 1 },
           cost: { type: "perHour", value: random(10, 100), currency: "USD" },
-          failureRate: parseFloat((Math.random() * 0.29 + 0.01).toFixed(2)), // 1% to 30% failure rate
+          failureRate: parseFloat((Math.random() * 0.29 + 0.01).toFixed(2)),
           reworkTime: { distribution: "fixed", unit: "minutes", value: random(10, 120) }
         };
-      } else if (is(element, 'bpmn:ExclusiveGateway')) {
-        const outgoing = element.outgoing;
-        if (outgoing && outgoing.length > 1) {
-          let remainingProbability = 1.0;
-          outgoing.forEach((flow, index) => {
+
+        if (element === loaderTask) {
+            data.loads = { pool: "carros_grandes" };
+        } else if (element === unloaderTask) {
+            data.requires = { pool: "carros_grandes" };
+        }
+
+      } else if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+        let remainingProbability = 1.0;
+        element.outgoing.forEach((flow, index) => {
             let probability;
-            if (index === outgoing.length - 1) {
-              probability = remainingProbability;
-            } else {
-              probability = Math.random() * remainingProbability * 0.7;
-              remainingProbability -= probability;
+            if (index === element.outgoing.length - 1) probability = remainingProbability;
+            else {
+                probability = Math.random() * remainingProbability * 0.7;
+                remainingProbability -= probability;
             }
             this.setSimulationData(flow, { branchingProbability: parseFloat(probability.toFixed(2)) });
-          });
-        }
+        });
+      } else if (loaderTask && unloaderTask && element.source === loaderTask && element.target === unloaderTask) {
+          // This is the flow between our loader and unloader tasks
+          this.setSimulationData(element, { transportTime: { distribution: "fixed", unit: "minutes", value: random(5, 15) } });
       }
 
       if (data) {
@@ -87,14 +105,14 @@ export default class RandomDataGenerator {
     });
   }
 
-  setSimulationData(element, data) {
+  setSimulationData(element, existingData = {}) {
     const businessObject = element.businessObject;
-    const simulationDataString = JSON.stringify(data, null, 2);
+    const currentSimData = getSimulationData(element) || {};
+    const newData = { ...currentSimData, ...existingData };
+    const simulationDataString = JSON.stringify(newData, null, 2);
 
     let extensionElements = businessObject.get('extensionElements');
-    if (!extensionElements) {
-      extensionElements = this._bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
-    }
+    if (!extensionElements) extensionElements = this._bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
 
     let properties = extensionElements.get('values').find(v => is(v, 'camunda:Properties'));
     if (!properties) {
@@ -102,22 +120,14 @@ export default class RandomDataGenerator {
       extensionElements.get('values').push(properties);
     }
 
-    const existingProperty = properties.get('values').find(p => p.name === 'simulationData');
-    if (existingProperty) {
-        const index = properties.get('values').indexOf(existingProperty);
-        properties.get('values').splice(index, 1);
+    let simProperty = properties.get('values').find(p => p.name === 'simulationData');
+    if (!simProperty) {
+        simProperty = this._bpmnFactory.create('camunda:Property', { name: 'simulationData' });
+        properties.get('values').push(simProperty);
     }
 
-    const newProperty = this._bpmnFactory.create('camunda:Property', {
-        name: 'simulationData',
-        value: simulationDataString
-    });
-
-    properties.get('values').push(newProperty);
-
-    this._modeling.updateProperties(element, {
-      extensionElements
-    });
+    simProperty.value = simulationDataString;
+    this._modeling.updateProperties(element, { extensionElements });
   }
 }
 
