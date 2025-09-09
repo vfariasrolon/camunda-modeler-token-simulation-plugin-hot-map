@@ -8,142 +8,140 @@ const triangular = (min, mode, max) => {
 };
 const minutesToMilliseconds = (minutes) => minutes * 60 * 1000;
 
-// --- Core Classes ---
-class EventQueue { /* ... as before ... */ }
-class ResourcePool { /* ... as before ... */ }
+class EventQueue {
+  constructor() { this.items = []; }
+  add(event) { this.items.push(event); this.items.sort((a, b) => a.time - b.time); }
+  next() { return this.items.shift(); }
+  isEmpty() { return this.items.length === 0; }
+}
 
-// New class to manage transport resources
-class TransportPool {
+class ResourcePool {
   constructor(config) {
     this.name = config.name;
-    this.capacity = config.capacity;
-    this.carts = Array.from({ length: config.quantity }, (_, i) => ({
-      id: `${config.name}_${i}`,
-      state: 'IDLE', // IDLE, LOADING, IN_TRANSIT, WAITING_TO_UNLOAD
-      location: null, // element ID
-      payload: [] // array of instance IDs
-    }));
-    this.loadingQueues = {}; // key: elementId, value: array of instanceIds
+    this.available = config.quantity;
+    this.queue = [];
   }
-
-  getIdleCart() {
-    return this.carts.find(c => c.state === 'IDLE');
+  request(task) {
+    if (this.available > 0) {
+      this.available--;
+      return true;
+    } else {
+      this.queue.push(task);
+      return false;
+    }
+  }
+  release() {
+    this.available++;
+    if (this.queue.length > 0) {
+      const nextTask = this.queue.shift();
+      this.available--;
+      return nextTask;
+    }
+    return null;
   }
 }
 
-// --- Main Simulation Engine ---
 export default class SimulationEngine {
   constructor(elementRegistry) {
     this._elementRegistry = elementRegistry;
-    // ... initialization of properties ...
-    this.transportPools = new Map();
+    this.eventQueue = new EventQueue();
+    this.results = new Map();
+    this.resourcePools = new Map();
+    this.clock = 0;
+    this.completedInstances = 0;
   }
 
   initialize() {
-    // ... reset properties ...
-    this.transportPools = new Map();
-    // ... initialize results map ...
+    this.clock = 0;
+    this.completedInstances = 0;
+    this.eventQueue = new EventQueue();
+    this.results = new Map();
+    this.resourcePools = new Map();
+    this._elementRegistry.getAll().forEach(element => {
+      this.results.set(element.id, {
+        executionCount: 0,
+        failureCount: 0,
+        totalWaitTime: 0,
+        totalProcessingTime: 0,
+        totalCost: 0,
+        totalCycleTime: 0,
+        name: element.businessObject.name || element.id
+      });
+    });
   }
 
-  findNextElement(element) { /* ... as before ... */ }
-
-  // New method to handle batching logic
-  handleLoadingTask(event) {
-    const { element: loadingTask, instanceId } = event;
-    const data = getSimulationData(loadingTask);
-    const poolName = data.loads.pool;
-    const transportPool = this.transportPools.get(poolName);
-
-    if (!transportPool.loadingQueues[loadingTask.id]) {
-      transportPool.loadingQueues[loadingTask.id] = [];
-    }
-    transportPool.loadingQueues[loadingTask.id].push(instanceId);
-
-    if (transportPool.loadingQueues[loadingTask.id].length >= transportPool.capacity) {
-      const cart = transportPool.getIdleCart();
-      if (cart) {
-        cart.state = 'LOADING';
-        cart.location = loadingTask.id;
-        cart.payload = transportPool.loadingQueues[loadingTask.id].splice(0, transportPool.capacity);
-
-        const departureEvent = {
-          type: 'CART_DEPARTURE',
-          cart: cart,
-          element: loadingTask,
-          time: this.clock
-        };
-        this.eventQueue.add(departureEvent);
+  findNextElement(element) {
+    if (!element.outgoing || element.outgoing.length === 0) return null;
+    let chosenFlow = null;
+    if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+      const rand = Math.random();
+      let cumulativeProbability = 0;
+      for (const flow of element.outgoing) {
+        const data = getSimulationData(flow);
+        const probability = data ? data.branchingProbability : (1 / element.outgoing.length);
+        cumulativeProbability += probability;
+        if (rand <= cumulativeProbability) {
+          chosenFlow = flow;
+          break;
+        }
       }
+      if (!chosenFlow) chosenFlow = element.outgoing[element.outgoing.length - 1];
+    } else {
+      chosenFlow = element.outgoing[0];
     }
+    if (chosenFlow) {
+      const flowResults = this.results.get(chosenFlow.id);
+      if (flowResults) flowResults.executionCount++;
+      return chosenFlow.target;
+    }
+    return null;
   }
 
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
-
-    // Handle new transport events
-    if (type === 'CART_DEPARTURE') {
-        const { cart, element: fromTask } = event;
-        const nextFlow = fromTask.outgoing[0];
-        const transportData = getSimulationData(nextFlow);
-        const transportTime = transportData ? minutesToMilliseconds(transportData.transportTime.value) : 0;
-
-        cart.state = 'IN_TRANSIT';
-        this.eventQueue.add({
-            type: 'CART_ARRIVAL',
-            cart: cart,
-            element: nextFlow.target, // destination task
-            time: this.clock + transportTime
-        });
-        return;
-    }
-
-    if (type === 'CART_ARRIVAL') {
-        const { cart, element: toTask } = event;
-        cart.state = 'WAITING_TO_UNLOAD';
-        cart.location = toTask.id;
-
-        // Unbatch the instances and schedule their processing
-        cart.payload.forEach(instId => {
-            this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: toTask, time: this.clock, instanceId: instId, startTime: this.clock });
-        });
-        cart.payload = []; // Empty the cart
-        return;
-    }
-
-    // Existing event processing logic
     const elementResults = this.results.get(element.id);
     elementResults.executionCount++;
     this.clock = event.time;
 
-    if (type === 'INSTANCE_COMPLETE') { /* ... as before ... */ return; }
-
-    const data = getSimulationData(element);
-    if (is(element, 'bpmn:Task') && data && data.loads) {
-        this.handleLoadingTask(event);
-        return; // Stop normal flow, instance is now held
+    if (type === 'INSTANCE_COMPLETE') {
+      this.completedInstances++;
+      elementResults.totalCycleTime += (this.clock - startTime);
+      return;
     }
 
     const nextElement = this.findNextElement(element);
-    if (!nextElement) { /* ... handle end event ... */ return; }
+    if (!nextElement) {
+      this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime });
+      return;
+    }
 
-    const nextData = getSimulationData(nextElement);
-    if (is(nextElement, 'bpmn:Task') && nextData) {
-        // ... existing task processing logic ...
-        // Add check for 'requires' property
-        if (nextData.requires) {
-            const pool = this.transportPools.get(nextData.requires.pool);
-            const cart = pool.carts.find(c => c.location === nextElement.id && c.state === 'WAITING_TO_UNLOAD');
-            if (!cart) {
-                // This is a simplification. A full implementation would queue the task.
-                // For now, we just add wait time conceptually.
-                elementResults.totalWaitTime += 1000; // Add placeholder wait time
-            } else {
-                cart.state = 'IDLE'; // Free the cart
-            }
+    const data = getSimulationData(nextElement);
+    if (is(nextElement, 'bpmn:Task') && data) {
+      let processingTime = 0;
+      if (data.processingTime.distribution === 'fixed') {
+        processingTime = minutesToMilliseconds(data.processingTime.value);
+      } else if (data.processingTime.distribution === 'triangular') {
+        processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
+      }
+      if (data.failureRate && Math.random() < data.failureRate) {
+        const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
+        processingTime += reworkTime;
+        this.results.get(nextElement.id).failureCount++;
+      }
+      const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
+      const taskEvent = { type: 'TASK_COMPLETE', element: nextElement, time: this.clock + processingTime, instanceId, startTime, processingTime, cost };
+      if (data.resources && this.resourcePools.has(data.resources.pool)) {
+        const pool = this.resourcePools.get(data.resources.pool);
+        if (!pool.request(taskEvent)) {
+          taskEvent.waitStart = this.clock;
+        } else {
+          this.eventQueue.add(taskEvent);
         }
-        // ... schedule TASK_COMPLETE event ...
+      } else {
+        this.eventQueue.add(taskEvent);
+      }
     } else {
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId: startTime });
+      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
     }
   }
 
@@ -151,16 +149,50 @@ export default class SimulationEngine {
     this.initialize();
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const configData = getSimulationData(processRoot);
-    const { runValue, resourcePools, transportPools } = configData || { runValue: 100, resourcePools: [], transportPools: [] };
-
-    if (resourcePools) { /* ... as before ... */ }
-    if (transportPools) {
-        transportPools.forEach(poolConfig => {
-            this.transportPools.set(poolConfig.name, new TransportPool(poolConfig));
-        });
+    const { runValue, resourcePools } = configData ? configData.simulationConfig : { runValue: 100 };
+    if (configData && configData.resourcePools) {
+      configData.resourcePools.forEach(poolConfig => this.resourcePools.set(poolConfig.name, new ResourcePool(poolConfig)));
     }
-
-    // ... rest of the run method as before ...
+    const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
+    if (!startEvent) return this.results;
+    const arrivalData = getSimulationData(startEvent);
+    const arrivalInterval = arrivalData ? minutesToMilliseconds(arrivalData.arrivalRate.value) : 600000;
+    console.log("--- Simulation Starting ---");
+    console.log("Configuration:", configData);
+    console.log("Start Event Arrival:", arrivalData);
+    this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
+    let instanceCounter = 1;
+    while (!this.eventQueue.isEmpty()) {
+      const event = this.eventQueue.next();
+      if (event.type === 'TASK_COMPLETE') {
+        const elementResults = this.results.get(event.element.id);
+        elementResults.totalProcessingTime += event.processingTime;
+        elementResults.totalCost += event.cost;
+        if (event.waitStart) elementResults.totalWaitTime += (this.clock - event.waitStart);
+        const data = getSimulationData(event.element);
+        if (data && data.resources) {
+          const pool = this.resourcePools.get(data.resources.pool);
+          const nextTask = pool.release();
+          if (nextTask) {
+            this.results.get(nextTask.element.id).totalWaitTime += (this.clock - nextTask.waitStart);
+            nextTask.time = this.clock + nextTask.processingTime;
+            delete nextTask.waitStart;
+            this.eventQueue.add(nextTask);
+          }
+        }
+      }
+      this.processEvent(event);
+      if (this.completedInstances >= runValue) break;
+      if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
+        instanceCounter++;
+        const nextArrivalTime = event.time + arrivalInterval;
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
+      }
+    }
+    console.log("--- Simulation Finished ---");
+    console.log("Final Results (raw data):");
+    console.table(Object.fromEntries(this.results));
+    return this.results;
   }
 }
 
