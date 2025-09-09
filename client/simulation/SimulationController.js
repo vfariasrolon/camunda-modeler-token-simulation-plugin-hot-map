@@ -9,7 +9,7 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
   <span class="bts-icon">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" style="width: 100%; height: 100%;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
       <path d="M 4 2 L 4 14 L 14 8 Z" fill="currentColor" />
     </svg>
   </span>
@@ -17,7 +17,7 @@ const RunIcon = `
 
 const ShowIcon = `
   <span class="bts-icon">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" style="width: 100%; height: 100%;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
       <path d="M 1 8 A 7 4 0 0 1 15 8 A 7 4 0 0 1 1 8 Z M 8 8 m -2, 0 a 2,2 0 1,1 4,0 a 2,2 0 1,1 -4,0"
             stroke="currentColor"
             stroke-width="1.5"
@@ -50,15 +50,15 @@ export default class SimulationController {
 
   init() {
     const runButton = domify(`
-      <button class="bts-entry simulation-run-button" title="Ejecutar Simulación">
+      <div class="bts-entry simulation-run-button" title="Ejecutar Simulación">
         ${RunIcon}
-      </button>
+      </div>
     `);
 
     const showButton = domify(`
-      <button class="bts-entry simulation-show-button" title="Mostrar Análisis">
+      <div class="bts-entry simulation-show-button" title="Mostrar Análisis">
         ${ShowIcon}
-      </button>
+      </div>
     `);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
