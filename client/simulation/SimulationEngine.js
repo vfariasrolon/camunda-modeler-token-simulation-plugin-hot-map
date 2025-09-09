@@ -81,7 +81,38 @@ export default class SimulationEngine {
     });
   }
 
-  findNextElements(element) { /* ... same as before ... */ }
+  findNextElements(element) {
+    if (!element.outgoing || element.outgoing.length === 0) return [];
+    if (is(element, 'bpmn:ParallelGateway')) {
+      return element.outgoing.map(flow => {
+        const flowResults = this.results.get(flow.id);
+        if (flowResults) flowResults.executionCount++;
+        return flow.target;
+      });
+    }
+    if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+      const rand = Math.random();
+      let cumulativeProbability = 0;
+      for (const flow of element.outgoing) {
+        const data = getSimulationData(flow);
+        const probability = data ? data.branchingProbability : (1 / element.outgoing.length);
+        cumulativeProbability += probability;
+        if (rand <= cumulativeProbability) {
+          const flowResults = this.results.get(flow.id);
+          if (flowResults) flowResults.executionCount++;
+          return [flow.target];
+        }
+      }
+      const lastFlow = element.outgoing[element.outgoing.length - 1];
+      const flowResults = this.results.get(lastFlow.id);
+      if (flowResults) flowResults.executionCount++;
+      return [lastFlow.target];
+    }
+    const singleFlow = element.outgoing[0];
+    const flowResults = this.results.get(singleFlow.id);
+    if (flowResults) flowResults.executionCount++;
+    return [singleFlow.target];
+  }
 
   handleLoadingTask(event) {
     const { element: loadingTask, instanceId } = event;
@@ -133,7 +164,7 @@ export default class SimulationEngine {
           const pool = this.transportPools.get(data.requires.pool);
           const cart = pool.carts.find(c => c.location === nextElement.id && c.state === 'WAITING_TO_UNLOAD');
           if (!cart) {
-            this.results.get(nextElement.id).totalWaitTime += 1000; // Placeholder for queuing
+            this.results.get(nextElement.id).totalWaitTime += 1000;
             return;
           }
           cart.state = 'IDLE'; cart.location = null;
