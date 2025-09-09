@@ -27,10 +27,13 @@ export default class RandomDataGenerator {
   }
 
   generate() {
+    console.log("--- INICIANDO GENERADOR DE DATOS ALEATORIOS ---");
+
     const allElements = [];
     const rootElement = this._canvas.getRootElement();
 
     if (is(rootElement, 'bpmn:Collaboration')) {
+        console.log("Detectado diagrama de colaboración.");
         rootElement.children.forEach(participant => {
             if (is(participant, 'bpmn:Participant')) {
                 const process = participant.businessObject.processRef;
@@ -46,12 +49,15 @@ export default class RandomDataGenerator {
             }
         });
     } else if (is(rootElement, 'bpmn:Process')) {
+        console.log("Detectado diagrama de proceso simple.");
         rootElement.children.forEach(child => allElements.push(child));
         allElements.push(rootElement);
     }
+    console.log(`Encontrados ${allElements.length} elementos para procesar.`);
 
     const processRoot = allElements.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     if (processRoot) {
+      console.log("Estableciendo configuración global en: ", processRoot.id);
       const simulationConfig = {
         simulationConfig: { runUntil: "instances", runValue: 1000, runUnit: "instances" },
         resourcePools: [ { name: "Analistas", quantity: 1 }, { name: "Gerentes", quantity: 1 } ],
@@ -63,19 +69,20 @@ export default class RandomDataGenerator {
     let loaderTask = null;
     let unloaderTask = null;
 
-    // Find a pair of tasks to act as loader/unloader
     const tasks = allElements.filter(e => is(e, 'bpmn:Task'));
     if (tasks.length >= 2) {
         for (const task of tasks) {
             if (task.outgoing && task.outgoing[0] && task.outgoing[0].target && is(task.outgoing[0].target, 'bpmn:Task')) {
                 loaderTask = task;
                 unloaderTask = task.outgoing[0].target;
+                console.log(`Par de transporte encontrado: Cargador=${loaderTask.id}, Descargador=${unloaderTask.id}`);
                 break;
             }
         }
     }
 
     allElements.forEach(element => {
+      console.log("Procesando elemento:", element.id, `(Tipo: ${element.type})`);
       let data = null;
 
       if (is(element, 'bpmn:StartEvent')) {
@@ -91,8 +98,10 @@ export default class RandomDataGenerator {
 
         if (element === loaderTask) {
             data.loads = { pool: "carros_grandes" };
+            console.log(` -> Asignado rol de CARGADOR a ${element.id}`);
         } else if (element === unloaderTask) {
             data.requires = { pool: "carros_grandes" };
+            console.log(` -> Asignado rol de DESCARGADOR a ${element.id}`);
         }
 
       } else if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
@@ -107,7 +116,6 @@ export default class RandomDataGenerator {
             this.setSimulationData(flow, { branchingProbability: parseFloat(probability.toFixed(2)) });
         });
       } else if (loaderTask && unloaderTask && element.source === loaderTask && element.target === unloaderTask) {
-          // This is the flow between our loader and unloader tasks
           this.setSimulationData(element, { transportTime: { distribution: "fixed", unit: "minutes", value: random(5, 15) } });
       }
 
@@ -115,13 +123,16 @@ export default class RandomDataGenerator {
         this.setSimulationData(element, data);
       }
     });
+    console.log("--- GENERADOR DE DATOS ALEATORIOS FINALIZADO ---");
   }
 
   setSimulationData(element, existingData = {}) {
+    console.log(`Guardando datos para ${element.id}...`);
     const businessObject = element.businessObject;
     const currentSimData = getSimulationData(element) || {};
     const newData = { ...currentSimData, ...existingData };
     const simulationDataString = JSON.stringify(newData, null, 2);
+    console.log(" -> Datos a guardar:", newData);
 
     let extensionElements = businessObject.get('extensionElements');
     if (!extensionElements) extensionElements = this._bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
@@ -140,6 +151,7 @@ export default class RandomDataGenerator {
 
     simProperty.value = simulationDataString;
     this._modeling.updateProperties(element, { extensionElements });
+    console.log(` -> ¡Datos guardados para ${element.id}!`);
   }
 }
 
