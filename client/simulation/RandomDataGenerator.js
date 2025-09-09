@@ -2,6 +2,18 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 
 const random = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 
+const getSimulationData = (element) => {
+  const businessObject = element.businessObject;
+  if (!businessObject.extensionElements || !businessObject.extensionElements.values) return {};
+  const properties = businessObject.extensionElements.values.find(v => is(v, 'camunda:Properties'));
+  if (!properties || !properties.values) return {};
+  const property = properties.values.find(p => p.name === 'simulationData');
+  if (!property || !property.value) return {};
+  try {
+    return JSON.parse(property.value);
+  } catch (e) { return {}; }
+};
+
 export default class RandomDataGenerator {
   constructor(elementRegistry, modeling, bpmnFactory, editorActions, canvas) {
     this._elementRegistry = elementRegistry;
