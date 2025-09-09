@@ -36,31 +36,12 @@ class ResourcePool {
   }
 }
 
-class TransportPool {
-  constructor(config) {
-    this.name = config.name;
-    this.capacity = config.capacity;
-    this.carts = Array.from({ length: config.quantity }, (_, i) => ({
-      id: `${config.name}_${i}`,
-      state: 'IDLE', location: null, payload: []
-    }));
-    this.loadingQueues = {};
-  }
-  getIdleCartAt(location) {
-    return this.carts.find(c => c.state === 'IDLE' && c.location === location);
-  }
-  getLoadingCartAt(location) {
-    return this.carts.find(c => c.state === 'LOADING' && c.location === location);
-  }
-}
-
 export default class SimulationEngine {
   constructor(elementRegistry) {
     this._elementRegistry = elementRegistry;
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
-    this.transportPools = new Map();
     this.clock = 0;
     this.completedInstances = 0;
   }
@@ -71,7 +52,6 @@ export default class SimulationEngine {
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
-    this.transportPools = new Map();
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
@@ -114,74 +94,47 @@ export default class SimulationEngine {
     return [singleFlow.target];
   }
 
-  handleLoadingTask(event) {
-    const { element: loadingTask, instanceId } = event;
-    const data = getSimulationData(loadingTask);
-    const pool = this.transportPools.get(data.loads.pool);
-    if (!pool.loadingQueues[loadingTask.id]) pool.loadingQueues[loadingTask.id] = [];
-    pool.loadingQueues[loadingTask.id].push(instanceId);
-    let cart = pool.getLoadingCartAt(loadingTask.id) || pool.getIdleCartAt(null);
-    if (cart && pool.loadingQueues[loadingTask.id].length >= pool.capacity) {
-      cart.state = 'LOADING';
-      cart.location = loadingTask.id;
-      cart.payload = pool.loadingQueues[loadingTask.id].splice(0, pool.capacity);
-      this.eventQueue.add({ type: 'CART_DEPARTURE', cart, element: loadingTask, time: this.clock });
-    }
-  }
-
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
-    if (type === 'CART_DEPARTURE') {
-      const { cart, element: fromTask } = event;
-      const nextFlow = fromTask.outgoing[0];
-      const transportTime = getSimulationData(nextFlow)?.transportTime?.value || 0;
-      cart.state = 'IN_TRANSIT';
-      this.eventQueue.add({ type: 'CART_ARRIVAL', cart, element: nextFlow.target, time: this.clock + minutesToMilliseconds(transportTime) });
-      return;
-    }
-    if (type === 'CART_ARRIVAL') {
-      const { cart, element: toTask } = event;
-      cart.state = 'WAITING_TO_UNLOAD';
-      cart.location = toTask.id;
-      cart.payload.forEach(instId => {
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: toTask, time: this.clock, instanceId: instId, startTime });
-      });
-      cart.payload = [];
-      return;
-    }
     const elementResults = this.results.get(element.id);
     elementResults.executionCount++;
     this.clock = event.time;
-    if (type === 'INSTANCE_COMPLETE') { this.completedInstances++; elementResults.totalCycleTime += (this.clock - startTime); return; }
-    const elementData = getSimulationData(element);
-    if (is(element, 'bpmn:Task') && elementData && elementData.loads) { this.handleLoadingTask(event); return; }
+
+    if (type === 'INSTANCE_COMPLETE') {
+      this.completedInstances++;
+      elementResults.totalCycleTime += (this.clock - startTime);
+      return;
+    }
+
     const nextElements = this.findNextElements(element);
-    if (!nextElements.length) { this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime }); return; }
+    if (!nextElements.length) {
+      this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime });
+      return;
+    }
+
     nextElements.forEach(nextElement => {
       const data = getSimulationData(nextElement);
       if (is(nextElement, 'bpmn:Task') && data) {
-        if (data.requires) {
-          const pool = this.transportPools.get(data.requires.pool);
-          const cart = pool.carts.find(c => c.location === nextElement.id && c.state === 'WAITING_TO_UNLOAD');
-          if (!cart) {
-            this.results.get(nextElement.id).totalWaitTime += 1000;
-            return;
-          }
-          cart.state = 'IDLE'; cart.location = null;
-        }
         let processingTime = 0;
-        if (data.processingTime.distribution === 'fixed') processingTime = minutesToMilliseconds(data.processingTime.value);
-        else if (data.processingTime.distribution === 'triangular') processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
+        if (data.processingTime.distribution === 'fixed') {
+          processingTime = minutesToMilliseconds(data.processingTime.value);
+        } else if (data.processingTime.distribution === 'triangular') {
+          processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
+        }
         if (data.failureRate && Math.random() < data.failureRate) {
-          processingTime += data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
+          const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
+          processingTime += reworkTime;
           this.results.get(nextElement.id).failureCount++;
         }
         const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
         const taskEvent = { type: 'TASK_COMPLETE', element: nextElement, time: this.clock + processingTime, instanceId, startTime, processingTime, cost };
         if (data.resources && this.resourcePools.has(data.resources.pool)) {
-          const resourcePool = this.resourcePools.get(data.resources.pool);
-          if (!resourcePool.request(taskEvent)) taskEvent.waitStart = this.clock;
-          else this.eventQueue.add(taskEvent);
+          const pool = this.resourcePools.get(data.resources.pool);
+          if (!pool.request(taskEvent)) {
+            taskEvent.waitStart = this.clock;
+          } else {
+            this.eventQueue.add(taskEvent);
+          }
         } else {
           this.eventQueue.add(taskEvent);
         }
@@ -196,8 +149,9 @@ export default class SimulationEngine {
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const configData = getSimulationData(processRoot);
     const { runValue } = configData ? configData.simulationConfig : { runValue: 100 };
-    if (configData && configData.resourcePools) configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
-    if (configData && configData.transportPools) configData.transportPools.forEach(p => this.transportPools.set(p.name, new TransportPool(p)));
+    if (configData && configData.resourcePools) {
+      configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
+    }
     const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
     if (!startEvent) return this.results;
     const arrivalData = getSimulationData(startEvent);
