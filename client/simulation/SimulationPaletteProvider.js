@@ -8,8 +8,7 @@ export default class SimulationPaletteProvider {
     this._selection = selection;
     this._propertiesPanel = propertiesPanel;
 
-    // The provider is registered via the module system.
-    // Calling registerProvider here is incorrect and causes a crash.
+    // The provider is registered automatically by being included in the __init__ array of the module.
   }
 
   getPaletteEntries(element) {
@@ -20,7 +19,7 @@ export default class SimulationPaletteProvider {
 
     const selected = selectedElements[0];
 
-    // Show config button for Tasks and Sequence Flows
+    // Show config button for Tasks, Sequence Flows and Start Events
     if (!is(selected, 'bpmn:Task') && !is(selected, 'bpmn:SequenceFlow') && !is(selected, 'bpmn:StartEvent')) {
       return {};
     }
