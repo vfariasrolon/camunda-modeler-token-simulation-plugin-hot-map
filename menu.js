@@ -34,7 +34,7 @@ module.exports = function (electronApp, menuState) {
   }, {
     role: 'separator'
   }, {
-    label: 'Generar Datos de Simulación Aleatorios',
+    label: 'Insertar Lógica de Simulación (Datos Aleatorios)',
     enabled,
     action: function () {
       electronApp.emit('menu:action', 'generateRandomSimulationData');

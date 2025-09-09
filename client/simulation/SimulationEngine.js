@@ -1,20 +1,6 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
+import { getSimulationData } from './util';
 
-// --- Helper Functions ---
-const getExtensionProperty = (element, name) => {
-  if (!element || !element.businessObject) return null;
-  const bo = element.businessObject;
-  if (!bo.extensionElements || !bo.extensionElements.values) return null;
-  const props = bo.extensionElements.values.find(v => is(v, 'camunda:Properties'));
-  if (!props || !props.values) return null;
-  const prop = props.values.find(p => p.name === name);
-  return prop ? prop.value : null;
-};
-const getSimulationData = (element) => {
-  const dataString = getExtensionProperty(element, 'simulationData');
-  if (!dataString) return null;
-  try { return JSON.parse(dataString); } catch (e) { return null; }
-};
 const triangular = (min, mode, max) => {
   const F = (max - min) / (mode - min);
   const rand = Math.random();
