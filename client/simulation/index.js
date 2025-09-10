@@ -6,6 +6,7 @@ import SimulationEngine from './SimulationEngine';
 export default {
   __init__: [
     'simulationController',
+    'simulationPalette',
     'randomDataGenerator'
   ],
   simulationController: [ 'type', SimulationController ],
