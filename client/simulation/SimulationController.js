@@ -6,6 +6,7 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
+import { getSimulationData } from './util';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -60,23 +61,9 @@ export default class SimulationController {
   }
 
   init() {
-    const runButton = domify(`
-      <div class="bts-entry simulation-run-button" title="Ejecutar Simulación">
-        ${RunIcon}
-      </div>
-    `);
-
-    const showButton = domify(`
-      <div class="bts-entry simulation-show-button" title="Mostrar Análisis">
-        ${ShowIcon}
-      </div>
-    `);
-
-    const chartButton = domify(`
-      <div class="bts-entry simulation-chart-button" title="Mostrar Gráficos">
-        ${ChartIcon}
-      </div>
-    `);
+    const runButton = domify(`<div class="bts-entry" title="Ejecutar Simulación">${RunIcon}</div>`);
+    const showButton = domify(`<div class="bts-entry" title="Mostrar Análisis">${ShowIcon}</div>`);
+    const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos">${ChartIcon}</div>`);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
@@ -91,17 +78,14 @@ export default class SimulationController {
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
 
-    this._eventBus.on('simulation.charts.opened', () => this.showCostChart());
+    this._eventBus.on('simulation.charts.opened', () => this.showChart());
+    this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart(e.type));
   }
 
   runSimulation() {
     this.clear();
     this.simulationResults = this._simulationEngine.run();
-    this._notifications.showNotification({
-        text: 'Simulación completada',
-        type: 'info',
-        duration: 3000
-    });
+    this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
   }
 
   adjustHeatmap(type, amount) {
@@ -113,36 +97,41 @@ export default class SimulationController {
   showMetric(metric) {
     this.clearOverlaysAndHeatmap();
     this.lastMetric = metric;
-
-    if (!this.simulationResults) {
-        this._notifications.showNotification({
-            text: 'Por favor, ejecute una simulación primero',
-            type: 'warning',
-            duration: 4000
-        });
-        return;
-    }
-
     const dataPoints = [];
     let max = 0;
 
-    this.simulationResults.forEach((result, elementId) => {
-        const element = this._elementRegistry.get(elementId);
-        if (!element || !is(element, 'bpmn:FlowNode')) return;
+    if (metric === 'resourceQuantity') {
+      this._elementRegistry.forEach(element => {
+        if (is(element, 'bpmn:Task')) {
+          const data = getSimulationData(element);
+          const value = (data && data.resources && data.resources.quantityRequired) || 0;
+          if (value > max) max = value;
+          if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
+        }
+      });
+    } else {
+      if (!this.simulationResults) {
+          this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+          return;
+      }
+      this.simulationResults.forEach((result, elementId) => {
+          const element = this._elementRegistry.get(elementId);
+          if (!element || !is(element, 'bpmn:FlowNode')) return;
 
-        let value = 0;
-        if (metric === 'frequency') value = result.executionCount;
-        else if (metric === 'cost') value = result.totalCost;
-        else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000;
-        else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
-        else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
-        else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
-        else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1) / 1000;
-        else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
+          let value = 0;
+          if (metric === 'frequency') value = result.executionCount;
+          else if (metric === 'cost') value = result.totalCost;
+          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
+          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
 
-        if (value > max) max = value;
-        if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
-    });
+          if (value > max) max = value;
+          if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
+      });
+    }
 
     this.createHeatmap();
     this._heatmap.data(dataPoints).max(max || 1).radius(this._radius, this._blur).draw();
@@ -150,51 +139,61 @@ export default class SimulationController {
   }
 
   showOverlays(metric) {
-      this.simulationResults.forEach((result, elementId) => {
-          const element = this._elementRegistry.get(elementId);
-          if (!element) return;
-          let overlayText = '';
+    const elements = metric === 'resourceQuantity'
+      ? this._elementRegistry.filter(el => is(el, 'bpmn:Task'))
+      : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
 
-          if (is(element, 'bpmn:Task')) {
-              if (metric === 'cost') overlayText = `Costo: $${result.totalCost.toFixed(2)}`;
-              else if (metric === 'waitTime') overlayText = `Espera: ${(result.totalWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
-              else if (metric === 'processTime') overlayText = `Proceso: ${(result.totalProcessingTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
-              else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
-              else if (metric === 'failureRate' && result.executionCount > 0) {
-                  const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
-                  overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
-              }
-              else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
-                overlayText = `E.Carro: ${(result.totalTransportWaitTime / result.executionCount / 1000).toFixed(1)}s`;
-              }
-              else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
-                overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
-              }
-          } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
-              overlayText = `Ciclo: ${(result.totalCycleTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
-          }
+    elements.forEach(element => {
+        if (!element) return;
+        let overlayText = '';
+        const result = this.simulationResults ? this.simulationResults.get(element.id) : null;
 
-          if (overlayText) this._overlays.add(element, 'simulation-overlay', { position: { bottom: -5, left: element.width / 2 - 20 }, html: `<div class="simulation-overlay-text">${overlayText}</div>` });
+        if (metric === 'resourceQuantity') {
+            const data = getSimulationData(element);
+            const value = (data && data.resources && data.resources.quantityRequired) || 0;
+            if (value > 0) overlayText = `Recursos: ${value}`;
+        } else if (result) {
+            if (is(element, 'bpmn:Task')) {
+                if (metric === 'cost') overlayText = `Costo: $${result.totalCost.toFixed(2)}`;
+                else if (metric === 'waitTime') overlayText = `Espera: ${(result.totalWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+                else if (metric === 'processTime') overlayText = `Proceso: ${(result.totalProcessingTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+                else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
+                else if (metric === 'failureRate' && result.executionCount > 0) {
+                    const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
+                    overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
+                }
+                else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
+                  overlayText = `E.Carro: ${(result.totalTransportWaitTime / result.executionCount / 1000).toFixed(1)}s`;
+                }
+                else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
+                  overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
+                }
+            } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+                overlayText = `Ciclo: ${(result.totalCycleTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+            }
+        }
 
-          if (is(element, 'bpmn:ExclusiveGateway')) {
-              element.outgoing.forEach(flow => {
-                  const flowResult = this.simulationResults.get(flow.id);
-                  if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
-                      const percentage = (flowResult.executionCount / result.executionCount * 100).toFixed(1);
-                      this._overlays.add(flow.id, 'simulation-overlay', { position: { top: -15, left: -20 }, html: `<div class="simulation-overlay-text">${flowResult.executionCount} (${percentage}%)</div>` });
-                  }
-              });
-          }
-      });
+        if (overlayText) this._overlays.add(element, 'simulation-overlay', { position: { bottom: -5, left: element.width / 2 - 20 }, html: `<div class="simulation-overlay-text">${overlayText}</div>` });
+
+        if (result && is(element, 'bpmn:ExclusiveGateway')) {
+            element.outgoing.forEach(flow => {
+                const flowResult = this.simulationResults.get(flow.id);
+                if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
+                    const percentage = (flowResult.executionCount / result.executionCount * 100).toFixed(1);
+                    this._overlays.add(flow.id, 'simulation-overlay', { position: { top: -15, left: -20 }, html: `<div class="simulation-overlay-text">${flowResult.executionCount} (${percentage}%)</div>` });
+                }
+            });
+        }
+    });
   }
 
-  showCostChart() {
+  showChart(metric) {
+    if (!metric) {
+      metric = this._chartPanel.getChartType();
+    }
+
     if (!this.simulationResults) {
-        this._notifications.showNotification({
-            text: 'Por favor, ejecute una simulación primero',
-            type: 'warning',
-            duration: 4000
-        });
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         return;
     }
 
@@ -202,19 +201,7 @@ export default class SimulationController {
       this._chart.destroy();
     }
 
-    const tasks = [];
-    this.simulationResults.forEach((result, elementId) => {
-      const element = this._elementRegistry.get(elementId);
-      if (element && is(element, 'bpmn:Task') && result.totalCost > 0) {
-        tasks.push({ name: result.name, cost: result.totalCost });
-      }
-    });
-
-    tasks.sort((a, b) => b.cost - a.cost);
-    const top5 = tasks.slice(0, 5);
-
-    const labels = top5.map(t => t.name);
-    const data = top5.map(t => t.cost);
+    const { data, labels, label } = this.getChartData(metric);
 
     const ctx = this._chartPanel.getCanvas().getContext('2d');
     this._chart = new Chart(ctx, {
@@ -222,7 +209,7 @@ export default class SimulationController {
       data: {
         labels: labels,
         datasets: [{
-          label: 'Costo Total por Tarea',
+          label: label,
           data: data,
           backgroundColor: 'rgba(75, 192, 192, 0.2)',
           borderColor: 'rgba(75, 192, 192, 1)',
@@ -230,13 +217,33 @@ export default class SimulationController {
         }]
       },
       options: {
-        scales: {
-          y: {
-            beginAtZero: true
-          }
-        }
+        scales: { y: { beginAtZero: true } }
       }
     });
+  }
+
+  getChartData(metric) {
+    const tasks = [];
+    this.simulationResults.forEach((result, elementId) => {
+      const element = this._elementRegistry.get(elementId);
+      if (element && is(element, 'bpmn:Task')) {
+        tasks.push({ ...result });
+      }
+    });
+
+    let dataProperty, label;
+    if (metric === 'cost') { dataProperty = 'totalCost'; label = 'Costo Total por Tarea'; }
+    else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
+    else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
+    else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
+
+    tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
+    const top5 = tasks.filter(t => t[dataProperty] > 0).slice(0, 5);
+
+    const labels = top5.map(t => t.name);
+    const data = top5.map(t => t[dataProperty]);
+
+    return { data, labels, label };
   }
 
   clear() {

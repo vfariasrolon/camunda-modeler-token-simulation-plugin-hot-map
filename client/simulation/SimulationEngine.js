@@ -21,18 +21,26 @@ class ResourcePool {
     this.available = config.quantity;
     this.queue = [];
   }
-  request(task) {
-    if (this.available > 0) { this.available--; return true; }
-    this.queue.push(task); return false;
-  }
-  release() {
-    this.available++;
-    if (this.queue.length > 0) {
-      const nextTask = this.queue.shift();
-      this.available--;
-      return nextTask;
+  request(quantity, task) {
+    if (this.available >= quantity) {
+      this.available -= quantity;
+      return true;
     }
-    return null;
+    this.queue.push({ quantity, task });
+    return false;
+  }
+  release(quantity) {
+    this.available += quantity;
+    const newTasks = [];
+    this.queue = this.queue.filter(waiting => {
+      if (this.available >= waiting.quantity) {
+        this.available -= waiting.quantity;
+        newTasks.push(waiting.task);
+        return false; // remove from queue
+      }
+      return true; // keep in queue
+    });
+    return newTasks;
   }
 }
 
@@ -219,10 +227,13 @@ export default class SimulationEngine {
       this.results.get(element.id).failureCount++;
     }
     const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
-    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost };
+
+    const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
+    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost, quantityRequired };
+
     if (data.resources && this.resourcePools.has(data.resources.pool)) {
       const pool = this.resourcePools.get(data.resources.pool);
-      if (!pool.request(newTaskEvent)) {
+      if (!pool.request(quantityRequired, newTaskEvent)) {
         newTaskEvent.waitStart = time;
       } else {
         this.eventQueue.add(newTaskEvent);
@@ -285,13 +296,13 @@ export default class SimulationEngine {
         const data = getSimulationData(event.element);
         if (data && data.resources) {
           const pool = this.resourcePools.get(data.resources.pool);
-          const nextTask = pool.release();
-          if (nextTask) {
+          const newTasks = pool.release(event.quantityRequired);
+          newTasks.forEach(nextTask => {
             this.results.get(nextTask.element.id).totalWaitTime += (this.clock - nextTask.waitStart);
             nextTask.time = this.clock + nextTask.processingTime;
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
-          }
+          });
         }
 
         if (data && data.loads && this.transportPools.has(data.loads.pool)) {

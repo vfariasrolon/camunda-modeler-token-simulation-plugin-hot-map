@@ -19,7 +19,12 @@ export default class ChartPanel {
     this._container = domify(`
       <div class="${PALETTE_CLS}">
         <div class="header">
-          <span>Simulation Charts</span>
+          <select class="chart-select">
+            <option value="cost">Top 5 by Cost</option>
+            <option value="processTime">Top 5 by Process Time</option>
+            <option value="waitTime">Top 5 by Wait Time (Resources)</option>
+            <option value="transportWaitTime">Top 5 by Transport Wait Time</option>
+          </select>
           <button class="close">×</button>
         </div>
         <div class="content">
@@ -31,12 +36,22 @@ export default class ChartPanel {
     this._canvas.getContainer().appendChild(this._container);
 
     this.closeButton = this._container.querySelector('button.close');
+    this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
     this.canvas = this._container.querySelector('#simulationChartCanvas');
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
+    domEvent.bind(this.chartSelect, 'change', (e) => {
+        this._eventBus.fire('simulation.charts.typeChanged', {
+            type: e.target.value
+        });
+    });
 
     this._eventBus.on('diagram.destroy', () => this.hide());
+  }
+
+  getChartType() {
+    return this.chartSelect.value;
   }
 
   getCanvas() {

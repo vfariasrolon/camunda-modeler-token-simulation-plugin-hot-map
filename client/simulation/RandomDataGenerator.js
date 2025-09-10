@@ -79,7 +79,7 @@ export default class RandomDataGenerator {
       } else if (is(element, 'bpmn:Task')) {
         data = {
           processingTime: { distribution: "triangular", unit: "minutes", min: random(2, 20), mode: random(15, 40), max: random(40, 90) },
-          resources: { pool: "Analistas", quantityRequired: 1 },
+          resources: { pool: "Analistas", quantityRequired: random(1, 4) },
           cost: { type: "perHour", value: random(10, 100), currency: "USD" },
           failureRate: parseFloat((Math.random() * 0.29 + 0.01).toFixed(2)),
           reworkTime: { distribution: "fixed", unit: "minutes", value: random(10, 120) }
