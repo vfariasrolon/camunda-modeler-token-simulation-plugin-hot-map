@@ -188,8 +188,10 @@ export default class SimulationController {
   }
 
   showChart(metric) {
+    console.log('[DEBUG] showChart called with metric:', metric);
     if (!metric) {
       metric = this._chartPanel.getChartType();
+      console.log('[DEBUG] metric was null, got from panel:', metric);
     }
 
     if (!this.simulationResults && metric !== 'resourceQuantity') {
@@ -223,6 +225,7 @@ export default class SimulationController {
   }
 
   getChartData(metric) {
+    console.log('[DEBUG] getChartData called for metric:', metric);
     const tasks = [];
 
     if (metric === 'resourceQuantity') {
@@ -256,6 +259,7 @@ export default class SimulationController {
     const labels = top5.map(t => t.name);
     const data = top5.map(t => t[dataProperty]);
 
+    console.log('[DEBUG] Returning chart data:', { data, labels, label });
     return { data, labels, label };
   }
 
