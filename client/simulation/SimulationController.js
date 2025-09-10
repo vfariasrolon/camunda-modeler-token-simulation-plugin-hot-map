@@ -118,6 +118,7 @@ export default class SimulationController {
         else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
         else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
         else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
+        else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1) / 1000;
 
         if (value > max) max = value;
         if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
@@ -142,6 +143,9 @@ export default class SimulationController {
               else if (metric === 'failureRate' && result.executionCount > 0) {
                   const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
                   overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
+              }
+              else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
+                overlayText = `E.Carro: ${(result.totalTransportWaitTime / result.executionCount / 1000).toFixed(1)}s`;
               }
           } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
               overlayText = `Ciclo: ${(result.totalCycleTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;

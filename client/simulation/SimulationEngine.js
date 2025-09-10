@@ -57,7 +57,6 @@ class TransportPool {
     return this.batches.get(loaderId) || [];
   }
 
-  // NOTE: This is the simplified logic. We could also check for capacity.
   isBatchReady(loaderId) {
     return this.getBatch(loaderId).length > 0;
   }
@@ -114,6 +113,7 @@ export default class SimulationEngine {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0, totalTransportTime: 0,
+        totalTransportWaitTime: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -280,6 +280,10 @@ export default class SimulationEngine {
             if (pool.isBatchReady(event.element.id)) {
                 const batch = pool.dispatch(event.element.id);
                 if (batch) {
+                    batch.forEach(instance => {
+                        results.totalTransportWaitTime += this.clock - instance.time;
+                    });
+
                     const [ next ] = this.findNextElements(event.element);
                     if (next) {
                         const transportData = getSimulationData(next.connection);
