@@ -61,15 +61,9 @@ export default class SimulationEngine {
     });
   }
 
-  findNextElements(element) {
-    if (!element.outgoing || element.outgoing.length === 0) return [];
-    if (is(element, 'bpmn:ParallelGateway')) {
-      return element.outgoing.map(flow => {
-        const flowResults = this.results.get(flow.id);
-        if (flowResults) flowResults.executionCount++;
-        return flow.target;
-      });
-    }
+  findNextElement(element) {
+    if (!element.outgoing || element.outgoing.length === 0) return null;
+    let chosenFlow = null;
     if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = Math.random();
       let cumulativeProbability = 0;
@@ -78,20 +72,20 @@ export default class SimulationEngine {
         const probability = data ? data.branchingProbability : (1 / element.outgoing.length);
         cumulativeProbability += probability;
         if (rand <= cumulativeProbability) {
-          const flowResults = this.results.get(flow.id);
-          if (flowResults) flowResults.executionCount++;
-          return [flow.target];
+          chosenFlow = flow;
+          break;
         }
       }
-      const lastFlow = element.outgoing[element.outgoing.length - 1];
-      const flowResults = this.results.get(lastFlow.id);
-      if (flowResults) flowResults.executionCount++;
-      return [lastFlow.target];
+      if (!chosenFlow) chosenFlow = element.outgoing[element.outgoing.length - 1];
+    } else {
+      chosenFlow = element.outgoing[0];
     }
-    const singleFlow = element.outgoing[0];
-    const flowResults = this.results.get(singleFlow.id);
-    if (flowResults) flowResults.executionCount++;
-    return [singleFlow.target];
+    if (chosenFlow) {
+      const flowResults = this.results.get(chosenFlow.id);
+      if (flowResults) flowResults.executionCount++;
+      return chosenFlow.target;
+    }
+    return null;
   }
 
   processEvent(event) {
@@ -106,42 +100,40 @@ export default class SimulationEngine {
       return;
     }
 
-    const nextElements = this.findNextElements(element);
-    if (!nextElements.length) {
+    const nextElement = this.findNextElement(element);
+    if (!nextElement) {
       this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime });
       return;
     }
 
-    nextElements.forEach(nextElement => {
-      const data = getSimulationData(nextElement);
-      if (is(nextElement, 'bpmn:Task') && data) {
-        let processingTime = 0;
-        if (data.processingTime.distribution === 'fixed') {
-          processingTime = minutesToMilliseconds(data.processingTime.value);
-        } else if (data.processingTime.distribution === 'triangular') {
-          processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
-        }
-        if (data.failureRate && Math.random() < data.failureRate) {
-          const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
-          processingTime += reworkTime;
-          this.results.get(nextElement.id).failureCount++;
-        }
-        const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
-        const taskEvent = { type: 'TASK_COMPLETE', element: nextElement, time: this.clock + processingTime, instanceId, startTime, processingTime, cost };
-        if (data.resources && this.resourcePools.has(data.resources.pool)) {
-          const pool = this.resourcePools.get(data.resources.pool);
-          if (!pool.request(taskEvent)) {
-            taskEvent.waitStart = this.clock;
-          } else {
-            this.eventQueue.add(taskEvent);
-          }
+    const data = getSimulationData(nextElement);
+    if (is(nextElement, 'bpmn:Task') && data) {
+      let processingTime = 0;
+      if (data.processingTime.distribution === 'fixed') {
+        processingTime = minutesToMilliseconds(data.processingTime.value);
+      } else if (data.processingTime.distribution === 'triangular') {
+        processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
+      }
+      if (data.failureRate && Math.random() < data.failureRate) {
+        const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
+        processingTime += reworkTime;
+        this.results.get(nextElement.id).failureCount++;
+      }
+      const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
+      const taskEvent = { type: 'TASK_COMPLETE', element: nextElement, time: this.clock + processingTime, instanceId, startTime, processingTime, cost };
+      if (data.resources && this.resourcePools.has(data.resources.pool)) {
+        const pool = this.resourcePools.get(data.resources.pool);
+        if (!pool.request(taskEvent)) {
+          taskEvent.waitStart = this.clock;
         } else {
           this.eventQueue.add(taskEvent);
         }
       } else {
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
+        this.eventQueue.add(taskEvent);
       }
-    });
+    } else {
+      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
+    }
   }
 
   run() {
