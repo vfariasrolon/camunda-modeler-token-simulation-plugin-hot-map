@@ -350,6 +350,8 @@ export default class SimulationEngine {
         });
     });
 
+    console.log("--- Simulation Finished ---");
+    console.table(Object.fromEntries(this.results));
     return this.results;
   }
 }
