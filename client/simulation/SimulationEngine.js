@@ -164,6 +164,10 @@ export default class SimulationEngine {
     if (type !== 'TRANSPORT_ARRIVED') elementResults.executionCount++;
     this.clock = event.time;
 
+    if (instanceId === 1) {
+      console.log(`[Inst-1 | T=${this.clock}] Processing event ${type} for element ${element.id}`);
+    }
+
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
       elementResults.totalCycleTime += (this.clock - startTime);
@@ -174,22 +178,30 @@ export default class SimulationEngine {
     const nextElements = this.findNextElements(element);
 
     if (nextElements.length === 0) {
+      if (instanceId === 1) console.log(`[Inst-1] No next element found. Ending instance.`);
       this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime });
       return;
+    }
+
+    if (nextElements.length > 1 && instanceId === 1) {
+      console.log(`[Inst-1] Forking at ${element.id}. Creating ${nextElements.length} new paths.`);
     }
 
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = getSimulationData(nextElement);
 
       if (is(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
-        // Joining logic
         const instanceState = this.instanceStates.get(instanceId);
-        if (!instanceState.gateways[nextElement.id]) {
-          instanceState.gateways[nextElement.id] = { arrived: new Set() };
-        }
-        instanceState.gateways[nextElement.id].arrived.add(nextConnection.id);
+        const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
 
-        if (instanceState.gateways[nextElement.id].arrived.size === nextElement.incoming.length) {
+        gatewayState.arrived.add(nextConnection.id);
+
+        if (instanceId === 1) {
+          console.log(`[Inst-1] Arrived at joining gateway ${nextElement.id} from ${nextConnection.id}. Total arrived: ${gatewayState.arrived.size}/${nextElement.incoming.length}`);
+        }
+
+        if (gatewayState.arrived.size === nextElement.incoming.length) {
+          if (instanceId === 1) console.log(`[Inst-1] Joining gateway ${nextElement.id} is complete. Firing.`);
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
       } else if (is(nextElement, 'bpmn:Task') && data) {
@@ -249,10 +261,13 @@ export default class SimulationEngine {
     if (!startEvent) return this.results;
     const arrivalData = getSimulationData(startEvent);
     const arrivalInterval = arrivalData ? minutesToMilliseconds(arrivalData.arrivalRate.value) : 600000;
-    console.log("--- Simulation Starting ---", { configData, arrivalData });
+
     this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
     this.instanceStates.set(1, { gateways: {} });
     let instanceCounter = 1;
+
+    console.log("--- Simulation Starting ---");
+
     while (!this.eventQueue.isEmpty()) {
       const event = this.eventQueue.next();
       this.clock = event.time;
