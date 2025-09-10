@@ -113,7 +113,7 @@ export default class SimulationEngine {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0, totalTransportTime: 0,
-        totalTransportWaitTime: 0,
+        totalTransportWaitTime: 0, inefficientDispatchCount: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -232,10 +232,13 @@ export default class SimulationEngine {
     }
   }
 
-  dispatchTransport(loaderElement, pool) {
+  dispatchTransport(loaderElement, pool, isForceDispatch = false) {
     const batch = pool.dispatch(loaderElement.id);
     if (batch) {
         const results = this.results.get(loaderElement.id);
+        if (isForceDispatch) {
+            results.inefficientDispatchCount += batch.length;
+        }
         batch.forEach(instance => {
             results.totalTransportWaitTime += this.clock - instance.time;
         });
@@ -331,7 +334,7 @@ export default class SimulationEngine {
         pool.batches.forEach((batch, loaderId) => {
             if (batch.length > 0) {
                 const loaderElement = this._elementRegistry.get(loaderId);
-                this.dispatchTransport(loaderElement, pool);
+                this.dispatchTransport(loaderElement, pool, true);
             }
         });
     });
