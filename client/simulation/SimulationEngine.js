@@ -57,8 +57,9 @@ class TransportPool {
     return this.batches.get(loaderId) || [];
   }
 
+  // NOTE: This is the simplified logic. We could also check for capacity.
   isBatchReady(loaderId) {
-    return this.getBatch(loaderId).length >= this.capacity;
+    return this.getBatch(loaderId).length > 0;
   }
 
   dispatch(loaderId) {
@@ -124,7 +125,6 @@ export default class SimulationEngine {
     }
 
     if (is(element, 'bpmn:ParallelGateway')) {
-      // Forking: return all outgoing paths
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -164,27 +164,18 @@ export default class SimulationEngine {
     if (type !== 'TRANSPORT_ARRIVED') elementResults.executionCount++;
     this.clock = event.time;
 
-    if (instanceId === 1) {
-      console.log(`[Inst-1 | T=${this.clock}] Processing event ${type} for element ${element.id}`);
-    }
-
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
       elementResults.totalCycleTime += (this.clock - startTime);
-      this.instanceStates.delete(instanceId); // Clean up instance state
+      this.instanceStates.delete(instanceId);
       return;
     }
 
     const nextElements = this.findNextElements(element);
 
     if (nextElements.length === 0) {
-      if (instanceId === 1) console.log(`[Inst-1] No next element found. Ending instance.`);
       this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime });
       return;
-    }
-
-    if (nextElements.length > 1 && instanceId === 1) {
-      console.log(`[Inst-1] Forking at ${element.id}. Creating ${nextElements.length} new paths.`);
     }
 
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
@@ -196,12 +187,7 @@ export default class SimulationEngine {
 
         gatewayState.arrived.add(nextConnection.id);
 
-        if (instanceId === 1) {
-          console.log(`[Inst-1] Arrived at joining gateway ${nextElement.id} from ${nextConnection.id}. Total arrived: ${gatewayState.arrived.size}/${nextElement.incoming.length}`);
-        }
-
         if (gatewayState.arrived.size === nextElement.incoming.length) {
-          if (instanceId === 1) console.log(`[Inst-1] Joining gateway ${nextElement.id} is complete. Firing.`);
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
       } else if (is(nextElement, 'bpmn:Task') && data) {
@@ -265,8 +251,6 @@ export default class SimulationEngine {
     this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
     this.instanceStates.set(1, { gateways: {} });
     let instanceCounter = 1;
-
-    console.log("--- Simulation Starting ---");
 
     while (!this.eventQueue.isEmpty()) {
       const event = this.eventQueue.next();
@@ -332,8 +316,6 @@ export default class SimulationEngine {
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
     }
-    console.log("--- Simulation Finished ---");
-    console.table(Object.fromEntries(this.results));
     return this.results;
   }
 }
