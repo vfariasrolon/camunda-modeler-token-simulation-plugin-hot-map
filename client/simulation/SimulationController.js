@@ -163,7 +163,7 @@ export default class SimulationController {
                     overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
                 }
                 else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
-                  overlayText = `E.Carro: ${(result.totalTransportWaitTime / result.executionCount / 1000).toFixed(1)}s`;
+                  overlayText = `E.Carro: ${(result.totalTransportWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
                 }
                 else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
                   overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
@@ -192,7 +192,7 @@ export default class SimulationController {
       metric = this._chartPanel.getChartType();
     }
 
-    if (!this.simulationResults) {
+    if (!this.simulationResults && metric !== 'resourceQuantity') {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         return;
     }
@@ -224,18 +224,31 @@ export default class SimulationController {
 
   getChartData(metric) {
     const tasks = [];
-    this.simulationResults.forEach((result, elementId) => {
-      const element = this._elementRegistry.get(elementId);
-      if (element && is(element, 'bpmn:Task')) {
-        tasks.push({ ...result });
-      }
-    });
+
+    if (metric === 'resourceQuantity') {
+        this._elementRegistry.forEach(element => {
+            if (is(element, 'bpmn:Task')) {
+                const data = getSimulationData(element);
+                const value = (data && data.resources && data.resources.quantityRequired) || 0;
+                tasks.push({ name: element.businessObject.name || element.id, value: value });
+            }
+        });
+    } else {
+        this.simulationResults.forEach((result, elementId) => {
+            const element = this._elementRegistry.get(elementId);
+            if (element && is(element, 'bpmn:Task')) {
+                tasks.push({ ...result });
+            }
+        });
+    }
 
     let dataProperty, label;
     if (metric === 'cost') { dataProperty = 'totalCost'; label = 'Costo Total por Tarea'; }
     else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
     else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
+    else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
+    else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
 
     tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
     const top5 = tasks.filter(t => t[dataProperty] > 0).slice(0, 5);
