@@ -79,3 +79,8 @@ El motor usa una **Simulación de Eventos Discretos**.
     ```json
     { "branchingProbability": 0.0 }
     ```
+
+## III. Guía para Desarrolladores de IA
+
+Para extender esta funcionalidad o construir nuevas herramientas que interactúen con los datos de simulación, consulta la guía técnica detallada:
+[**Guía para Desarrolladores de IA: Lectura y Escritura de Datos de Simulación](./AI_DEVELOPER_GUIDE.md)**
