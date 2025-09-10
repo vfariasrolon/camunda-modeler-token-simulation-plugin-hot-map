@@ -23,13 +23,13 @@ Tienes dos opciones para definir los datos que usará la simulación:
 
 ### Paso 2: Ejecutar la Simulación
 
-1.  En la barra de herramientas principal (arriba a la izquierda), haz clic en el nuevo botón con el icono de un **dado**.
+1.  En la barra de herramientas principal (arriba a la izquierda), haz clic en el nuevo botón con el icono de **reproducir (play)**.
 2.  El motor de simulación se ejecutará en segundo plano con los datos actuales del diagrama.
 3.  Aparecerá una notificación confirmando "Simulación completada". Los resultados se guardan internamente.
 
 ### Paso 3: Visualizar y Analizar los Resultados
 
-1.  Junto al botón del dado, haz clic en el nuevo botón con el icono de un **yin-yang**.
+1.  Junto al botón de reproducir, haz clic en el nuevo botón con el icono de un **yin-yang**.
 2.  Se abrirá una **paleta de análisis** con varios botones.
 3.  Haz clic en cualquiera de los botones para visualizar una métrica diferente (Costo, Tiempo de Espera, Tasa de Fallos, etc.).
 4.  Puedes cambiar entre las diferentes vistas sin tener que volver a ejecutar la simulación.
