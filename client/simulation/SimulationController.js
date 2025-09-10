@@ -5,6 +5,7 @@ import {
 } from 'min-dom';
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
+import Chart from 'chart.js/auto';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -26,8 +27,16 @@ const ShowIcon = `
   </span>
 `;
 
+const ChartIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z" />
+    </svg>
+  </span>
+`;
+
 export default class SimulationController {
-  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications) {
+  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._simulationPalette = simulationPalette;
@@ -36,8 +45,10 @@ export default class SimulationController {
     this._overlays = overlays;
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._notifications = notifications;
+    this._chartPanel = chartPanel;
 
     this._heatmap = null;
+    this._chart = null;
     this._radius = 20;
     this._blur = 10;
     this.simulationResults = null;
@@ -61,18 +72,26 @@ export default class SimulationController {
       </div>
     `);
 
+    const chartButton = domify(`
+      <div class="bts-entry simulation-chart-button" title="Mostrar Gráficos">
+        ${ChartIcon}
+      </div>
+    `);
+
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    domEvent.bind(chartButton, 'click', () => this._chartPanel.toggle());
 
-    // Add a separator before our button for visual distinction
-    // Use high indices to avoid conflicts with other plugins
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
+    this._tokenSimulationPalette.addEntry(chartButton, 14);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
+
+    this._eventBus.on('simulation.charts.opened', () => this.showCostChart());
   }
 
   runSimulation() {
@@ -169,10 +188,65 @@ export default class SimulationController {
       });
   }
 
+  showCostChart() {
+    if (!this.simulationResults) {
+        this._notifications.showNotification({
+            text: 'Por favor, ejecute una simulación primero',
+            type: 'warning',
+            duration: 4000
+        });
+        return;
+    }
+
+    if (this._chart) {
+      this._chart.destroy();
+    }
+
+    const tasks = [];
+    this.simulationResults.forEach((result, elementId) => {
+      const element = this._elementRegistry.get(elementId);
+      if (element && is(element, 'bpmn:Task') && result.totalCost > 0) {
+        tasks.push({ name: result.name, cost: result.totalCost });
+      }
+    });
+
+    tasks.sort((a, b) => b.cost - a.cost);
+    const top5 = tasks.slice(0, 5);
+
+    const labels = top5.map(t => t.name);
+    const data = top5.map(t => t.cost);
+
+    const ctx = this._chartPanel.getCanvas().getContext('2d');
+    this._chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Costo Total por Tarea',
+          data: data,
+          backgroundColor: 'rgba(75, 192, 192, 0.2)',
+          borderColor: 'rgba(75, 192, 192, 1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        scales: {
+          y: {
+            beginAtZero: true
+          }
+        }
+      }
+    });
+  }
+
   clear() {
     this.lastMetric = null;
     this.simulationResults = null;
     this.clearOverlaysAndHeatmap();
+    if (this._chart) {
+      this._chart.destroy();
+      this._chart = null;
+    }
   }
 
   clearOverlaysAndHeatmap() {
@@ -199,5 +273,6 @@ SimulationController.$inject = [
   'elementRegistry',
   'overlays',
   'tokenSimulationPalette',
-  'notifications'
+  'notifications',
+  'chartPanel'
 ];
