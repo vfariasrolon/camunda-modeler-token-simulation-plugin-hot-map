@@ -58,7 +58,7 @@ class TransportPool {
   }
 
   isBatchReady(loaderId) {
-    return this.getBatch(loaderId).length > 0;
+    return this.getBatch(loaderId).length >= this.capacity;
   }
 
   dispatch(loaderId) {
@@ -232,6 +232,23 @@ export default class SimulationEngine {
     }
   }
 
+  dispatchTransport(loaderElement, pool) {
+    const batch = pool.dispatch(loaderElement.id);
+    if (batch) {
+        const results = this.results.get(loaderElement.id);
+        batch.forEach(instance => {
+            results.totalTransportWaitTime += this.clock - instance.time;
+        });
+
+        const [ next ] = this.findNextElements(loaderElement);
+        if (next && next.connection) {
+            const transportData = getSimulationData(next.connection);
+            const transportTime = transportData ? minutesToMilliseconds(transportData.transportTime.value) : 0;
+            this.eventQueue.add({ type: 'TRANSPORT_ARRIVED', element: next.connection.target, time: this.clock + transportTime, batch, transportTime });
+        }
+    }
+  }
+
   run() {
     this.initialize();
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
@@ -278,19 +295,7 @@ export default class SimulationEngine {
             const pool = this.transportPools.get(data.loads.pool);
             pool.addInstanceToBatch(event);
             if (pool.isBatchReady(event.element.id)) {
-                const batch = pool.dispatch(event.element.id);
-                if (batch) {
-                    batch.forEach(instance => {
-                        results.totalTransportWaitTime += this.clock - instance.time;
-                    });
-
-                    const [ next ] = this.findNextElements(event.element);
-                    if (next) {
-                        const transportData = getSimulationData(next.connection);
-                        const transportTime = transportData ? minutesToMilliseconds(transportData.transportTime.value) : 0;
-                        this.eventQueue.add({ type: 'TRANSPORT_ARRIVED', element: next.connection.target, time: this.clock + transportTime, batch, transportTime });
-                    }
-                }
+                this.dispatchTransport(event.element, pool);
             }
         } else {
             this.processEvent(event);
@@ -320,6 +325,17 @@ export default class SimulationEngine {
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
     }
+
+    // Force dispatch any remaining batches
+    this.transportPools.forEach(pool => {
+        pool.batches.forEach((batch, loaderId) => {
+            if (batch.length > 0) {
+                const loaderElement = this._elementRegistry.get(loaderId);
+                this.dispatchTransport(loaderElement, pool);
+            }
+        });
+    });
+
     return this.results;
   }
 }
