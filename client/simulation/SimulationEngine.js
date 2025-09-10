@@ -36,12 +36,67 @@ class ResourcePool {
   }
 }
 
+class TransportPool {
+  constructor(config) {
+    this.name = config.name;
+    this.available = config.quantity;
+    this.capacity = config.capacity;
+    this.batches = new Map();
+    this.waitingForTransport = new Map();
+  }
+
+  addInstanceToBatch(instanceEvent) {
+    const loaderId = instanceEvent.element.id;
+    if (!this.batches.has(loaderId)) {
+      this.batches.set(loaderId, []);
+    }
+    this.batches.get(loaderId).push(instanceEvent);
+  }
+
+  getBatch(loaderId) {
+    return this.batches.get(loaderId) || [];
+  }
+
+  isBatchReady(loaderId) {
+    return this.getBatch(loaderId).length >= this.capacity;
+  }
+
+  dispatch(loaderId) {
+    if (this.available > 0) {
+      const batch = this.batches.get(loaderId) || [];
+      if (batch.length > 0) {
+        this.available--;
+        this.batches.set(loaderId, []);
+        return batch;
+      }
+    }
+    return null;
+  }
+
+  release() {
+    this.available++;
+  }
+
+  addWaitingTask(unloaderId, taskEvent) {
+    if (!this.waitingForTransport.has(unloaderId)) {
+      this.waitingForTransport.set(unloaderId, []);
+    }
+    this.waitingForTransport.get(unloaderId).push(taskEvent);
+  }
+
+  getWaitingTasks(unloaderId) {
+    return this.waitingForTransport.get(unloaderId) || [];
+  }
+}
+
 export default class SimulationEngine {
   constructor(elementRegistry) {
     this._elementRegistry = elementRegistry;
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
+    this.transportPools = new Map();
+    this.instanceStates = new Map();
     this.clock = 0;
     this.completedInstances = 0;
   }
@@ -52,17 +107,31 @@ export default class SimulationEngine {
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
+    this.transportPools = new Map();
+    this.instanceStates = new Map();
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
-        totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
+        totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0, totalTransportTime: 0,
         name: element.businessObject.name || element.id
       });
     });
   }
 
-  findNextElement(element) {
-    if (!element.outgoing || element.outgoing.length === 0) return null;
+  findNextElements(element) {
+    if (!element.outgoing || element.outgoing.length === 0) {
+      return [];
+    }
+
+    if (is(element, 'bpmn:ParallelGateway')) {
+      // Forking: return all outgoing paths
+      return element.outgoing.map(flow => {
+        const flowResults = this.results.get(flow.id);
+        if (flowResults) flowResults.executionCount++;
+        return { element: flow.target, connection: flow };
+      });
+    }
+
     let chosenFlow = null;
     if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = Math.random();
@@ -80,59 +149,88 @@ export default class SimulationEngine {
     } else {
       chosenFlow = element.outgoing[0];
     }
+
     if (chosenFlow) {
       const flowResults = this.results.get(chosenFlow.id);
       if (flowResults) flowResults.executionCount++;
-      return chosenFlow.target;
+      return [{ element: chosenFlow.target, connection: chosenFlow }];
     }
-    return null;
+    return [];
   }
 
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
     const elementResults = this.results.get(element.id);
-    elementResults.executionCount++;
+    if (type !== 'TRANSPORT_ARRIVED') elementResults.executionCount++;
     this.clock = event.time;
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
       elementResults.totalCycleTime += (this.clock - startTime);
+      this.instanceStates.delete(instanceId); // Clean up instance state
       return;
     }
 
-    const nextElement = this.findNextElement(element);
-    if (!nextElement) {
+    const nextElements = this.findNextElements(element);
+
+    if (nextElements.length === 0) {
       this.eventQueue.add({ type: 'INSTANCE_COMPLETE', element, time: this.clock, instanceId, startTime });
       return;
     }
 
-    const data = getSimulationData(nextElement);
-    if (is(nextElement, 'bpmn:Task') && data) {
-      let processingTime = 0;
-      if (data.processingTime.distribution === 'fixed') {
-        processingTime = minutesToMilliseconds(data.processingTime.value);
-      } else if (data.processingTime.distribution === 'triangular') {
-        processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
-      }
-      if (data.failureRate && Math.random() < data.failureRate) {
-        const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
-        processingTime += reworkTime;
-        this.results.get(nextElement.id).failureCount++;
-      }
-      const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
-      const taskEvent = { type: 'TASK_COMPLETE', element: nextElement, time: this.clock + processingTime, instanceId, startTime, processingTime, cost };
-      if (data.resources && this.resourcePools.has(data.resources.pool)) {
-        const pool = this.resourcePools.get(data.resources.pool);
-        if (!pool.request(taskEvent)) {
-          taskEvent.waitStart = this.clock;
+    nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
+      const data = getSimulationData(nextElement);
+
+      if (is(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+        // Joining logic
+        const instanceState = this.instanceStates.get(instanceId);
+        if (!instanceState.gateways[nextElement.id]) {
+          instanceState.gateways[nextElement.id] = { arrived: new Set() };
+        }
+        instanceState.gateways[nextElement.id].arrived.add(nextConnection.id);
+
+        if (instanceState.gateways[nextElement.id].arrived.size === nextElement.incoming.length) {
+          this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
+        }
+      } else if (is(nextElement, 'bpmn:Task') && data) {
+        const taskEvent = { type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime, nextConnection };
+        if (data.requires && this.transportPools.has(data.requires.pool)) {
+          const pool = this.transportPools.get(data.requires.pool);
+          pool.addWaitingTask(nextElement.id, taskEvent);
         } else {
-          this.eventQueue.add(taskEvent);
+          this.scheduleTask(taskEvent);
         }
       } else {
-        this.eventQueue.add(taskEvent);
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
+      }
+    });
+  }
+
+  scheduleTask(taskEvent) {
+    const { element, time, instanceId, startTime } = taskEvent;
+    const data = getSimulationData(element);
+    let processingTime = 0;
+    if (data.processingTime.distribution === 'fixed') {
+      processingTime = minutesToMilliseconds(data.processingTime.value);
+    } else if (data.processingTime.distribution === 'triangular') {
+      processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
+    }
+    if (data.failureRate && Math.random() < data.failureRate) {
+      const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
+      processingTime += reworkTime;
+      this.results.get(element.id).failureCount++;
+    }
+    const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
+    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost };
+    if (data.resources && this.resourcePools.has(data.resources.pool)) {
+      const pool = this.resourcePools.get(data.resources.pool);
+      if (!pool.request(newTaskEvent)) {
+        newTaskEvent.waitStart = time;
+      } else {
+        this.eventQueue.add(newTaskEvent);
       }
     } else {
-      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
+      this.eventQueue.add(newTaskEvent);
     }
   }
 
@@ -144,20 +242,27 @@ export default class SimulationEngine {
     if (configData && configData.resourcePools) {
       configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
+    if (configData && configData.transportPools) {
+      configData.transportPools.forEach(p => this.transportPools.set(p.name, new TransportPool(p)));
+    }
     const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
     if (!startEvent) return this.results;
     const arrivalData = getSimulationData(startEvent);
     const arrivalInterval = arrivalData ? minutesToMilliseconds(arrivalData.arrivalRate.value) : 600000;
     console.log("--- Simulation Starting ---", { configData, arrivalData });
     this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
+    this.instanceStates.set(1, { gateways: {} });
     let instanceCounter = 1;
     while (!this.eventQueue.isEmpty()) {
       const event = this.eventQueue.next();
+      this.clock = event.time;
+
       if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
         results.totalProcessingTime += event.processingTime;
         results.totalCost += event.cost;
         if (event.waitStart) results.totalWaitTime += (this.clock - event.waitStart);
+
         const data = getSimulationData(event.element);
         if (data && data.resources) {
           const pool = this.resourcePools.get(data.resources.pool);
@@ -169,13 +274,47 @@ export default class SimulationEngine {
             this.eventQueue.add(nextTask);
           }
         }
+
+        if (data && data.loads && this.transportPools.has(data.loads.pool)) {
+            const pool = this.transportPools.get(data.loads.pool);
+            pool.addInstanceToBatch(event);
+            if (pool.isBatchReady(event.element.id)) {
+                const batch = pool.dispatch(event.element.id);
+                if (batch) {
+                    const [ next ] = this.findNextElements(event.element);
+                    if (next) {
+                        const transportData = getSimulationData(next.connection);
+                        const transportTime = transportData ? minutesToMilliseconds(transportData.transportTime.value) : 0;
+                        this.eventQueue.add({ type: 'TRANSPORT_ARRIVED', element: next.connection.target, time: this.clock + transportTime, batch, transportTime });
+                    }
+                }
+            }
+        } else {
+            this.processEvent(event);
+        }
+
+      } else if (event.type === 'TRANSPORT_ARRIVED') {
+          const pool = this.transportPools.get(getSimulationData(event.element).requires.pool);
+          pool.release();
+          const waitingTasks = pool.getWaitingTasks(event.element.id);
+          event.batch.forEach(instance => {
+              const task = waitingTasks.find(t => t.instanceId === instance.instanceId);
+              if (task) {
+                  this.results.get(event.element.id).totalTransportTime += event.transportTime;
+                  this.scheduleTask(task);
+              }
+          });
+
+      } else {
+        this.processEvent(event);
       }
-      this.processEvent(event);
+
       if (this.completedInstances >= runValue) break;
       if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
         const nextArrivalTime = event.time + arrivalInterval;
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
+        this.instanceStates.set(instanceCounter, { gateways: {} });
       }
     }
     console.log("--- Simulation Finished ---");
