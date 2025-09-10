@@ -20,10 +20,10 @@ export default class ChartPanel {
       <div class="${PALETTE_CLS}">
         <div class="header">
           <select class="chart-select">
-            <option value="cost">Top 5 by Cost</option>
-            <option value="processTime">Top 5 by Process Time</option>
-            <option value="waitTime">Top 5 by Wait Time (Resources)</option>
-            <option value="transportWaitTime">Top 5 by Transport Wait Time</option>
+            <option value="cost">Top 5 por Costo</option>
+            <option value="processTime">Top 5 por Tiempo de Proceso</option>
+            <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
+            <option value="transportWaitTime">Top 5 por Tiempo de Espera (Transporte)</option>
           </select>
           <button class="close">×</button>
         </div>
