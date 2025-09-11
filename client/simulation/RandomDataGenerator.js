@@ -5,6 +5,34 @@ const random = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 const timeUnits = ['seconds', 'minutes', 'hours'];
 const getRandomTimeUnit = () => timeUnits[random(0, timeUnits.length - 1)];
 
+const generateRealisticTimeObject = (distribution = 'fixed') => {
+  const unit = getRandomTimeUnit();
+  let value, min, mode, max;
+
+  if (unit === 'seconds') {
+    min = random(20, 60);
+    mode = random(60, 180);
+    max = random(180, 400);
+    value = random(30, 300);
+  } else if (unit === 'minutes') {
+    min = random(1, 10);
+    mode = random(10, 25);
+    max = random(25, 60);
+    value = random(5, 50);
+  } else { // hours
+    min = random(1, 2);
+    mode = random(2, 3);
+    max = random(3, 5);
+    value = random(1, 4);
+  }
+
+  if (distribution === 'triangular') {
+    return { distribution, unit, min, mode, max };
+  }
+  return { distribution, unit, value };
+};
+
+
 export default class RandomDataGenerator {
   constructor(elementRegistry, modeling, bpmnFactory, editorActions, canvas) {
     this._elementRegistry = elementRegistry;
@@ -61,14 +89,14 @@ export default class RandomDataGenerator {
       let data = null;
 
       if (is(element, 'bpmn:StartEvent')) {
-        data = { arrivalRate: { distribution: "fixed", unit: getRandomTimeUnit(), value: random(5, 15) } };
+        data = { arrivalRate: { distribution: "fixed", unit: 'minutes', value: random(5, 15) } };
       } else if (is(element, 'bpmn:Task')) {
         data = {
-          processingTime: { distribution: "triangular", unit: getRandomTimeUnit(), min: random(2, 20), mode: random(15, 40), max: random(40, 90) },
+          processingTime: generateRealisticTimeObject('triangular'),
           resources: { pool: "Analistas", quantityRequired: random(1, 2) },
           cost: { type: "perHour", value: random(10, 100), currency: "USD" },
           failureRate: parseFloat((Math.random() * 0.29 + 0.01).toFixed(2)),
-          reworkTime: { distribution: "fixed", unit: getRandomTimeUnit(), value: random(10, 120) }
+          reworkTime: generateRealisticTimeObject('fixed')
         };
       } else if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
         let remainingProbability = 1.0;
