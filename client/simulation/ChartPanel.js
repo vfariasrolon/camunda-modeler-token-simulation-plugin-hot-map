@@ -43,7 +43,7 @@ export default class ChartPanel {
           <p><strong>Top 5 por Tiempo de Espera (Recursos):</strong> Muestra las 5 tareas donde se pierde más tiempo esperando a que un recurso (persona) esté disponible. Indica cuellos de botella de personal.</p>
           <p><strong>Top 5 por Tiempo de Espera (Transporte):</strong> Muestra las 5 tareas de carga donde los paquetes esperan más tiempo por un carrito.</p>
           <p><strong>Top 5 por Despachos Ineficientes:</strong> Muestra las 5 tareas de carga que más veces envían carritos sin estar llenos (al final de la simulación).</p>
-          <p><strong>Recursos Asignados por Tarea:</strong> Muestra cuántas personas (`quantityRequired`) están asignadas a cada tarea según la configuración.</p>
+          <p><strong>Recursos Asignados por Tarea:</strong> Muestra cuántas personas (\`quantityRequired\`) están asignadas a cada tarea según la configuración.</p>
         </div>
       </div>
     `);
