@@ -6,7 +6,7 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
-import { getSimulationData } from './util';
+import { getSimulationData, formatMilliseconds } from './util';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -156,22 +156,22 @@ export default class SimulationController {
         } else if (result) {
             if (is(element, 'bpmn:Task')) {
                 if (metric === 'cost') overlayText = `Costo: $${result.totalCost.toFixed(2)}`;
-                else if (metric === 'waitTime') overlayText = `Espera Prom: ${(result.totalWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
-                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(result.totalWaitTime / 1000).toFixed(1)}s`;
-                else if (metric === 'processTime') overlayText = `Proceso: ${(result.totalProcessingTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+                else if (metric === 'waitTime') overlayText = `Espera Prom: ${formatMilliseconds(result.totalWaitTime / (result.executionCount || 1))}`;
+                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${formatMilliseconds(result.totalWaitTime)}`;
+                else if (metric === 'processTime') overlayText = `Proceso: ${formatMilliseconds(result.totalProcessingTime / (result.executionCount || 1))}`;
                 else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
                 else if (metric === 'failureRate' && result.executionCount > 0) {
                     const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
                     overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
                 }
                 else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
-                  overlayText = `E.Carro: ${(result.totalTransportWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+                  overlayText = `E.Carro: ${formatMilliseconds(result.totalTransportWaitTime / (result.executionCount || 1))}`;
                 }
                 else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
                   overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
                 }
             } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
-                overlayText = `Ciclo: ${(result.totalCycleTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+                overlayText = `Ciclo: ${formatMilliseconds(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
 
@@ -278,6 +278,44 @@ export default class SimulationController {
         borderColor: 'rgba(75, 192, 192, 1)',
         borderWidth: 1
     }];
+
+    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes'];
+    if (timeMetrics.includes(metric)) {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        let label = context.dataset.label || '';
+                        if (label) {
+                            label += ': ';
+                        }
+                        if (context.parsed.y !== null) {
+                            label += formatMilliseconds(context.parsed.y);
+                        }
+                        return label;
+                    }
+                }
+            }
+        };
+        // The data is already in ms, but the axis title says seconds.
+        // Let's keep the axis title as a general guide but format the raw data in the tooltip.
+        // The getChartData for these metrics does not divide by 1000, so we pass the raw ms.
+    }
+
+    if (metric === 'scatter') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        const label = context.dataset.label || '';
+                        const time = formatMilliseconds(context.parsed.x * 1000); // convert seconds back to ms for formatting
+                        const cost = context.parsed.y.toFixed(2);
+                        return `${context.chart.data.labels[context.dataIndex]}: (${time}, $${cost})`;
+                    }
+                }
+            }
+        };
+    }
 
     return {
       type: chartType,

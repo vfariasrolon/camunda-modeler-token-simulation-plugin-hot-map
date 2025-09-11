@@ -24,3 +24,13 @@ export const getSimulationData = (element) => {
     return null;
   }
 };
+
+export const formatMilliseconds = (ms) => {
+  if (ms === 0) return '0s';
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${minutes.toFixed(1)}m`;
+  const hours = minutes / 60;
+  return `${hours.toFixed(1)}h`;
+};
