@@ -6,7 +6,13 @@ const triangular = (min, mode, max) => {
   const rand = Math.random();
   return rand < F ? min + Math.sqrt(rand * (mode - min) * (max - min)) : max - Math.sqrt((1 - rand) * (max - min) * (max - mode));
 };
-const minutesToMilliseconds = (minutes) => minutes * 60 * 1000;
+
+const timeToMilliseconds = (value, unit) => {
+  if (unit === 'seconds') return value * 1000;
+  if (unit === 'minutes') return value * 60 * 1000;
+  if (unit === 'hours') return value * 60 * 60 * 1000;
+  return value; // Default to milliseconds
+};
 
 class EventQueue {
   constructor() { this.items = []; }
@@ -155,12 +161,13 @@ export default class SimulationEngine {
     const data = getSimulationData(element);
     let processingTime = 0;
     if (data.processingTime.distribution === 'fixed') {
-      processingTime = minutesToMilliseconds(data.processingTime.value);
+      processingTime = timeToMilliseconds(data.processingTime.value, data.processingTime.unit);
     } else if (data.processingTime.distribution === 'triangular') {
-      processingTime = minutesToMilliseconds(triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max));
+      const randomValue = triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max);
+      processingTime = timeToMilliseconds(randomValue, data.processingTime.unit);
     }
     if (data.failureRate && Math.random() < data.failureRate) {
-      const reworkTime = data.reworkTime ? minutesToMilliseconds(data.reworkTime.value) : 0;
+      const reworkTime = data.reworkTime ? timeToMilliseconds(data.reworkTime.value, data.reworkTime.unit) : 0;
       processingTime += reworkTime;
       this.results.get(element.id).failureCount++;
     }
@@ -196,10 +203,16 @@ export default class SimulationEngine {
     let arrivalInterval = 1000; // Default to 1 second if not specified
     if (startEventData && startEventData.arrivalRate) {
       const rate = startEventData.arrivalRate.value;
-      const unit = startEventData.arrivalRate.unit;
+      const unit = startEventData.arrivalRate.unit; // per second, minute, or hour
       if (rate > 0) {
-        // Convert "per minute" or "per hour" to an interval in milliseconds
-        const intervalInSeconds = unit === 'minute' ? 60 / rate : 3600 / rate;
+        let intervalInSeconds;
+        if (unit === 'second') {
+          intervalInSeconds = 1 / rate;
+        } else if (unit === 'minute') {
+          intervalInSeconds = 60 / rate;
+        } else { // hour
+          intervalInSeconds = 3600 / rate;
+        }
         arrivalInterval = intervalInSeconds * 1000;
       }
     }

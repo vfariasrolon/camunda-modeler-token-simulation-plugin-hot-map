@@ -2,6 +2,8 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData } from './util';
 
 const random = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
+const timeUnits = ['seconds', 'minutes', 'hours'];
+const getRandomTimeUnit = () => timeUnits[random(0, timeUnits.length - 1)];
 
 export default class RandomDataGenerator {
   constructor(elementRegistry, modeling, bpmnFactory, editorActions, canvas) {
@@ -48,26 +50,10 @@ export default class RandomDataGenerator {
     if (processRoot) {
       console.log("Estableciendo configuración global en: ", processRoot.id);
       const simulationConfig = {
-        simulationConfig: { runUntil: "instances", runValue: 1000, runUnit: "instances" },
-        resourcePools: [ { name: "Analistas", quantity: 1 }, { name: "Gerentes", quantity: 1 } ],
-        transportPools: [ { name: "carros_grandes", quantity: 2, capacity: 10 } ]
+        simulationConfig: { runValue: 1000 },
+        resourcePools: [ { name: "Analistas", quantity: random(1, 5) }, { name: "Gerentes", quantity: random(1, 3) } ]
       };
       this.setSimulationData(processRoot, simulationConfig);
-    }
-
-    let loaderTask = null;
-    let unloaderTask = null;
-
-    const tasks = allElements.filter(e => is(e, 'bpmn:Task'));
-    if (tasks.length >= 2) {
-        for (const task of tasks) {
-            if (task.outgoing && task.outgoing[0] && task.outgoing[0].target && is(task.outgoing[0].target, 'bpmn:Task')) {
-                loaderTask = task;
-                unloaderTask = task.outgoing[0].target;
-                console.log(`Par de transporte encontrado: Cargador=${loaderTask.id}, Descargador=${unloaderTask.id}`);
-                break;
-            }
-        }
     }
 
     allElements.forEach(element => {
@@ -75,37 +61,27 @@ export default class RandomDataGenerator {
       let data = null;
 
       if (is(element, 'bpmn:StartEvent')) {
-        data = { arrivalRate: { distribution: "fixed", unit: "minutes", value: random(5, 15) } };
+        data = { arrivalRate: { distribution: "fixed", unit: getRandomTimeUnit(), value: random(5, 15) } };
       } else if (is(element, 'bpmn:Task')) {
         data = {
-          processingTime: { distribution: "triangular", unit: "minutes", min: random(2, 20), mode: random(15, 40), max: random(40, 90) },
-          resources: { pool: "Analistas", quantityRequired: random(1, 4) },
+          processingTime: { distribution: "triangular", unit: getRandomTimeUnit(), min: random(2, 20), mode: random(15, 40), max: random(40, 90) },
+          resources: { pool: "Analistas", quantityRequired: random(1, 2) },
           cost: { type: "perHour", value: random(10, 100), currency: "USD" },
           failureRate: parseFloat((Math.random() * 0.29 + 0.01).toFixed(2)),
-          reworkTime: { distribution: "fixed", unit: "minutes", value: random(10, 120) }
+          reworkTime: { distribution: "fixed", unit: getRandomTimeUnit(), value: random(10, 120) }
         };
-
-        if (element === loaderTask) {
-            data.loads = { pool: "carros_grandes" };
-            console.log(` -> Asignado rol de CARGADOR a ${element.id}`);
-        } else if (element === unloaderTask) {
-            data.requires = { pool: "carros_grandes" };
-            console.log(` -> Asignado rol de DESCARGADOR a ${element.id}`);
-        }
-
       } else if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
         let remainingProbability = 1.0;
         element.outgoing.forEach((flow, index) => {
             let probability;
-            if (index === element.outgoing.length - 1) probability = remainingProbability;
-            else {
-                probability = Math.random() * remainingProbability * 0.7;
-                remainingProbability -= probability;
+            if (index === element.outgoing.length - 1) {
+              probability = remainingProbability;
+            } else {
+              probability = Math.random() * remainingProbability * 0.7;
+              remainingProbability -= probability;
             }
             this.setSimulationData(flow, { branchingProbability: parseFloat(probability.toFixed(2)) });
         });
-      } else if (loaderTask && unloaderTask && element.source === loaderTask && element.target === unloaderTask) {
-          this.setSimulationData(element, { transportTime: { distribution: "fixed", unit: "minutes", value: random(5, 15) } });
       }
 
       if (data) {

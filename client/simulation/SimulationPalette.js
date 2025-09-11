@@ -56,9 +56,14 @@ export default class SimulationPalette {
       metric: 'cost'
     });
     this.addEntry({
-      title: 'Visualizar Tiempos de Espera (Cuellos de Botella)',
+      title: 'Visualizar Tiempos de Espera Promedio (Cuellos de Botella)',
       icon: ClockIcon,
       metric: 'waitTime'
+    });
+    this.addEntry({
+      title: 'Visualizar Tiempos de Espera Totales',
+      icon: ClockIcon,
+      metric: 'totalWaitTime'
     });
     this.addEntry({
         title: 'Visualizar Tiempos de Ciclo',

@@ -121,7 +121,8 @@ export default class SimulationController {
           let value = 0;
           if (metric === 'frequency') value = result.executionCount;
           else if (metric === 'cost') value = result.totalCost;
-          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000; // Average
+          else if (metric === 'totalWaitTime') value = result.totalWaitTime / 1000; // Total
           else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
           else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
           else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
@@ -155,7 +156,8 @@ export default class SimulationController {
         } else if (result) {
             if (is(element, 'bpmn:Task')) {
                 if (metric === 'cost') overlayText = `Costo: $${result.totalCost.toFixed(2)}`;
-                else if (metric === 'waitTime') overlayText = `Espera: ${(result.totalWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+                else if (metric === 'waitTime') overlayText = `Espera Prom: ${(result.totalWaitTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
+                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(result.totalWaitTime / 1000).toFixed(1)}s`;
                 else if (metric === 'processTime') overlayText = `Proceso: ${(result.totalProcessingTime / (result.executionCount || 1) / 1000).toFixed(1)}s`;
                 else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
                 else if (metric === 'failureRate' && result.executionCount > 0) {
@@ -230,9 +232,9 @@ export default class SimulationController {
     const yAxisTitle =
         metric === 'cost' ? 'Costo Total ($)' :
         metric === 'processTime' ? 'Tiempo de Proceso Total (s)' :
-        metric === 'waitTime' ? 'Tiempo de Espera Total (s)' :
+        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
-        metric === 'pareto' ? 'Número de Fallos' : // Default for pareto
+        metric === 'pareto' ? 'Número de Fallos' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -357,15 +359,19 @@ export default class SimulationController {
     if (metric === 'cost') { dataProperty = 'totalCost'; label = 'Costo Total por Tarea'; }
     else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
     else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
+    else if (metric === 'allWaitTimes') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
     else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
     else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
 
     tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
-    const top5 = tasks.filter(t => t[dataProperty] > 0).slice(0, 5);
 
-    const labels = top5.map(t => t.name);
-    const data = top5.map(t => t[dataProperty]);
+    const chartTasks = metric === 'allWaitTimes'
+        ? tasks.filter(t => t[dataProperty] > 0)
+        : tasks.filter(t => t[dataProperty] > 0).slice(0, 5);
+
+    const labels = chartTasks.map(t => t.name);
+    const data = chartTasks.map(t => t[dataProperty]);
 
     return { data, labels, label };
   }
