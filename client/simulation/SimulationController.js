@@ -208,19 +208,58 @@ export default class SimulationController {
   getChartConfig(metric) {
     const chartData = this.getChartData(metric);
 
-    const chartType = metric === 'scatter' ? 'scatter' : 'bar';
+    let chartType = 'bar';
+    if (metric === 'scatter') chartType = 'scatter';
+    if (metric === 'pareto') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
 
     const options = {
-        scales: { y: { beginAtZero: true } }
+        scales: {
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Valor' // Placeholder
+                }
+            }
+        }
     };
 
-    if (chartType === 'scatter') {
+    const yAxisTitle =
+        metric === 'cost' ? 'Costo Total ($)' :
+        metric === 'processTime' ? 'Tiempo de Proceso Total (s)' :
+        metric === 'waitTime' ? 'Tiempo de Espera Total (s)' :
+        metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
+        metric === 'pareto' ? 'Número de Fallos' : // Default for pareto
+        'Valor';
+    options.scales.y.title.text = yAxisTitle;
+
+    if (metric === 'pareto') {
+        options.scales.y1 = {
+            type: 'linear',
+            display: true,
+            position: 'right',
+            min: 0,
+            max: 100,
+            title: {
+                display: true,
+                text: 'Porcentaje Acumulado (%)'
+            },
+            grid: {
+                drawOnChartArea: false, // only draw grid for primary axis
+            },
+        };
+    }
+
+    if (metric === 'scatter') {
         options.scales.x = {
             type: 'linear',
             position: 'bottom',
             title: {
                 display: true,
-                text: 'Tiempo de Proceso (s)'
+                text: 'Tiempo de Proceso Promedio (s)'
             }
         };
         options.scales.y.title = {
@@ -229,17 +268,20 @@ export default class SimulationController {
         };
     }
 
+    // For pareto, datasets are pre-built. For others, build them now.
+    const datasets = chartData.datasets ? chartData.datasets : [{
+        label: chartData.label,
+        data: chartData.data,
+        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+        borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 1
+    }];
+
     return {
       type: chartType,
       data: {
         labels: chartData.labels,
-        datasets: [{
-          label: chartData.label,
-          data: chartData.data,
-          backgroundColor: 'rgba(75, 192, 192, 0.2)',
-          borderColor: 'rgba(75, 192, 192, 1)',
-          borderWidth: 1
-        }]
+        datasets: datasets
       },
       options: options
     };
@@ -271,6 +313,44 @@ export default class SimulationController {
             y: t.totalCost
         }));
         return { data: scatterData, labels: tasks.map(t => t.name), label: 'Tiempo de Proceso vs. Costo' };
+    }
+
+    if (metric === 'pareto') {
+        const failedTasks = tasks.filter(t => t.failureCount > 0);
+        failedTasks.sort((a, b) => b.failureCount - a.failureCount);
+
+        const labels = failedTasks.map(t => t.name);
+        const failureData = failedTasks.map(t => t.failureCount);
+        const totalFailures = failureData.reduce((sum, count) => sum + count, 0);
+
+        let cumulative = 0;
+        const cumulativePercentage = failureData.map(count => {
+            cumulative += count;
+            return totalFailures > 0 ? (cumulative / totalFailures) * 100 : 0;
+        });
+
+        return {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Número de Fallos',
+                    data: failureData,
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'Porcentaje Acumulado',
+                    data: cumulativePercentage,
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    fill: false,
+                    yAxisID: 'y1',
+                }
+            ]
+        };
     }
 
     let dataProperty, label;

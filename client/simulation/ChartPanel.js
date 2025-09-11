@@ -26,9 +26,9 @@ export default class ChartPanel {
             <option value="cost">Top 5 por Costo</option>
             <option value="processTime">Top 5 por Tiempo de Proceso</option>
             <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
-            <option value="transportWaitTime">Top 5 por Tiempo de Espera (Transporte)</option>
-            <option value="inefficientDispatch">Top 5 por Despachos Ineficientes</option>
             <option value="resourceQuantity">Recursos Asignados por Tarea</option>
+            <option value="scatter">Diagrama de Dispersión (Tiempo vs. Costo)</option>
+            <option value="pareto">Diagrama de Pareto (Fallos)</option>
           </select>
           <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
           <button class="close" title="Cerrar">×</button>
@@ -41,9 +41,9 @@ export default class ChartPanel {
           <p><strong>Top 5 por Costo:</strong> Muestra las 5 tareas más caras de todo el proceso.</p>
           <p><strong>Top 5 por Tiempo de Proceso:</strong> Muestra las 5 tareas que más tiempo de trabajo activo consumen.</p>
           <p><strong>Top 5 por Tiempo de Espera (Recursos):</strong> Muestra las 5 tareas donde se pierde más tiempo esperando a que un recurso (persona) esté disponible. Indica cuellos de botella de personal.</p>
-          <p><strong>Top 5 por Tiempo de Espera (Transporte):</strong> Muestra las 5 tareas de carga donde los paquetes esperan más tiempo por un carrito.</p>
-          <p><strong>Top 5 por Despachos Ineficientes:</strong> Muestra las 5 tareas de carga que más veces envían carritos sin estar llenos (al final de la simulación).</p>
           <p><strong>Recursos Asignados por Tarea:</strong> Muestra cuántas personas (\`quantityRequired\`) están asignadas a cada tarea según la configuración.</p>
+          <p><strong>Diagrama de Dispersión (Tiempo vs. Costo):</strong> Cada punto representa un tipo de tarea. El eje X es el tiempo de proceso promedio y el eje Y es el costo total incurrido por todas las ejecuciones de esa tarea. Ayuda a identificar tareas que son a la vez largas (en promedio) y caras (en total).</p>
+          <p><strong>Diagrama de Pareto (Fallos):</strong> Muestra las tareas que causan la mayoría de los fallos. Las barras (eje izquierdo) son el número de fallos por tarea, ordenadas de mayor a menor. La línea (eje derecho) es el porcentaje acumulado del total de fallos. Útil para aplicar la regla 80/20 e identificar los "pocos vitales" problemas.</p>
         </div>
       </div>
     `);

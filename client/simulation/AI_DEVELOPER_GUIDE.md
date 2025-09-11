@@ -146,6 +146,14 @@ A continuación, se presenta un prompt de ejemplo que puedes usar para pedirle a
 - **Estado Actual**: Toda la lógica de transporte ha sido **desactivada** en `SimulationEngine.js` comentando el código relevante.
 - **Para Futuros Desarrolladores**: Si se desea reactivar esta funcionalidad, se debe revisar cuidadosamente la clase `TransportPool` y la interacción con los eventos `TASK_COMPLETE` y `TRANSPORT_ARRIVED`. El principal desafío es manejar los lotes que no se llenan y el estado de los vehículos (disponibilidad).
 
+### Consumo de Datos por el Panel de Gráficos
+- Un ejemplo clave del consumo de estos datos es el **Panel de Gráficos** (`ChartPanel.js` y `SimulationController.js`).
+- Este panel lee los resultados agregados de la simulación (que se basan en los `simulationData` de cada tarea) para generar visualizaciones como:
+  - Gráficos de barras con los "Top 5" por costo, tiempo, etc.
+  - Un diagrama de dispersión que cruza el costo total con el tiempo de proceso promedio.
+  - Un diagrama de Pareto para analizar las fuentes de fallos.
+- La creación de un panel de propiedades para editar `simulationData` permitiría a los usuarios influir directamente en los resultados de estos análisis.
+
 **Prompt para el Agente de IA:**
 
 "Hola. Necesito que construyas un nuevo plugin para este Camunda Modeler que funcione como un **Panel de Propiedades para los Datos de Simulación**.

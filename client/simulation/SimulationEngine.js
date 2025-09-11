@@ -44,71 +44,12 @@ class ResourcePool {
   }
 }
 
-/*
-// NOTE: Transport logic is disabled until it can be made more robust.
-class TransportPool {
-  constructor(config) {
-    this.name = config.name;
-    this.available = config.quantity;
-    this.capacity = config.capacity;
-    this.batches = new Map();
-    this.waitingForTransport = new Map();
-  }
-
-  addInstanceToBatch(instanceEvent) {
-    const loaderId = instanceEvent.element.id;
-    if (!this.batches.has(loaderId)) {
-      this.batches.set(loaderId, []);
-    }
-    this.batches.get(loaderId).push(instanceEvent);
-  }
-
-  getBatch(loaderId) {
-    return this.batches.get(loaderId) || [];
-  }
-
-  isBatchReady(loaderId) {
-    // FIX: Dispatch immediately to prevent stalls.
-    // The "inefficient dispatch" is now tracked as a metric.
-    return this.getBatch(loaderId).length > 0;
-  }
-
-  dispatch(loaderId) {
-    if (this.available > 0) {
-      const batch = this.batches.get(loaderId) || [];
-      if (batch.length > 0) {
-        this.available--;
-        this.batches.set(loaderId, []);
-        return batch;
-      }
-    }
-    return null;
-  }
-
-  release() {
-    this.available++;
-  }
-
-  addWaitingTask(unloaderId, taskEvent) {
-    if (!this.waitingForTransport.has(unloaderId)) {
-      this.waitingForTransport.set(unloaderId, []);
-    }
-    this.waitingForTransport.get(unloaderId).push(taskEvent);
-  }
-
-  getWaitingTasks(unloaderId) {
-    return this.waitingForTransport.get(unloaderId) || [];
-  }
-}
-*/
-
 export default class SimulationEngine {
   constructor(elementRegistry) {
     this._elementRegistry = elementRegistry;
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
-    // this.transportPools = new Map(); // DISABLED
     this.instanceStates = new Map();
     this.clock = 0;
     this.completedInstances = 0;
@@ -120,13 +61,11 @@ export default class SimulationEngine {
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
-    // this.transportPools = new Map(); // DISABLED
     this.instanceStates = new Map();
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
-        totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0, totalTransportTime: 0,
-        totalTransportWaitTime: 0, inefficientDispatchCount: 0,
+        totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -174,7 +113,7 @@ export default class SimulationEngine {
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
     const elementResults = this.results.get(element.id);
-    if (type !== 'TRANSPORT_ARRIVED') elementResults.executionCount++;
+    elementResults.executionCount++;
     this.clock = event.time;
 
     if (type === 'INSTANCE_COMPLETE') {
@@ -204,13 +143,7 @@ export default class SimulationEngine {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
       } else if (is(nextElement, 'bpmn:Task') && data) {
-        const taskEvent = { type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime, nextConnection };
-        // if (data.requires && this.transportPools.has(data.requires.pool)) {
-        //   const pool = this.transportPools.get(data.requires.pool);
-        //   pool.addWaitingTask(nextElement.id, taskEvent);
-        // } else {
-        this.scheduleTask(taskEvent);
-        // }
+        this.scheduleTask({ type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime });
       } else {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
       }
@@ -248,28 +181,6 @@ export default class SimulationEngine {
     }
   }
 
-  /*
-  dispatchTransport(loaderElement, pool, isForceDispatch = false) {
-    const batch = pool.dispatch(loaderElement.id);
-    if (batch) {
-        const results = this.results.get(loaderElement.id);
-        if (isForceDispatch) {
-            results.inefficientDispatchCount += batch.length;
-        }
-        batch.forEach(instance => {
-            results.totalTransportWaitTime += this.clock - instance.time;
-        });
-
-        const [ next ] = this.findNextElements(loaderElement);
-        if (next && next.connection) {
-            const transportData = getSimulationData(next.connection);
-            const transportTime = transportData ? minutesToMilliseconds(transportData.transportTime.value) : 0;
-            this.eventQueue.add({ type: 'TRANSPORT_ARRIVED', element: next.connection.target, time: this.clock + transportTime, batch, transportTime });
-        }
-    }
-  }
-  */
-
   run() {
     this.initialize();
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
@@ -278,13 +189,8 @@ export default class SimulationEngine {
     if (configData && configData.resourcePools) {
       configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
-    // if (configData && configData.transportPools) {
-    //   configData.transportPools.forEach(p => this.transportPools.set(p.name, new TransportPool(p)));
-    // }
     const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
     if (!startEvent) return this.results;
-    const arrivalData = getSimulationData(startEvent);
-    const arrivalInterval = arrivalData ? minutesToMilliseconds(arrivalData.arrivalRate.value) : 600000;
 
     this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
     this.instanceStates.set(1, { gateways: {} });
@@ -311,29 +217,7 @@ export default class SimulationEngine {
             this.eventQueue.add(nextTask);
           });
         }
-
-        // if (data && data.loads && this.transportPools.has(data.loads.pool)) {
-        //     const pool = this.transportPools.get(data.loads.pool);
-        //     pool.addInstanceToBatch(event);
-        //     if (pool.isBatchReady(event.element.id)) {
-        //         this.dispatchTransport(event.element, pool);
-        //     }
-        // } else {
         this.processEvent(event);
-        // }
-
-      // } else if (event.type === 'TRANSPORT_ARRIVED') {
-      //     const pool = this.transportPools.get(getSimulationData(event.element).requires.pool);
-      //     pool.release();
-      //     const waitingTasks = pool.getWaitingTasks(event.element.id);
-      //     event.batch.forEach(instance => {
-      //         const task = waitingTasks.find(t => t.instanceId === instance.instanceId);
-      //         if (task) {
-      //             this.results.get(event.element.id).totalTransportTime += event.transportTime;
-      //             this.scheduleTask(task);
-      //         }
-      //     });
-
       } else {
         this.processEvent(event);
       }
@@ -346,16 +230,6 @@ export default class SimulationEngine {
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
     }
-
-    // Force dispatch any remaining batches
-    // this.transportPools.forEach(pool => {
-    //     pool.batches.forEach((batch, loaderId) => {
-    //         if (batch.length > 0) {
-    //             const loaderElement = this._elementRegistry.get(loaderId);
-    //             this.dispatchTransport(loaderElement, pool, true);
-    //         }
-    //     });
-    // });
 
     console.log("--- Simulation Finished ---");
     console.table(Object.fromEntries(this.results));

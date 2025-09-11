@@ -29,10 +29,14 @@ Tienes dos opciones para definir los datos que usará la simulación:
 
 ### Paso 3: Visualizar y Analizar los Resultados
 
-1.  **Visualizar Mapa de Calor**: Haz clic en el botón con el icono de un **yin-yang** para abrir la paleta de análisis y visualizar métricas como mapas de calor.
-2.  **Visualizar Gráficos**: Haz clic en el botón con el icono de un **gráfico de barras** para abrir un panel con gráficos detallados.
-    -   Usa el menú desplegable dentro del panel para cambiar entre diferentes tipos de gráficos (Top 5 por Costo, Tiempos, etc.).
-    -   El panel también incluye un botón de ayuda (?) con la descripción de cada gráfico.
+1.  **Visualizar Mapa de Calor**: Haz clic en el botón con el icono de un **yin-yang** para abrir la paleta de análisis y visualizar métricas como mapas de calor sobre el diagrama.
+2.  **Visualizar Gráficos**: Haz clic en el botón con el icono de un **gráfico de barras** para abrir un panel con gráficos detallados. Este panel, que ahora es más ancho para mejor visualización, incluye:
+    -   Un menú desplegable para cambiar entre diferentes tipos de gráficos:
+        -   **Top 5 por...**: Gráficos de barras que muestran las tareas con mayor impacto en Costo, Tiempo de Proceso y Tiempo de Espera.
+        -   **Recursos Asignados**: Un resumen de la configuración de recursos por tarea.
+        -   **Diagrama de Dispersión (Tiempo vs. Costo)**: Un gráfico de puntos para identificar visualmente las tareas que son a la vez costosas y largas.
+        -   **Diagrama de Pareto (Fallos)**: Un gráfico combinado de barras y línea que ayuda a identificar qué pocas tareas son responsables de la mayoría de los fallos (el principio 80/20).
+    -   Un botón de ayuda (`?`) que explica en detalle qué significa cada gráfico.
 
 ## II. Arquitectura y Funcionamiento Interno
 
@@ -52,7 +56,7 @@ El motor usa una **Simulación de Eventos Discretos**.
 -   **Compuertas Paralelas (con '+')**: El motor ahora soporta la bifurcación y unión de flujos en compuertas paralelas.
 -   **Recursos Múltiples por Tarea**: Una tarea puede requerir más de un recurso de una piscina. Esto se define con la propiedad `quantityRequired`.
 -   **Fallos y Reparaciones**: Usa `failureRate` para simular fallos en tareas. Si una tarea falla, se añade el `reworkTime` y su costo asociado.
--   **Lógica de Transporte (Desactivada)**: El motor contiene código comentado para una futura implementación de lógica de transporte y lotes.
+-   **Lógica de Transporte (Desactivada)**: El motor contenía una lógica compleja para simular transporte y agrupación de ítems ("carritos"). Esta funcionalidad se ha desactivado temporalmente para garantizar la estabilidad y fiabilidad del motor de simulación principal, resolviendo un error crítico que provocaba que las simulaciones se detuvieran. El código se conserva comentado para una futura revisión.
 
 ## Apéndice A: Estructura de `simulationData`
 
