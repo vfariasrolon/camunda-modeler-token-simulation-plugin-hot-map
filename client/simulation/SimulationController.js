@@ -36,8 +36,16 @@ const ChartIcon = `
   </span>
 `;
 
+const DataIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M9,5V9H21V5M9,19H21V15H9M9,14H21V10H9M4,9H8V5H4M4,19H8V15H4M4,14H8V10H4V14Z" />
+    </svg>
+  </span>
+`;
+
 export default class SimulationController {
-  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel) {
+  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel, dataPanel) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._simulationPalette = simulationPalette;
@@ -47,6 +55,7 @@ export default class SimulationController {
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._notifications = notifications;
     this._chartPanel = chartPanel;
+    this._dataPanel = dataPanel;
 
     this._heatmap = null;
     this._chart = null;
@@ -64,15 +73,18 @@ export default class SimulationController {
     const runButton = domify(`<div class="bts-entry" title="Ejecutar Simulación">${RunIcon}</div>`);
     const showButton = domify(`<div class="bts-entry" title="Mostrar Análisis">${ShowIcon}</div>`);
     const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos">${ChartIcon}</div>`);
+    const dataButton = domify(`<div class="bts-entry" title="Mostrar Datos">${DataIcon}</div>`);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
     domEvent.bind(chartButton, 'click', () => this._chartPanel.toggle());
+    domEvent.bind(dataButton, 'click', () => this._dataPanel.toggle(true));
 
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
+    this._tokenSimulationPalette.addEntry(dataButton, 15);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
@@ -86,6 +98,7 @@ export default class SimulationController {
     this.clear();
     this.simulationResults = this._simulationEngine.run();
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
+    this._eventBus.fire('simulation.results.available', { results: this.simulationResults });
   }
 
   adjustHeatmap(type, amount) {
@@ -126,8 +139,6 @@ export default class SimulationController {
           else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
           else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
           else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
-          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1) / 1000;
-          else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
 
           if (value > max) max = value;
           if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
@@ -163,12 +174,6 @@ export default class SimulationController {
                 else if (metric === 'failureRate' && result.executionCount > 0) {
                     const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
                     overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
-                }
-                else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
-                  overlayText = `E.Carro: ${formatMilliseconds(result.totalTransportWaitTime / (result.executionCount || 1))}`;
-                }
-                else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
-                  overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
                 }
             } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${formatMilliseconds(result.totalCycleTime / (result.executionCount || 1))}`;
@@ -398,8 +403,6 @@ export default class SimulationController {
     else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
     else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'allWaitTimes') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
-    else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
-    else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
     else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
 
     tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
@@ -422,6 +425,7 @@ export default class SimulationController {
       this._chart.destroy();
       this._chart = null;
     }
+    this._eventBus.fire('simulation.cleared');
   }
 
   clearOverlaysAndHeatmap() {

@@ -139,3 +139,108 @@
 .simulation-chart-panel .content.hidden {
     display: none;
 }
+
+/* Data Panel */
+.simulation-data-panel {
+  position: absolute;
+  top: 60px;
+  right: 20px;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 10px;
+  display: none;
+  z-index: 101; /* Higher than chart panel */
+  width: 600px;
+  max-height: 80vh;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+  display: none;
+  flex-direction: column;
+}
+
+.simulation-data-panel.open {
+  display: flex;
+}
+
+.simulation-data-panel .header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 5px;
+  margin-bottom: 5px;
+}
+
+.simulation-data-panel .header .title {
+  font-weight: bold;
+}
+
+.simulation-data-panel .header .close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+.simulation-data-panel .tabs {
+  margin-bottom: 10px;
+}
+
+.simulation-data-panel .tab-button {
+  padding: 5px 10px;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #f7f7f7;
+  border-bottom: none;
+}
+
+.simulation-data-panel .tab-button.active {
+  background: #fff;
+  border-bottom: 1px solid #fff;
+  margin-bottom: -1px;
+}
+
+.simulation-data-panel .tab-button:disabled {
+  color: #ccc;
+  cursor: not-allowed;
+}
+
+.simulation-data-panel .content-container {
+  overflow-y: auto;
+  border-top: 1px solid #ccc;
+  padding-top: 10px;
+}
+
+.simulation-data-panel .content.hidden {
+    display: none;
+}
+
+.simulation-data-panel .content ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.simulation-data-panel .content li {
+  padding: 5px;
+  border-bottom: 1px solid #eee;
+}
+
+.simulation-data-panel .content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.simulation-data-panel .content th,
+.simulation-data-panel .content td {
+  border: 1px solid #ddd;
+  padding: 4px;
+  text-align: left;
+  font-size: 11px;
+}
+
+.simulation-data-panel .content th {
+  background-color: #f2f2f2;
+}

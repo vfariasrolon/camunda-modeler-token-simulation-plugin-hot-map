@@ -86,16 +86,6 @@ export default class SimulationPalette {
         metric: 'failureRate'
     });
     this.addEntry({
-        title: 'Visualizar Espera de Transporte',
-        icon: TruckIcon,
-        metric: 'transportWaitTime'
-    });
-    this.addEntry({
-        title: 'Visualizar Despachos Ineficientes',
-        icon: WarningIcon,
-        metric: 'inefficientDispatch'
-    });
-    this.addEntry({
         title: 'Visualizar Cantidad de Recursos Asignados',
         icon: GroupIcon,
         metric: 'resourceQuantity'
