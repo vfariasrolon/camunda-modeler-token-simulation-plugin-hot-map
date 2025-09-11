@@ -192,6 +192,18 @@ export default class SimulationEngine {
     const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
     if (!startEvent) return this.results;
 
+    const startEventData = getSimulationData(startEvent);
+    let arrivalInterval = 1000; // Default to 1 second if not specified
+    if (startEventData && startEventData.arrivalRate) {
+      const rate = startEventData.arrivalRate.value;
+      const unit = startEventData.arrivalRate.unit;
+      if (rate > 0) {
+        // Convert "per minute" or "per hour" to an interval in milliseconds
+        const intervalInSeconds = unit === 'minute' ? 60 / rate : 3600 / rate;
+        arrivalInterval = intervalInSeconds * 1000;
+      }
+    }
+
     this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
     this.instanceStates.set(1, { gateways: {} });
     let instanceCounter = 1;

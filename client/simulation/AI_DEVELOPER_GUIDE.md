@@ -159,32 +159,95 @@ A continuación, se presenta un prompt de ejemplo que puedes usar para pedirle a
 "Hola. Necesito que construyas un nuevo plugin para este Camunda Modeler que funcione como un **Panel de Propiedades para los Datos de Simulación**.
 
 **Objetivo:**
-El usuario debe poder seleccionar una Tarea (`bpmn:Task`) en el diagrama y ver un panel donde pueda introducir y modificar los datos de simulación, como el `processingTime` y el `cost`.
+El usuario debe poder seleccionar un elemento del diagrama (Tarea, Evento de Inicio, Compuerta Exclusiva, etc.) y ver un panel donde pueda introducir y modificar sus datos de simulación específicos.
 
-**Requisitos Técnicos:**
-1.  **Activación del Panel**: El panel debe aparecer cuando el usuario haga clic en un nuevo botón en la paleta de herramientas principal (la que está a la izquierda). Usa el servicio `palette` para registrar un nuevo botón con un icono de engranaje o similar.
-2.  **Lectura de Datos**:
-    -   Cuando el panel se abre, debe leer los `simulationData` del elemento seleccionado actualmente.
-    -   Los datos están en una `camunda:Property` con `name="simulationData"` dentro de `bpmn:ExtensionElements`. El valor es un string JSON.
-    -   Debes usar los servicios `selection` y `elementRegistry` para obtener el elemento y sus datos. Parsea el JSON para rellenar los campos del panel.
-3.  **Interfaz del Panel**:
-    -   El panel debe ser una ventana modal o un panel lateral.
-    -   Debe tener campos de entrada para:
-        -   `processingTime` (valor, unidad, distribución)
-        -   `cost` (valor, moneda)
-        -   `failureRate` (un número entre 0 y 1)
-4.  **Escritura de Datos**:
-    -   Al hacer clic en un botón "Guardar" en el panel, debes tomar los valores de los campos de entrada.
-    -   Construye un nuevo objeto JavaScript con estos datos.
-    -   Conviértelo a un string JSON.
-    -   Usa `bpmnFactory` para crear los elementos (`bpmn:ExtensionElements`, `camunda:Properties`, `camunda:Property`) si no existen.
-    -   Usa `modeling.updateProperties` para guardar el nuevo string JSON en la propiedad `simulationData` del elemento.
-5.  **Guía de Referencia**: He creado un archivo `AI_DEVELOPER_GUIDE.md` que explica en detalle cómo leer y escribir estos datos. Por favor, úsalo como tu principal referencia técnica.
+**Requisitos Técnicos Detallados:**
+
+1.  **Activación y Comportamiento del Panel**:
+    -   El panel debe ser una ventana modal o un panel lateral que se activa con un nuevo botón en la paleta principal.
+    -   El panel debe reaccionar al evento `selection.changed` para cargar los datos del nuevo elemento seleccionado.
+
+2.  **Lectura y Escritura de Datos**:
+    -   Utiliza los servicios `selection`, `elementRegistry`, `modeling` y `bpmnFactory` como se describe en la `AI_DEVELOPER_GUIDE.md` para leer y escribir el string JSON en la propiedad `simulationData`.
+
+3.  **Estructura de Datos JSON `simulationData` (MUY IMPORTANTE)**:
+    -   El panel debe generar un objeto JavaScript que se ajuste **exactamente** a las siguientes estructuras, dependiendo del tipo de elemento BPMN seleccionado. Luego, este objeto se convierte a un string JSON para guardarlo.
+
+    **A. Para un `bpmn:Task` (o UserTask, ScriptTask, etc.):**
+    ```json
+    {
+      "processingTime": {
+        "distribution": "fixed", // "fixed" o "triangular"
+        "value": 10,           // Para "fixed"
+        "unit": "minutes",     // "minutes" u "hours"
+        "min": 5,              // Para "triangular"
+        "mode": 10,            // Para "triangular"
+        "max": 15              // Para "triangular"
+      },
+      "cost": {
+        "value": 25.50,
+        "currency": "USD"
+      },
+      "resources": {
+        "pool": "Analistas",     // Nombre del pool de recursos
+        "quantityRequired": 1  // Cuántos recursos de este pool se necesitan
+      },
+      "failureRate": 0.05,       // Probabilidad de fallo (0.0 a 1.0)
+      "reworkTime": {            // Igual que processingTime, para cuando ocurre un fallo
+        "distribution": "fixed",
+        "value": 20,
+        "unit": "minutes"
+      }
+    }
+    ```
+
+    **B. Para un Flujo de Secuencia (`bpmn:SequenceFlow`) saliente de una Compuerta Exclusiva (`bpmn:ExclusiveGateway`):**
+    ```json
+    {
+      "branchingProbability": 0.75 // Probabilidad de que se elija este camino (0.0 a 1.0)
+    }
+    ```
+
+    **C. Para un Evento de Inicio (`bpmn:StartEvent`):**
+    ```json
+    {
+      "arrivalRate": {
+        "distribution": "fixed",
+        "value": 60,           // Instancias que llegan
+        "unit": "minute"       // "minute" u "hour"
+      }
+    }
+    ```
+
+    **D. Para el Proceso (`bpmn:Process`) o un Participante (`bpmn:Participant`):**
+    ```json
+    {
+      "simulationConfig": {
+        "runValue": 1000       // Número de instancias a simular
+      },
+      "resourcePools": [
+        {
+          "name": "Analistas",  // Nombre del pool
+          "quantity": 5        // Cantidad de recursos disponibles
+        },
+        {
+          "name": "Desarrolladores",
+          "quantity": 3
+        }
+      ]
+    }
+    ```
+
+4.  **Interfaz del Panel**:
+    -   La interfaz debe ser dinámica y mostrar solo los campos relevantes para el tipo de elemento seleccionado.
+    -   Por ejemplo, si se selecciona una Tarea, muestra campos para tiempo, costo, recursos y fallos. Si se selecciona un Flujo de Secuencia, solo muestra el campo para la probabilidad de ramificación.
+
+5.  **Guía de Referencia**: Usa la `AI_DEVELOPER_GUIDE.md` como tu principal referencia técnica para la interacción con el modelo BPMN.
 
 **Plan de Trabajo Sugerido:**
 1.  Crea un nuevo módulo para el panel (ej. `client/properties/`).
-2.  Implementa la lógica del botón en la paleta principal.
-3.  Crea el HTML/CSS para la interfaz del panel.
-4.  Implementa la lógica de lectura de datos cuando se abre el panel.
-5.  Implementa la lógica de guardado de datos."
+2.  Implementa la lógica del botón en la paleta principal y el listener para `selection.changed`.
+3.  Crea el HTML/CSS para la interfaz del panel, con todos los posibles campos de entrada ocultos por defecto.
+4.  Implementa la lógica de lectura de datos que, según el tipo de elemento, muestra los campos correctos y los rellena.
+5.  Implementa la lógica de guardado que construye el objeto JSON correcto según los campos visibles y lo guarda en el elemento."
 ---
