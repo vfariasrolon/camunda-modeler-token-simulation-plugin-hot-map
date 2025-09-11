@@ -6,6 +6,9 @@ import {
 
 const PALETTE_CLS = 'simulation-chart-panel';
 const PALETTE_OPEN_CLS = 'open';
+const HELP_OPEN_CLS = 'help-open';
+
+const HelpIcon = '<path d="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zm1,15h-2v-2h2v2zm0,-4h-2V7h2v6z"/>';
 
 export default class ChartPanel {
   constructor(canvas, eventBus) {
@@ -24,11 +27,23 @@ export default class ChartPanel {
             <option value="processTime">Top 5 por Tiempo de Proceso</option>
             <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
             <option value="transportWaitTime">Top 5 por Tiempo de Espera (Transporte)</option>
+            <option value="inefficientDispatch">Top 5 por Despachos Ineficientes</option>
+            <option value="resourceQuantity">Recursos Asignados por Tarea</option>
           </select>
-          <button class="close">×</button>
+          <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
+          <button class="close" title="Cerrar">×</button>
         </div>
         <div class="content">
-          <canvas id="simulationChartCanvas" width="400" height="300"></canvas>
+          <canvas id="simulationChartCanvas"></canvas>
+        </div>
+        <div class="help-content hidden">
+          <h4>Ayuda de Gráficos de Simulación</h4>
+          <p><strong>Top 5 por Costo:</strong> Muestra las 5 tareas más caras de todo el proceso.</p>
+          <p><strong>Top 5 por Tiempo de Proceso:</strong> Muestra las 5 tareas que más tiempo de trabajo activo consumen.</p>
+          <p><strong>Top 5 por Tiempo de Espera (Recursos):</strong> Muestra las 5 tareas donde se pierde más tiempo esperando a que un recurso (persona) esté disponible. Indica cuellos de botella de personal.</p>
+          <p><strong>Top 5 por Tiempo de Espera (Transporte):</strong> Muestra las 5 tareas de carga donde los paquetes esperan más tiempo por un carrito.</p>
+          <p><strong>Top 5 por Despachos Ineficientes:</strong> Muestra las 5 tareas de carga que más veces envían carritos sin estar llenos (al final de la simulación).</p>
+          <p><strong>Recursos Asignados por Tarea:</strong> Muestra cuántas personas (`quantityRequired`) están asignadas a cada tarea según la configuración.</p>
         </div>
       </div>
     `);
@@ -36,11 +51,14 @@ export default class ChartPanel {
     this._canvas.getContainer().appendChild(this._container);
 
     this.closeButton = this._container.querySelector('button.close');
+    this.helpButton = this._container.querySelector('button.help-button');
+    this.helpContent = this._container.querySelector('.help-content');
     this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
     this.canvas = this._container.querySelector('#simulationChartCanvas');
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
+    domEvent.bind(this.helpButton, 'click', () => this.toggleHelp());
     domEvent.bind(this.chartSelect, 'change', (e) => {
         this._eventBus.fire('simulation.charts.opened');
     });
@@ -70,6 +88,11 @@ export default class ChartPanel {
       domClasses(this._container).remove(PALETTE_OPEN_CLS);
       this._eventBus.fire('simulation.charts.closed');
     }
+  }
+
+  toggleHelp() {
+    domClasses(this.helpContent).toggle('hidden');
+    domClasses(this.content).toggle('hidden');
   }
 
   hide() {

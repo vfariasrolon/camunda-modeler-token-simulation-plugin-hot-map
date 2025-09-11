@@ -44,6 +44,8 @@ class ResourcePool {
   }
 }
 
+/*
+// NOTE: Transport logic is disabled until it can be made more robust.
 class TransportPool {
   constructor(config) {
     this.name = config.name;
@@ -98,6 +100,7 @@ class TransportPool {
     return this.waitingForTransport.get(unloaderId) || [];
   }
 }
+*/
 
 export default class SimulationEngine {
   constructor(elementRegistry) {
@@ -105,7 +108,7 @@ export default class SimulationEngine {
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
-    this.transportPools = new Map();
+    // this.transportPools = new Map(); // DISABLED
     this.instanceStates = new Map();
     this.clock = 0;
     this.completedInstances = 0;
@@ -117,7 +120,7 @@ export default class SimulationEngine {
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
-    this.transportPools = new Map();
+    // this.transportPools = new Map(); // DISABLED
     this.instanceStates = new Map();
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
@@ -202,12 +205,12 @@ export default class SimulationEngine {
         }
       } else if (is(nextElement, 'bpmn:Task') && data) {
         const taskEvent = { type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime, nextConnection };
-        if (data.requires && this.transportPools.has(data.requires.pool)) {
-          const pool = this.transportPools.get(data.requires.pool);
-          pool.addWaitingTask(nextElement.id, taskEvent);
-        } else {
-          this.scheduleTask(taskEvent);
-        }
+        // if (data.requires && this.transportPools.has(data.requires.pool)) {
+        //   const pool = this.transportPools.get(data.requires.pool);
+        //   pool.addWaitingTask(nextElement.id, taskEvent);
+        // } else {
+        this.scheduleTask(taskEvent);
+        // }
       } else {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
       }
@@ -245,6 +248,7 @@ export default class SimulationEngine {
     }
   }
 
+  /*
   dispatchTransport(loaderElement, pool, isForceDispatch = false) {
     const batch = pool.dispatch(loaderElement.id);
     if (batch) {
@@ -264,6 +268,7 @@ export default class SimulationEngine {
         }
     }
   }
+  */
 
   run() {
     this.initialize();
@@ -273,9 +278,9 @@ export default class SimulationEngine {
     if (configData && configData.resourcePools) {
       configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
-    if (configData && configData.transportPools) {
-      configData.transportPools.forEach(p => this.transportPools.set(p.name, new TransportPool(p)));
-    }
+    // if (configData && configData.transportPools) {
+    //   configData.transportPools.forEach(p => this.transportPools.set(p.name, new TransportPool(p)));
+    // }
     const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
     if (!startEvent) return this.results;
     const arrivalData = getSimulationData(startEvent);
@@ -307,27 +312,27 @@ export default class SimulationEngine {
           });
         }
 
-        if (data && data.loads && this.transportPools.has(data.loads.pool)) {
-            const pool = this.transportPools.get(data.loads.pool);
-            pool.addInstanceToBatch(event);
-            if (pool.isBatchReady(event.element.id)) {
-                this.dispatchTransport(event.element, pool);
-            }
-        } else {
-            this.processEvent(event);
-        }
+        // if (data && data.loads && this.transportPools.has(data.loads.pool)) {
+        //     const pool = this.transportPools.get(data.loads.pool);
+        //     pool.addInstanceToBatch(event);
+        //     if (pool.isBatchReady(event.element.id)) {
+        //         this.dispatchTransport(event.element, pool);
+        //     }
+        // } else {
+        this.processEvent(event);
+        // }
 
-      } else if (event.type === 'TRANSPORT_ARRIVED') {
-          const pool = this.transportPools.get(getSimulationData(event.element).requires.pool);
-          pool.release();
-          const waitingTasks = pool.getWaitingTasks(event.element.id);
-          event.batch.forEach(instance => {
-              const task = waitingTasks.find(t => t.instanceId === instance.instanceId);
-              if (task) {
-                  this.results.get(event.element.id).totalTransportTime += event.transportTime;
-                  this.scheduleTask(task);
-              }
-          });
+      // } else if (event.type === 'TRANSPORT_ARRIVED') {
+      //     const pool = this.transportPools.get(getSimulationData(event.element).requires.pool);
+      //     pool.release();
+      //     const waitingTasks = pool.getWaitingTasks(event.element.id);
+      //     event.batch.forEach(instance => {
+      //         const task = waitingTasks.find(t => t.instanceId === instance.instanceId);
+      //         if (task) {
+      //             this.results.get(event.element.id).totalTransportTime += event.transportTime;
+      //             this.scheduleTask(task);
+      //         }
+      //     });
 
       } else {
         this.processEvent(event);
@@ -343,14 +348,14 @@ export default class SimulationEngine {
     }
 
     // Force dispatch any remaining batches
-    this.transportPools.forEach(pool => {
-        pool.batches.forEach((batch, loaderId) => {
-            if (batch.length > 0) {
-                const loaderElement = this._elementRegistry.get(loaderId);
-                this.dispatchTransport(loaderElement, pool, true);
-            }
-        });
-    });
+    // this.transportPools.forEach(pool => {
+    //     pool.batches.forEach((batch, loaderId) => {
+    //         if (batch.length > 0) {
+    //             const loaderElement = this._elementRegistry.get(loaderId);
+    //             this.dispatchTransport(loaderElement, pool, true);
+    //         }
+    //     });
+    // });
 
     console.log("--- Simulation Finished ---");
     console.table(Object.fromEntries(this.results));

@@ -79,7 +79,7 @@ export default class SimulationController {
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
-    this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart(e.type));
+    this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
   }
 
   runSimulation() {
@@ -187,12 +187,8 @@ export default class SimulationController {
     });
   }
 
-  showChart(metric) {
-    console.log('[DEBUG] showChart called with metric:', metric);
-    if (!metric) {
-      metric = this._chartPanel.getChartType();
-      console.log('[DEBUG] metric was null, got from panel:', metric);
-    }
+  showChart() {
+    const metric = this._chartPanel.getChartType();
 
     if (!this.simulationResults && metric !== 'resourceQuantity') {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
@@ -203,29 +199,53 @@ export default class SimulationController {
       this._chart.destroy();
     }
 
-    const { data, labels, label } = this.getChartData(metric);
+    const chartConfig = this.getChartConfig(metric);
 
     const ctx = this._chartPanel.getCanvas().getContext('2d');
-    this._chart = new Chart(ctx, {
-      type: 'bar',
+    this._chart = new Chart(ctx, chartConfig);
+  }
+
+  getChartConfig(metric) {
+    const chartData = this.getChartData(metric);
+
+    const chartType = metric === 'scatter' ? 'scatter' : 'bar';
+
+    const options = {
+        scales: { y: { beginAtZero: true } }
+    };
+
+    if (chartType === 'scatter') {
+        options.scales.x = {
+            type: 'linear',
+            position: 'bottom',
+            title: {
+                display: true,
+                text: 'Tiempo de Proceso (s)'
+            }
+        };
+        options.scales.y.title = {
+            display: true,
+            text: 'Costo Total ($)'
+        };
+    }
+
+    return {
+      type: chartType,
       data: {
-        labels: labels,
+        labels: chartData.labels,
         datasets: [{
-          label: label,
-          data: data,
+          label: chartData.label,
+          data: chartData.data,
           backgroundColor: 'rgba(75, 192, 192, 0.2)',
           borderColor: 'rgba(75, 192, 192, 1)',
           borderWidth: 1
         }]
       },
-      options: {
-        scales: { y: { beginAtZero: true } }
-      }
-    });
+      options: options
+    };
   }
 
   getChartData(metric) {
-    console.log('[DEBUG] getChartData called for metric:', metric);
     const tasks = [];
 
     if (metric === 'resourceQuantity') {
@@ -240,9 +260,17 @@ export default class SimulationController {
         this.simulationResults.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
             if (element && is(element, 'bpmn:Task')) {
-                tasks.push({ ...result });
+                tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
+    }
+
+    if (metric === 'scatter') {
+        const scatterData = tasks.map(t => ({
+            x: t.totalProcessingTime / (t.executionCount || 1) / 1000,
+            y: t.totalCost
+        }));
+        return { data: scatterData, labels: tasks.map(t => t.name), label: 'Tiempo de Proceso vs. Costo' };
     }
 
     let dataProperty, label;
@@ -259,7 +287,6 @@ export default class SimulationController {
     const labels = top5.map(t => t.name);
     const data = top5.map(t => t[dataProperty]);
 
-    console.log('[DEBUG] Returning chart data:', { data, labels, label });
     return { data, labels, label };
   }
 

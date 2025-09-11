@@ -128,6 +128,24 @@ A continuación, se presenta un prompt de ejemplo que puedes usar para pedirle a
 
 ---
 
+## 5. Lógica de Recursos y Transporte (Notas Importantes)
+
+### Lógica de Múltiples Recursos por Tarea
+- El motor de simulación ahora soporta que una tarea requiera múltiples recursos de la misma piscina.
+- El dato se define en el JSON de la tarea, dentro del objeto `resources`:
+  ```json
+  "resources": {
+    "pool": "Analistas",
+    "quantityRequired": 2
+  }
+  ```
+- El `ResourcePool` fue modificado para manejar peticiones y liberaciones de una cantidad variable de recursos.
+
+### Lógica de Transporte (Desactivada)
+- Se implementó una lógica compleja para simular transporte y lotes (batching), pero resultó ser inestable y causaba que la simulación se atascara.
+- **Estado Actual**: Toda la lógica de transporte ha sido **desactivada** en `SimulationEngine.js` comentando el código relevante.
+- **Para Futuros Desarrolladores**: Si se desea reactivar esta funcionalidad, se debe revisar cuidadosamente la clase `TransportPool` y la interacción con los eventos `TASK_COMPLETE` y `TRANSPORT_ARRIVED`. El principal desafío es manejar los lotes que no se llenan y el estado de los vehículos (disponibilidad).
+
 **Prompt para el Agente de IA:**
 
 "Hola. Necesito que construyas un nuevo plugin para este Camunda Modeler que funcione como un **Panel de Propiedades para los Datos de Simulación**.

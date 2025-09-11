@@ -29,10 +29,10 @@ Tienes dos opciones para definir los datos que usará la simulación:
 
 ### Paso 3: Visualizar y Analizar los Resultados
 
-1.  Junto al botón de reproducir, haz clic en el nuevo botón con el icono de un **yin-yang**.
-2.  Se abrirá una **paleta de análisis** con varios botones.
-3.  Haz clic en cualquiera de los botones para visualizar una métrica diferente (Costo, Tiempo de Espera, Tasa de Fallos, etc.).
-4.  Puedes cambiar entre las diferentes vistas sin tener que volver a ejecutar la simulación.
+1.  **Visualizar Mapa de Calor**: Haz clic en el botón con el icono de un **yin-yang** para abrir la paleta de análisis y visualizar métricas como mapas de calor.
+2.  **Visualizar Gráficos**: Haz clic en el botón con el icono de un **gráfico de barras** para abrir un panel con gráficos detallados.
+    -   Usa el menú desplegable dentro del panel para cambiar entre diferentes tipos de gráficos (Top 5 por Costo, Tiempos, etc.).
+    -   El panel también incluye un botón de ayuda (?) con la descripción de cada gráfico.
 
 ## II. Arquitectura y Funcionamiento Interno
 
@@ -49,8 +49,10 @@ Toda la nueva funcionalidad se encuentra en el directorio `client/simulation/`.
 El motor usa una **Simulación de Eventos Discretos**.
 
 -   **Compuertas Exclusivas (con 'X')**: Usa la propiedad `branchingProbability` para decidir qué camino tomar.
--   **Recursos y Tiempos de Espera**: Gestiona `resourcePools`. Si un recurso no está disponible, la tarea se pone en cola, acumulando `totalWaitTime`.
+-   **Compuertas Paralelas (con '+')**: El motor ahora soporta la bifurcación y unión de flujos en compuertas paralelas.
+-   **Recursos Múltiples por Tarea**: Una tarea puede requerir más de un recurso de una piscina. Esto se define con la propiedad `quantityRequired`.
 -   **Fallos y Reparaciones**: Usa `failureRate` para simular fallos en tareas. Si una tarea falla, se añade el `reworkTime` y su costo asociado.
+-   **Lógica de Transporte (Desactivada)**: El motor contiene código comentado para una futura implementación de lógica de transporte y lotes.
 
 ## Apéndice A: Estructura de `simulationData`
 
@@ -70,7 +72,7 @@ El motor usa una **Simulación de Eventos Discretos**.
     {
       "processingTime": { "...": "..." },
       "cost": { "...": "..." },
-      "resources": { "...": "..." },
+      "resources": { "pool": "...", "quantityRequired": 1 },
       "failureRate": 0.0,
       "reworkTime": { "...": "..." }
     }
@@ -83,4 +85,4 @@ El motor usa una **Simulación de Eventos Discretos**.
 ## III. Guía para Desarrolladores de IA
 
 Para extender esta funcionalidad o construir nuevas herramientas que interactúen con los datos de simulación, consulta la guía técnica detallada:
-[**Guía para Desarrolladores de IA: Lectura y Escritura de Datos de Simulación](./AI_DEVELOPER_GUIDE.md)**
+[**Guía para Desarrolladores de IA: Lectura y Escritura de Datos de Simulación](./client/simulation/AI_DEVELOPER_GUIDE.md)**

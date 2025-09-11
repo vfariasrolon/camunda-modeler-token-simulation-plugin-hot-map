@@ -95,7 +95,7 @@
   padding: 10px;
   display: none;
   z-index: 100;
-  width: 420px;
+  width: 600px;
   box-shadow: 0 5px 15px rgba(0,0,0,0.2);
 }
 
@@ -113,9 +113,29 @@
   font-weight: bold;
 }
 
-.simulation-chart-panel .header .close {
+.simulation-chart-panel .header .close,
+.simulation-chart-panel .header .help-button {
   background: none;
   border: none;
-  font-size: 20px;
   cursor: pointer;
+  padding: 0 5px;
+}
+
+.simulation-chart-panel .header .help-button svg {
+    width: 18px;
+    height: 18px;
+}
+
+.simulation-chart-panel .header .close {
+  font-size: 20px;
+}
+
+.simulation-chart-panel .help-content {
+    padding: 10px;
+    border-top: 1px solid #eee;
+}
+
+.simulation-chart-panel .help-content.hidden,
+.simulation-chart-panel .content.hidden {
+    display: none;
 }
