@@ -66,7 +66,9 @@ class TransportPool {
   }
 
   isBatchReady(loaderId) {
-    return this.getBatch(loaderId).length >= this.capacity;
+    // FIX: Dispatch immediately to prevent stalls.
+    // The "inefficient dispatch" is now tracked as a metric.
+    return this.getBatch(loaderId).length > 0;
   }
 
   dispatch(loaderId) {

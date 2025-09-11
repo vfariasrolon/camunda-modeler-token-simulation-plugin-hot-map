@@ -42,9 +42,7 @@ export default class ChartPanel {
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
     domEvent.bind(this.chartSelect, 'change', (e) => {
-        this._eventBus.fire('simulation.charts.typeChanged', {
-            type: e.target.value
-        });
+        this._eventBus.fire('simulation.charts.opened');
     });
 
     this._eventBus.on('diagram.destroy', () => this.hide());
