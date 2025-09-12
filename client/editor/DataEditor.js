@@ -112,17 +112,21 @@ export default class DataEditor {
     const footer = this._modal.querySelector('.sim-data-editor-footer');
     body.innerHTML = '';
 
-    const data = getSimulationData(this._selectedElement) || {};
+    const rawData = getSimulationData(this._selectedElement) || {};
     title.textContent = `Propiedades de: ${this._selectedElement.businessObject.name || this._selectedElement.id}`;
     footer.classList.remove('hidden');
 
     if (is(this._selectedElement, 'bpmn:Task')) {
+      const data = this._getTaskDefaults(rawData);
       this.renderTaskForm(body, data);
     } else if (is(this._selectedElement, 'bpmn:SequenceFlow') && this._selectedElement.source.type === 'bpmn:ExclusiveGateway') {
+      const data = this._getSequenceFlowDefaults(rawData);
       this.renderSequenceFlowForm(body, data);
     } else if (is(this._selectedElement, 'bpmn:StartEvent')) {
+      const data = this._getStartEventDefaults(rawData);
       this.renderStartEventForm(body, data);
     } else if (is(this._selectedElement, 'bpmn:Process') || is(this._selectedElement, 'bpmn:Participant')) {
+      const data = this._getProcessDefaults(rawData);
       this.renderProcessForm(body, data);
     } else {
       body.innerHTML = '<p>Propiedades de simulación no aplicables para este tipo de elemento.</p>';
@@ -130,15 +134,52 @@ export default class DataEditor {
     }
   }
 
-  renderTaskForm(container, data) {
-    const {
-      processingTime = { distribution: 'fixed', value: 10, unit: 'minutes' },
-      cost = { value: 10, currency: 'USD' },
-      resources = { pool: '', quantityRequired: 1 },
-      failureRate = 0.0,
-      reworkTime = { distribution: 'fixed', value: 20, unit: 'minutes' }
-    } = data;
+  _getTaskDefaults(data = {}) {
+    const defaults = {
+      processingTime: { distribution: 'fixed', value: 10, unit: 'minutes' },
+      cost: { value: 10, currency: 'USD' },
+      resources: { pool: '', quantityRequired: 1 },
+      failureRate: 0.0,
+      reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' }
+    };
+    return {
+      ...defaults,
+      ...data,
+      processingTime: { ...defaults.processingTime, ...(data.processingTime || {}) },
+      cost: { ...defaults.cost, ...(data.cost || {}) },
+      resources: { ...defaults.resources, ...(data.resources || {}) },
+      reworkTime: { ...defaults.reworkTime, ...(data.reworkTime || {}) },
+    };
+  }
 
+  _getSequenceFlowDefaults(data = {}) {
+    const defaults = { branchingProbability: 0.5 };
+    return { ...defaults, ...data };
+  }
+
+  _getStartEventDefaults(data = {}) {
+    const defaults = { arrivalRate: { value: 60, unit: 'minute' } };
+    return {
+      ...defaults,
+      ...data,
+      arrivalRate: { ...defaults.arrivalRate, ...(data.arrivalRate || {}) }
+    };
+  }
+
+  _getProcessDefaults(data = {}) {
+    const defaults = {
+      simulationConfig: { runValue: 1000 },
+      resourcePools: []
+    };
+    return {
+      ...defaults,
+      ...data,
+      simulationConfig: { ...defaults.simulationConfig, ...(data.simulationConfig || {}) }
+    };
+  }
+
+  renderTaskForm(container, data) {
+    const { processingTime, cost, resources, failureRate, reworkTime } = data;
     container.innerHTML = `
       <div class="form-group">
         <label>Tiempo de Proceso (processingTime)</label>
@@ -176,7 +217,7 @@ export default class DataEditor {
   }
 
   renderSequenceFlowForm(container, data) {
-    const { branchingProbability = 0.5 } = data;
+    const { branchingProbability } = data;
     container.innerHTML = `
       <div class="form-group">
         <label>Probabilidad de Ramificación (branchingProbability)</label>
@@ -186,7 +227,7 @@ export default class DataEditor {
   }
 
   renderStartEventForm(container, data) {
-    const { arrivalRate = { value: 60, unit: 'minute' } } = data;
+    const { arrivalRate } = data;
     container.innerHTML = `
       <div class="form-group">
         <label>Tasa de Llegada (arrivalRate)</label>
@@ -200,11 +241,7 @@ export default class DataEditor {
   }
 
   renderProcessForm(container, data) {
-    const {
-      simulationConfig = { runValue: 1000 },
-      resourcePools = []
-    } = data;
-
+    const { simulationConfig, resourcePools } = data;
     const poolsHtml = resourcePools.map((pool, index) => `
       <div class="resource-pool-row">
         <input type="text" name="resourcePools[${index}].name" value="${pool.name}" placeholder="Nombre del Pool">
@@ -248,8 +285,6 @@ export default class DataEditor {
   bindRemoveButtons(container) {
       const removeButtons = container.querySelectorAll('.remove-pool');
       removeButtons.forEach(button => {
-          // Re-binding to avoid duplicate listeners might be needed in more complex scenarios
-          // but for this simple case, a fresh bind on render is okay.
           domEvent.bind(button, 'click', (e) => {
               e.preventDefault();
               e.target.closest('.resource-pool-row').remove();

@@ -176,7 +176,7 @@ export default class SimulationEngine {
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
     const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost, quantityRequired };
 
-    if (data.resources && this.resourcePools.has(data.resources.pool)) {
+    if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
       const pool = this.resourcePools.get(data.resources.pool);
       if (!pool.request(quantityRequired, newTaskEvent)) {
         newTaskEvent.waitStart = time;
@@ -232,7 +232,7 @@ export default class SimulationEngine {
         if (event.waitStart) results.totalWaitTime += (this.clock - event.waitStart);
 
         const data = getSimulationData(event.element);
-        if (data && data.resources) {
+        if (data && data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
           const pool = this.resourcePools.get(data.resources.pool);
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
