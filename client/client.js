@@ -2,18 +2,21 @@ import {
   registerBpmnJSPlugin,
 } from 'camunda-modeler-plugin-helpers';
 
-// new css import
-import './simulation/simulation.css';
-
 import TokenSimulationModule from 'bpmn-js-token-simulation';
+import SimulationModule from './simulation';
 
 import HideModelerElements from './HideModelerElements';
+import Heatmap from './Heatmap';
 import TimeTracker from './TimeTracker';
-import SimulationAnalysisModule from './simulation';
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
   hideModelerElements: [ 'type', HideModelerElements ]
+};
+
+const HeatmapPluginModule = {
+  __init__: [ 'heatmap' ],
+  heatmap: [ 'type', Heatmap ]
 };
 
 const TimeTrackerPluginModule = {
@@ -23,5 +26,6 @@ const TimeTrackerPluginModule = {
 
 // Register the BpmnJS modules
 registerBpmnJSPlugin(TokenSimulationModule);
+registerBpmnJSPlugin(HeatmapPluginModule);
 registerBpmnJSPlugin(TimeTrackerPluginModule);
-registerBpmnJSPlugin(SimulationAnalysisModule);
+registerBpmnJSPlugin(SimulationModule);

@@ -13,6 +13,7 @@ export default class DataPanel {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
+    this.results = null;
 
     this._init();
   }
@@ -37,8 +38,6 @@ export default class DataPanel {
 
     this._canvas.getContainer().appendChild(this._container);
 
-    this.results = null;
-
     this.closeButton = this._container.querySelector('button.close');
     this.inputContent = this._container.querySelector('#data-input-content');
     this.resultsContent = this._container.querySelector('#data-results-content');
@@ -59,7 +58,9 @@ export default class DataPanel {
     this._eventBus.on('simulation.cleared', () => {
       this.results = null;
       this.resultsTabButton.disabled = true;
-      this.showTab('input');
+      if (this.isOpen()) {
+        this.showTab('input');
+      }
     });
   }
 
@@ -80,66 +81,45 @@ export default class DataPanel {
   }
 
   showInputData() {
-    this.inputContent.innerHTML = ''; // Clear previous content
+    this.inputContent.innerHTML = '';
     const list = domify('<ul></ul>');
-
     this._elementRegistry.forEach(element => {
       const data = getSimulationData(element);
       if (data) {
         const name = element.businessObject.name || element.id;
         const dataString = JSON.stringify(data, null, 2);
-        const listItem = domify(`
-          <li>
-            <strong>${name} (${element.type})</strong>
-            <pre>${dataString}</pre>
-          </li>
-        `);
+        const listItem = domify(`<li><strong>${name}</strong><pre>${dataString}</pre></li>`);
         list.appendChild(listItem);
       }
     });
-
     this.inputContent.appendChild(list);
   }
 
   showResultsTable() {
-    this.resultsContent.innerHTML = ''; // Clear previous content
+    this.resultsContent.innerHTML = '';
     if (!this.results) return;
 
     const table = domify(`
       <table>
-        <thead>
-          <tr>
-            <th>Elemento</th>
-            <th>Ejecuciones</th>
-            <th>Fallos</th>
-            <th>T. Espera Total</th>
-            <th>T. Proceso Total</th>
-            <th>Costo Total</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Elemento</th><th>Ejecuciones</th><th>Fallos</th><th>T. Espera</th><th>T. Proceso</th><th>Costo</th></tr></thead>
         <tbody></tbody>
-      </table>
-    `);
-
+      </table>`);
     const tbody = table.querySelector('tbody');
 
     this.results.forEach((result, elementId) => {
-      // Only show elements that were actually executed
       if (result.executionCount > 0) {
         const row = domify(`
           <tr>
             <td>${result.name}</td>
             <td>${result.executionCount}</td>
-            <td>${result.failureCount}</td>
-            <td>${formatMilliseconds(result.totalWaitTime)}</td>
-            <td>${formatMilliseconds(result.totalProcessingTime)}</td>
-            <td>$${result.totalCost.toFixed(2)}</td>
-          </tr>
-        `);
+            <td>${result.failureCount || 0}</td>
+            <td>${formatMilliseconds(result.totalWaitTime || 0)}</td>
+            <td>${formatMilliseconds(result.totalProcessingTime || 0)}</td>
+            <td>$${(result.totalCost || 0).toFixed(2)}</td>
+          </tr>`);
         tbody.appendChild(row);
       }
     });
-
     this.resultsContent.appendChild(table);
   }
 
@@ -150,7 +130,7 @@ export default class DataPanel {
   toggle(open) {
     const shouldOpen = (open !== undefined) ? open : !this.isOpen();
     if (shouldOpen) {
-      this.showInputData();
+      this.showTab('input');
       domClasses(this._container).add(PALETTE_OPEN_CLS);
     } else {
       domClasses(this._container).remove(PALETTE_OPEN_CLS);
@@ -160,6 +140,7 @@ export default class DataPanel {
   destroy() {
     if (this._container && this._container.parentNode) {
       this._container.parentNode.removeChild(this._container);
+      this._container = null;
     }
   }
 }

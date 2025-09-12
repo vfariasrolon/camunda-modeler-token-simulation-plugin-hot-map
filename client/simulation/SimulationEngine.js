@@ -11,7 +11,7 @@ const timeToMilliseconds = (value, unit) => {
   if (unit === 'seconds') return value * 1000;
   if (unit === 'minutes') return value * 60 * 1000;
   if (unit === 'hours') return value * 60 * 60 * 1000;
-  return value; // Default to milliseconds
+  return value;
 };
 
 class EventQueue {
@@ -42,9 +42,9 @@ class ResourcePool {
       if (this.available >= waiting.quantity) {
         this.available -= waiting.quantity;
         newTasks.push(waiting.task);
-        return false; // remove from queue
+        return false;
       }
-      return true; // keep in queue
+      return true;
     });
     return newTasks;
   }
@@ -84,8 +84,7 @@ export default class SimulationEngine {
 
     if (is(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
-        const flowResults = this.results.get(flow.id);
-        if (flowResults) flowResults.executionCount++;
+        this.results.get(flow.id).executionCount++;
         return { element: flow.target, connection: flow };
       });
     }
@@ -109,8 +108,7 @@ export default class SimulationEngine {
     }
 
     if (chosenFlow) {
-      const flowResults = this.results.get(chosenFlow.id);
-      if (flowResults) flowResults.executionCount++;
+      this.results.get(chosenFlow.id).executionCount++;
       return [{ element: chosenFlow.target, connection: chosenFlow }];
     }
     return [];
@@ -118,13 +116,12 @@ export default class SimulationEngine {
 
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
-    const elementResults = this.results.get(element.id);
-    elementResults.executionCount++;
+    this.results.get(element.id).executionCount++;
     this.clock = event.time;
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
-      elementResults.totalCycleTime += (this.clock - startTime);
+      this.results.get(element.id).totalCycleTime += (this.clock - startTime);
       this.instanceStates.delete(instanceId);
       return;
     }
@@ -142,9 +139,7 @@ export default class SimulationEngine {
       if (is(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
-
         gatewayState.arrived.add(nextConnection.id);
-
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
@@ -160,11 +155,13 @@ export default class SimulationEngine {
     const { element, time, instanceId, startTime } = taskEvent;
     const data = getSimulationData(element);
     let processingTime = 0;
-    if (data.processingTime.distribution === 'fixed') {
-      processingTime = timeToMilliseconds(data.processingTime.value, data.processingTime.unit);
-    } else if (data.processingTime.distribution === 'triangular') {
-      const randomValue = triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max);
-      processingTime = timeToMilliseconds(randomValue, data.processingTime.unit);
+    if (data.processingTime) {
+      if (data.processingTime.distribution === 'fixed') {
+        processingTime = timeToMilliseconds(data.processingTime.value, data.processingTime.unit);
+      } else if (data.processingTime.distribution === 'triangular') {
+        const randomValue = triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max);
+        processingTime = timeToMilliseconds(randomValue, data.processingTime.unit);
+      }
     }
     if (data.failureRate && Math.random() < data.failureRate) {
       const reworkTime = data.reworkTime ? timeToMilliseconds(data.reworkTime.value, data.reworkTime.unit) : 0;
@@ -172,7 +169,6 @@ export default class SimulationEngine {
       this.results.get(element.id).failureCount++;
     }
     const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
-
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
     const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost, quantityRequired };
 
@@ -192,7 +188,7 @@ export default class SimulationEngine {
     this.initialize();
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const configData = getSimulationData(processRoot);
-    const { runValue } = configData ? configData.simulationConfig : { runValue: 100 };
+    const runValue = (configData && configData.simulationConfig && configData.simulationConfig.runValue) || 100;
     if (configData && configData.resourcePools) {
       configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
@@ -200,36 +196,32 @@ export default class SimulationEngine {
     if (!startEvent) return this.results;
 
     const startEventData = getSimulationData(startEvent);
-    let arrivalInterval = 1000; // Default to 1 second if not specified
+    let arrivalInterval = 1000;
     if (startEventData && startEventData.arrivalRate) {
       const rate = startEventData.arrivalRate.value;
-      const unit = startEventData.arrivalRate.unit; // per second, minute, or hour
+      const unit = startEventData.arrivalRate.unit;
       if (rate > 0) {
-        let intervalInSeconds;
-        if (unit === 'second') {
-          intervalInSeconds = 1 / rate;
-        } else if (unit === 'minute') {
-          intervalInSeconds = 60 / rate;
-        } else { // hour
-          intervalInSeconds = 3600 / rate;
-        }
+        const intervalInSeconds = unit === 'minute' ? 60 / rate : (unit === 'hour' ? 3600 / rate : 1 / rate);
         arrivalInterval = intervalInSeconds * 1000;
       }
     }
 
-    this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
-    this.instanceStates.set(1, { gateways: {} });
-    let instanceCounter = 1;
+    for (let i = 0; i < runValue; i++) {
+        const arrivalTime = i * arrivalInterval;
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: arrivalTime, instanceId: i + 1, startTime: arrivalTime });
+        this.instanceStates.set(i + 1, { gateways: {} });
+    }
 
     while (!this.eventQueue.isEmpty()) {
       const event = this.eventQueue.next();
       this.clock = event.time;
 
       if (event.type === 'TASK_COMPLETE') {
-        const results = this.results.get(event.element.id);
-        results.totalProcessingTime += event.processingTime;
-        results.totalCost += event.cost;
-        if (event.waitStart) results.totalWaitTime += (this.clock - event.waitStart);
+        this.results.get(event.element.id).totalProcessingTime += event.processingTime;
+        this.results.get(event.element.id).totalCost += event.cost;
+        if (event.waitStart) {
+          this.results.get(event.element.id).totalWaitTime += (this.clock - event.waitStart);
+        }
 
         const data = getSimulationData(event.element);
         if (data && data.resources) {
@@ -246,17 +238,9 @@ export default class SimulationEngine {
       } else {
         this.processEvent(event);
       }
-
-      if (this.completedInstances >= runValue) break;
-      if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
-        instanceCounter++;
-        const nextArrivalTime = event.time + arrivalInterval;
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
-        this.instanceStates.set(instanceCounter, { gateways: {} });
-      }
     }
 
-    console.log("--- Simulation Finished ---");
+    console.log("--- Full Simulation Finished ---");
     console.table(Object.fromEntries(this.results));
     return this.results;
   }

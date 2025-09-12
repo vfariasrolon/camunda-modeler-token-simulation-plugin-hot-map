@@ -25,6 +25,13 @@ export const getSimulationData = (element) => {
   }
 };
 
+export const timeToMilliseconds = (value, unit) => {
+  if (unit === 'seconds') return value * 1000;
+  if (unit === 'minutes') return value * 60 * 1000;
+  if (unit === 'hours') return value * 60 * 60 * 1000;
+  return value;
+};
+
 export const formatMilliseconds = (ms) => {
   if (ms === 0) return '0s';
   const seconds = ms / 1000;
