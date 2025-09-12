@@ -39,11 +39,5 @@ module.exports = function (electronApp, menuState) {
     action: function () {
       electronApp.emit('menu:action', 'generateRandomSimulationData');
     }
-  }, {
-    label: 'Editar Datos de Simulación',
-    enabled,
-    action: function () {
-      electronApp.emit('menu:action', 'editSimulationData');
-    }
   }];
 };

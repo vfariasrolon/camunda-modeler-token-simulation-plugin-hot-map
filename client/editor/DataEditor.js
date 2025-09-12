@@ -3,8 +3,12 @@ import { getSimulationData } from '../simulation/util';
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import './data-editor.css';
 
+const EditIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <path fill="currentColor" d="M19.4,6.6l-3.9-3.9c-0.4-0.4-1-0.4-1.4,0l-11,11c-0.2,0.2-0.3,0.4-0.3,0.7v3.9c0,0.6,0.4,1,1,1h3.9c0.3,0,0.5-0.1,0.7-0.3l11-11C19.8,7.6,19.8,7,19.4,6.6z M7.5,17.5H5.1v-2.4l7.5-7.5l2.4,2.4L7.5,17.5z"/>
+</svg>`;
+
 export default class DataEditor {
-  constructor(eventBus, modeling, bpmnFactory, elementRegistry, notifications, selection, canvas) {
+  constructor(eventBus, modeling, bpmnFactory, elementRegistry, notifications, selection, canvas, overlays) {
     this._eventBus = eventBus;
     this._modeling = modeling;
     this._bpmnFactory = bpmnFactory;
@@ -12,9 +16,11 @@ export default class DataEditor {
     this._notifications = notifications;
     this._selection = selection;
     this._canvas = canvas;
+    this._overlays = overlays;
 
     this._modal = null;
     this._selectedElement = null;
+    this._currentOverlayId = null;
 
     this._eventBus.on('canvas.init', () => {
       this.init();
@@ -24,8 +30,13 @@ export default class DataEditor {
   init() {
     this.createModal();
 
-    this._eventBus.on('editSimulationData', () => {
-      this.openModal();
+    this._eventBus.on('selection.changed', ({ newSelection }) => {
+      this.removeOverlay();
+      this.closeModal();
+
+      if (newSelection.length === 1) {
+        this.addOverlay(newSelection[0]);
+      }
     });
   }
 
@@ -61,14 +72,8 @@ export default class DataEditor {
     });
   }
 
-  openModal() {
-    const selection = this._selection.get();
-    if (selection.length !== 1) {
-      this._notifications.showNotification({ text: 'Por favor, seleccione un único elemento para editar.', type: 'warning', duration: 4000 });
-      return;
-    }
-    this._selectedElement = selection[0];
-
+  openModal(element) {
+    this._selectedElement = element;
     this.updateModalContent();
     this._modal.classList.remove('hidden');
   }
@@ -76,6 +81,29 @@ export default class DataEditor {
   closeModal() {
     this._modal.classList.add('hidden');
     this._selectedElement = null;
+  }
+
+  addOverlay(element) {
+    const overlayHtml = domify(`<div class="sim-data-editor-overlay">${EditIcon}</div>`);
+
+    domEvent.bind(overlayHtml, 'click', () => {
+      this.openModal(element);
+    });
+
+    this._currentOverlayId = this._overlays.add(element, 'sim-data-editor', {
+      position: {
+        top: -12,
+        right: -12
+      },
+      html: overlayHtml
+    });
+  }
+
+  removeOverlay() {
+    if (this._currentOverlayId) {
+      this._overlays.remove(this._currentOverlayId);
+      this._currentOverlayId = null;
+    }
   }
 
   updateModalContent() {
@@ -326,5 +354,6 @@ DataEditor.$inject = [
   'elementRegistry',
   'notifications',
   'selection',
-  'canvas'
+  'canvas',
+  'overlays'
 ];
