@@ -26,26 +26,31 @@ export default class ChartPanel {
             <option value="cost">Top 5 por Costo</option>
             <option value="processTime">Top 5 por Tiempo de Proceso</option>
             <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
+            <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
             <option value="resourceQuantity">Recursos Asignados por Tarea</option>
             <option value="scatter">Diagrama de Dispersión (Tiempo vs. Costo)</option>
             <option value="pareto">Diagrama de Pareto (Fallos)</option>
-            <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
+            <option value="dataTable">Vista de Tabla de Resultados</option>
           </select>
           <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
           <button class="close" title="Cerrar">×</button>
         </div>
         <div class="content">
-          <canvas id="simulationChartCanvas"></canvas>
+          <div class="chart-content">
+            <canvas id="simulationChartCanvas"></canvas>
+          </div>
+          <div class="table-content" style="display: none"></div>
         </div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos de Simulación</h4>
           <p><strong>Top 5 por Costo:</strong> Muestra las 5 tareas más caras de todo el proceso.</p>
           <p><strong>Top 5 por Tiempo de Proceso:</strong> Muestra las 5 tareas que más tiempo de trabajo activo consumen.</p>
           <p><strong>Top 5 por Tiempo de Espera (Recursos):</strong> Muestra las 5 tareas donde se pierde más tiempo esperando a que un recurso (persona) esté disponible. Indica cuellos de botella de personal.</p>
+          <p><strong>Tiempos de Espera por Tarea (Completo):</strong> Muestra el tiempo total de espera acumulado para cada tarea del proceso, ordenado de mayor a menor. A diferencia de los gráficos "Top 5", esta vista incluye todas las tareas para un análisis exhaustivo de los "tiempos muertos" y cuellos de botella de recursos.</p>
           <p><strong>Recursos Asignados por Tarea:</strong> Muestra cuántas personas (\`quantityRequired\`) están asignadas a cada tarea según la configuración.</p>
           <p><strong>Diagrama de Dispersión (Tiempo vs. Costo):</strong> Cada punto representa un tipo de tarea. El eje X es el tiempo de proceso promedio y el eje Y es el costo total incurrido por todas las ejecuciones de esa tarea. Ayuda a identificar tareas que son a la vez largas (en promedio) y caras (en total).</p>
           <p><strong>Diagrama de Pareto (Fallos):</strong> Muestra las tareas que causan la mayoría de los fallos. Las barras (eje izquierdo) son el número de fallos por tarea, ordenadas de mayor a menor. La línea (eje derecho) es el porcentaje acumulado del total de fallos. Útil para aplicar la regla 80/20 e identificar los "pocos vitales" problemas.</p>
-          <p><strong>Tiempos de Espera por Tarea (Completo):</strong> Muestra el tiempo total de espera acumulado para cada tarea del proceso, ordenado de mayor a menor. A diferencia de los gráficos "Top 5", esta vista incluye todas las tareas para un análisis exhaustivo de los "tiempos muertos" y cuellos de botella de recursos.</p>
+          <p><strong>Vista de Tabla de Resultados:</strong> Muestra una tabla con los resultados detallados de la simulación para cada elemento del diagrama, similar a la que aparece en la consola.</p>
         </div>
       </div>
     `);
@@ -57,12 +62,14 @@ export default class ChartPanel {
     this.helpContent = this._container.querySelector('.help-content');
     this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
+    this.chartContent = this._container.querySelector('.chart-content');
+    this.tableContent = this._container.querySelector('.table-content');
     this.canvas = this._container.querySelector('#simulationChartCanvas');
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
     domEvent.bind(this.helpButton, 'click', () => this.toggleHelp());
     domEvent.bind(this.chartSelect, 'change', (e) => {
-        this._eventBus.fire('simulation.charts.opened');
+        this._eventBus.fire('simulation.charts.typeChanged');
     });
 
     this._eventBus.on('diagram.destroy', () => this.hide());
@@ -76,6 +83,20 @@ export default class ChartPanel {
     return this.canvas;
   }
 
+  getTableContainer() {
+    return this.tableContent;
+  }
+
+  showCanvas() {
+    this.chartContent.style.display = 'block';
+    this.tableContent.style.display = 'none';
+  }
+
+  showTable() {
+    this.chartContent.style.display = 'none';
+    this.tableContent.style.display = 'block';
+  }
+
   isOpen() {
     return domClasses(this._container).has(PALETTE_OPEN_CLS);
   }
@@ -85,7 +106,7 @@ export default class ChartPanel {
 
     if (shouldOpen) {
       domClasses(this._container).add(PALETTE_OPEN_CLS);
-      this._eventBus.fire('simulation.charts.opened');
+      this._eventBus.fire('simulation.charts.typeChanged');
     } else {
       domClasses(this._container).remove(PALETTE_OPEN_CLS);
       this._eventBus.fire('simulation.charts.closed');

@@ -199,12 +199,67 @@ export default class SimulationController {
 
     if (this._chart) {
       this._chart.destroy();
+      this._chart = null;
     }
 
-    const chartConfig = this.getChartConfig(metric);
+    if (metric === 'dataTable') {
+      this._chartPanel.showTable();
+      this.renderDataTable();
+    } else {
+      this._chartPanel.showCanvas();
+      const chartConfig = this.getChartConfig(metric);
+      const ctx = this._chartPanel.getCanvas().getContext('2d');
+      this._chart = new Chart(ctx, chartConfig);
+    }
+  }
 
-    const ctx = this._chartPanel.getCanvas().getContext('2d');
-    this._chart = new Chart(ctx, chartConfig);
+  renderDataTable() {
+    const tableContainer = this._chartPanel.getTableContainer();
+    tableContainer.innerHTML = ''; // Clear previous table
+
+    if (!this.simulationResults) return;
+
+    const table = domify('<table></table>');
+    const thead = domify(`
+      <thead>
+        <tr>
+          <th>Elemento</th>
+          <th>Conteo</th>
+          <th>Fallos</th>
+          <th>Costo Total</th>
+          <th>Tiempo Proceso Total</th>
+          <th>Tiempo Espera Total</th>
+          <th>Tiempo Ciclo Total</th>
+        </tr>
+      </thead>
+    `);
+    table.appendChild(thead);
+
+    const tbody = domify('<tbody></tbody>');
+    const sortedResults = [...this.simulationResults.entries()]
+      .filter(([id, result]) => result.executionCount > 0)
+      .sort((a, b) => b[1].executionCount - a[1].executionCount);
+
+    for (const [id, result] of sortedResults) {
+      const element = this._elementRegistry.get(id);
+      if (!element) continue;
+
+      const name = element.businessObject.name || element.id;
+      const row = domify(`
+        <tr>
+          <td>${name}</td>
+          <td>${result.executionCount}</td>
+          <td>${result.failureCount || 0}</td>
+          <td>$${result.totalCost.toFixed(2)}</td>
+          <td>${formatMilliseconds(result.totalProcessingTime)}</td>
+          <td>${formatMilliseconds(result.totalWaitTime)}</td>
+          <td>${formatMilliseconds(result.totalCycleTime)}</td>
+        </tr>
+      `);
+      tbody.appendChild(row);
+    }
+    table.appendChild(tbody);
+    tableContainer.appendChild(table);
   }
 
   getChartConfig(metric) {
@@ -421,6 +476,11 @@ export default class SimulationController {
     if (this._chart) {
       this._chart.destroy();
       this._chart = null;
+    }
+
+    const tableContainer = this._chartPanel.getTableContainer();
+    if (tableContainer) {
+      tableContainer.innerHTML = '';
     }
   }
 
