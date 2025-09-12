@@ -1,25 +1,19 @@
 import { domify, event as domEvent } from 'min-dom';
-import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData } from '../simulation/util';
-import './properties-panel.css';
+import { is } from 'bpmn-js/lib/util/ModelUtil';
+import './data-editor.css';
 
-const EditIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <path fill="currentColor" d="M19.4,6.6l-3.9-3.9c-0.4-0.4-1-0.4-1.4,0l-11,11c-0.2,0.2-0.3,0.4-0.3,0.7v3.9c0,0.6,0.4,1,1,1h3.9c0.3,0,0.5-0.1,0.7-0.3l11-11C19.8,7.6,19.8,7,19.4,6.6z M7.5,17.5H5.1v-2.4l7.5-7.5l2.4,2.4L7.5,17.5z"/>
-</svg>`;
-
-export default class PropertiesPanel {
-  constructor(eventBus, overlays, selection, modeling, bpmnFactory, elementRegistry, canvas, notifications) {
+export default class DataEditor {
+  constructor(eventBus, modeling, bpmnFactory, elementRegistry, notifications, selection, canvas) {
     this._eventBus = eventBus;
-    this._overlays = overlays;
-    this._selection = selection;
     this._modeling = modeling;
     this._bpmnFactory = bpmnFactory;
     this._elementRegistry = elementRegistry;
-    this._canvas = canvas;
     this._notifications = notifications;
+    this._selection = selection;
+    this._canvas = canvas;
 
-    this._currentOverlayId = null;
-    this._panel = null;
+    this._modal = null;
     this._selectedElement = null;
 
     this._eventBus.on('canvas.init', () => {
@@ -28,66 +22,71 @@ export default class PropertiesPanel {
   }
 
   init() {
-    this.createPanel();
+    this.createModal();
 
-    this._eventBus.on('selection.changed', (context) => {
-      this.removeOverlay();
-      this.togglePanel(false); // Hide panel on selection change
-
-      const { newSelection } = context;
-
-      this._selectedElement = newSelection.length === 1 ? newSelection[0] : null;
-
-      if (this._selectedElement) {
-        this.addOverlay(this._selectedElement);
-      }
+    this._eventBus.on('editSimulationData', () => {
+      this.openModal();
     });
   }
 
-  createPanel() {
-    this._panel = domify(`
-      <div class="sim-properties-panel hidden">
-        <div class="sim-properties-panel-header">
-          <span id="properties-panel-title">Simulation Properties</span>
-          <button class="close">×</button>
-        </div>
-        <div class="sim-properties-panel-body"></div>
-        <div class="sim-properties-panel-footer">
-            <button class="save">Guardar</button>
+  createModal() {
+    this._modal = domify(`
+      <div class="sim-data-editor-modal hidden">
+        <div class="sim-data-editor-content">
+          <div class="sim-data-editor-header">
+            <span id="data-editor-title">Editar Propiedades de Simulación</span>
+            <button class="close">×</button>
+          </div>
+          <div class="sim-data-editor-body"></div>
+          <div class="sim-data-editor-footer">
+            <button class="save">Guardar y Cerrar</button>
+          </div>
         </div>
       </div>
     `);
 
-    this._canvas.getContainer().appendChild(this._panel);
+    this._canvas.getContainer().appendChild(this._modal);
 
-    const closeButton = this._panel.querySelector('button.close');
-    domEvent.bind(closeButton, 'click', () => this.togglePanel(false));
+    const closeButton = this._modal.querySelector('button.close');
+    domEvent.bind(closeButton, 'click', () => this.closeModal());
 
-    const saveButton = this._panel.querySelector('button.save');
-    domEvent.bind(saveButton, 'click', () => this.saveProperties());
+    const saveButton = this._modal.querySelector('button.save');
+    domEvent.bind(saveButton, 'click', () => this.save());
+
+    // Close modal on background click
+    domEvent.bind(this._modal, 'click', (e) => {
+      if (e.target === this._modal) {
+        this.closeModal();
+      }
+    });
   }
 
-  togglePanel(open) {
-    if (open === undefined) {
-      this._panel.classList.toggle('hidden');
-    } else if (open) {
-      this._panel.classList.remove('hidden');
-    } else {
-      this._panel.classList.add('hidden');
-    }
-  }
-
-  updatePanelContent() {
-    const body = this._panel.querySelector('.sim-properties-panel-body');
-    const title = this._panel.querySelector('#properties-panel-title');
-    body.innerHTML = '';
-
-    if (!this._selectedElement) {
+  openModal() {
+    const selection = this._selection.get();
+    if (selection.length !== 1) {
+      this._notifications.showNotification({ text: 'Por favor, seleccione un único elemento para editar.', type: 'warning', duration: 4000 });
       return;
     }
+    this._selectedElement = selection[0];
+
+    this.updateModalContent();
+    this._modal.classList.remove('hidden');
+  }
+
+  closeModal() {
+    this._modal.classList.add('hidden');
+    this._selectedElement = null;
+  }
+
+  updateModalContent() {
+    const body = this._modal.querySelector('.sim-data-editor-body');
+    const title = this._modal.querySelector('#data-editor-title');
+    const footer = this._modal.querySelector('.sim-data-editor-footer');
+    body.innerHTML = '';
 
     const data = getSimulationData(this._selectedElement) || {};
     title.textContent = `Propiedades de: ${this._selectedElement.businessObject.name || this._selectedElement.id}`;
+    footer.classList.remove('hidden');
 
     if (is(this._selectedElement, 'bpmn:Task')) {
       this.renderTaskForm(body, data);
@@ -99,11 +98,7 @@ export default class PropertiesPanel {
       this.renderProcessForm(body, data);
     } else {
       body.innerHTML = '<p>Propiedades de simulación no aplicables para este tipo de elemento.</p>';
-      this._panel.querySelector('.sim-properties-panel-footer').classList.add('hidden');
-    }
-
-    if (body.innerHTML) {
-      this._panel.querySelector('.sim-properties-panel-footer').classList.remove('hidden');
+      footer.classList.add('hidden');
     }
   }
 
@@ -182,10 +177,11 @@ export default class PropertiesPanel {
       resourcePools = []
     } = data;
 
-    let poolsHtml = resourcePools.map((pool, index) => `
+    const poolsHtml = resourcePools.map((pool, index) => `
       <div class="resource-pool-row">
         <input type="text" name="resourcePools[${index}].name" value="${pool.name}" placeholder="Nombre del Pool">
         <input type="number" name="resourcePools[${index}].quantity" value="${pool.quantity}" placeholder="Cantidad">
+        <button class="remove-pool" data-index="${index}">-</button>
       </div>
     `).join('');
 
@@ -197,14 +193,46 @@ export default class PropertiesPanel {
       <div class="form-group">
         <label>Piscinas de Recursos (resourcePools)</label>
         <div id="resource-pools-container">${poolsHtml}</div>
+        <button id="add-pool" class="add-button">+</button>
       </div>
     `;
+
+    const poolsContainer = container.querySelector('#resource-pools-container');
+
+    const addPoolButton = container.querySelector('#add-pool');
+    domEvent.bind(addPoolButton, 'click', (e) => {
+      e.preventDefault();
+      const newIndex = poolsContainer.children.length;
+      const newPoolRow = domify(`
+        <div class="resource-pool-row">
+          <input type="text" name="resourcePools[${newIndex}].name" placeholder="Nombre del Pool">
+          <input type="number" name="resourcePools[${newIndex}].quantity" placeholder="Cantidad">
+          <button class="remove-pool" data-index="${newIndex}">-</button>
+        </div>
+      `);
+      poolsContainer.appendChild(newPoolRow);
+      this.bindRemoveButtons(poolsContainer);
+    });
+
+    this.bindRemoveButtons(poolsContainer);
   }
 
-  saveProperties() {
+  bindRemoveButtons(container) {
+      const removeButtons = container.querySelectorAll('.remove-pool');
+      removeButtons.forEach(button => {
+          // Re-binding to avoid duplicate listeners might be needed in more complex scenarios
+          // but for this simple case, a fresh bind on render is okay.
+          domEvent.bind(button, 'click', (e) => {
+              e.preventDefault();
+              e.target.closest('.resource-pool-row').remove();
+          });
+      });
+  }
+
+  save() {
     if (!this._selectedElement) return;
 
-    const body = this._panel.querySelector('.sim-properties-panel-body');
+    const body = this._modal.querySelector('.sim-data-editor-body');
     const existingData = getSimulationData(this._selectedElement) || {};
     let newData = {};
 
@@ -287,41 +315,16 @@ export default class PropertiesPanel {
     });
 
     this._notifications.showNotification({ text: 'Propiedades de simulación guardadas.', type: 'info', duration: 3000 });
-    this.togglePanel(false);
-  }
-
-  addOverlay(element) {
-    const overlayHtml = domify(`<div class="sim-properties-overlay">${EditIcon}</div>`);
-
-    domEvent.bind(overlayHtml, 'click', () => {
-      this.updatePanelContent();
-      this.togglePanel(true);
-    });
-
-    this._currentOverlayId = this._overlays.add(element, 'sim-properties', {
-      position: {
-        top: -12,
-        right: -12
-      },
-      html: overlayHtml
-    });
-  }
-
-  removeOverlay() {
-    if (this._currentOverlayId) {
-      this._overlays.remove(this._currentOverlayId);
-      this._currentOverlayId = null;
-    }
+    this.closeModal();
   }
 }
 
-PropertiesPanel.$inject = [
+DataEditor.$inject = [
   'eventBus',
-  'overlays',
-  'selection',
   'modeling',
   'bpmnFactory',
   'elementRegistry',
-  'canvas',
-  'notifications'
+  'notifications',
+  'selection',
+  'canvas'
 ];

@@ -10,7 +10,7 @@ import TokenSimulationModule from 'bpmn-js-token-simulation';
 import HideModelerElements from './HideModelerElements';
 import TimeTracker from './TimeTracker';
 import SimulationAnalysisModule from './simulation';
-import PropertiesPanelModule from './properties-panel';
+import DataEditorModule from './editor';
 
 const TokenSimulationPluginModule = {
   __init__: [ 'hideModelerElements' ],
@@ -26,4 +26,4 @@ const TimeTrackerPluginModule = {
 registerBpmnJSPlugin(TokenSimulationModule);
 registerBpmnJSPlugin(TimeTrackerPluginModule);
 registerBpmnJSPlugin(SimulationAnalysisModule);
-registerBpmnJSPlugin(PropertiesPanelModule);
+registerBpmnJSPlugin(DataEditorModule);

@@ -1,0 +1,144 @@
+.sim-data-editor-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.sim-data-editor-modal.hidden {
+  display: none;
+}
+
+.sim-data-editor-content {
+  background-color: #f7f7f7;
+  border-radius: 4px;
+  width: 500px;
+  max-width: 90%;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+.sim-data-editor-header {
+  background-color: #f0f0f0;
+  padding: 15px;
+  font-weight: bold;
+  border-bottom: 1px solid #ccc;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+}
+
+.sim-data-editor-header .close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.sim-data-editor-body {
+  padding: 20px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.sim-data-editor-footer {
+  padding: 15px;
+  background-color: #f0f0f0;
+  border-top: 1px solid #ccc;
+  text-align: right;
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.sim-data-editor-footer button.save {
+  background-color: #4CAF50;
+  color: white;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.sim-data-editor-footer button.save:hover {
+  background-color: #45a049;
+}
+
+.sim-data-editor-footer.hidden {
+  display: none;
+}
+
+.form-group {
+  margin-bottom: 15px;
+}
+
+.form-group label {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 5px;
+  font-size: 13px;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
+.resource-pool-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.resource-pool-row input:first-child {
+  flex-grow: 1;
+}
+
+button.add-button,
+button.remove-pool {
+  background-color: #e0e0e0;
+  border: 1px solid #ccc;
+  cursor: pointer;
+  font-weight: bold;
+  border-radius: 4px;
+}
+
+button.add-button {
+  width: 100%;
+  padding: 5px;
+  margin-top: 5px;
+}
+
+button.remove-pool {
+  background-color: #f44336;
+  color: white;
+  border-color: #d32f2f;
+  min-width: 30px;
+}
+
+button.add-button:hover {
+  background-color: #d5d5d5;
+}
+
+button.remove-pool:hover {
+  background-color: #d32f2f;
+}
