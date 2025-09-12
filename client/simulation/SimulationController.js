@@ -199,67 +199,12 @@ export default class SimulationController {
 
     if (this._chart) {
       this._chart.destroy();
-      this._chart = null;
     }
 
-    if (metric === 'dataTable') {
-      this._chartPanel.showTable();
-      this.renderDataTable();
-    } else {
-      this._chartPanel.showCanvas();
-      const chartConfig = this.getChartConfig(metric);
-      const ctx = this._chartPanel.getCanvas().getContext('2d');
-      this._chart = new Chart(ctx, chartConfig);
-    }
-  }
+    const chartConfig = this.getChartConfig(metric);
 
-  renderDataTable() {
-    const tableContainer = this._chartPanel.getTableContainer();
-    tableContainer.innerHTML = ''; // Clear previous table
-
-    if (!this.simulationResults) return;
-
-    const table = domify('<table></table>');
-    const thead = domify(`
-      <thead>
-        <tr>
-          <th>Elemento</th>
-          <th>Conteo</th>
-          <th>Fallos</th>
-          <th>Costo Total</th>
-          <th>Tiempo Proceso Total</th>
-          <th>Tiempo Espera Total</th>
-          <th>Tiempo Ciclo Total</th>
-        </tr>
-      </thead>
-    `);
-    table.appendChild(thead);
-
-    const tbody = domify('<tbody></tbody>');
-    const sortedResults = [...this.simulationResults.entries()]
-      .filter(([id, result]) => result.executionCount > 0)
-      .sort((a, b) => b[1].executionCount - a[1].executionCount);
-
-    for (const [id, result] of sortedResults) {
-      const element = this._elementRegistry.get(id);
-      if (!element) continue;
-
-      const name = element.businessObject.name || element.id;
-      const row = domify(`
-        <tr>
-          <td>${name}</td>
-          <td>${result.executionCount}</td>
-          <td>${result.failureCount || 0}</td>
-          <td>$${result.totalCost.toFixed(2)}</td>
-          <td>${formatMilliseconds(result.totalProcessingTime)}</td>
-          <td>${formatMilliseconds(result.totalWaitTime)}</td>
-          <td>${formatMilliseconds(result.totalCycleTime)}</td>
-        </tr>
-      `);
-      tbody.appendChild(row);
-    }
-    table.appendChild(tbody);
-    tableContainer.appendChild(table);
+    const ctx = this._chartPanel.getCanvas().getContext('2d');
+    this._chart = new Chart(ctx, chartConfig);
   }
 
   getChartConfig(metric) {
@@ -267,7 +212,7 @@ export default class SimulationController {
 
     let chartType = 'bar';
     if (metric === 'scatter') chartType = 'scatter';
-    if (metric === 'pareto' || metric === 'paretoWaitTime') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
+    if (metric === 'pareto') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
 
     const options = {
         scales: {
@@ -290,11 +235,10 @@ export default class SimulationController {
         metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
         metric === 'pareto' ? 'Número de Fallos' :
-        metric === 'paretoWaitTime' ? 'Tiempo de Espera Total (s)' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
-    if (metric === 'pareto' || metric === 'paretoWaitTime') {
+    if (metric === 'pareto') {
         options.scales.y1 = {
             type: 'linear',
             display: true,
@@ -449,44 +393,6 @@ export default class SimulationController {
         };
     }
 
-    if (metric === 'paretoWaitTime') {
-        const waitingTasks = tasks.filter(t => t.totalWaitTime > 0);
-        waitingTasks.sort((a, b) => b.totalWaitTime - a.totalWaitTime);
-
-        const labels = waitingTasks.map(t => t.name);
-        const waitTimeData = waitingTasks.map(t => t.totalWaitTime / 1000); // Show in seconds
-        const totalWaitTime = waitTimeData.reduce((sum, time) => sum + time, 0);
-
-        let cumulative = 0;
-        const cumulativePercentage = waitTimeData.map(time => {
-            cumulative += time;
-            return totalWaitTime > 0 ? (cumulative / totalWaitTime) * 100 : 0;
-        });
-
-        return {
-            labels,
-            datasets: [
-                {
-                    type: 'bar',
-                    label: 'Tiempo de Espera Total (s)',
-                    data: waitTimeData,
-                    backgroundColor: 'rgba(255, 159, 64, 0.2)',
-                    borderColor: 'rgba(255, 159, 64, 1)',
-                    yAxisID: 'y',
-                },
-                {
-                    type: 'line',
-                    label: 'Porcentaje Acumulado',
-                    data: cumulativePercentage,
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                    fill: false,
-                    yAxisID: 'y1',
-                }
-            ]
-        };
-    }
-
     let dataProperty, label;
     if (metric === 'cost') { dataProperty = 'totalCost'; label = 'Costo Total por Tarea'; }
     else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
@@ -515,11 +421,6 @@ export default class SimulationController {
     if (this._chart) {
       this._chart.destroy();
       this._chart = null;
-    }
-
-    const tableContainer = this._chartPanel.getTableContainer();
-    if (tableContainer) {
-      tableContainer.innerHTML = '';
     }
   }
 

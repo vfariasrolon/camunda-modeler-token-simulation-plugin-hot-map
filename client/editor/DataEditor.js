@@ -93,7 +93,7 @@ export default class DataEditor {
     this._currentOverlayId = this._overlays.add(element, 'sim-data-editor', {
       position: {
         top: -12,
-        right: -12
+        left: -12
       },
       html: overlayHtml
     });

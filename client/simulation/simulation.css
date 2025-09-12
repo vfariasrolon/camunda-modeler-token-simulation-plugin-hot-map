@@ -139,37 +139,3 @@
 .simulation-chart-panel .content.hidden {
     display: none;
 }
-
-.simulation-chart-panel .content {
-  height: 300px;
-  overflow: auto;
-}
-
-.simulation-chart-panel .table-content table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.simulation-chart-panel .table-content th,
-.simulation-chart-panel .table-content td {
-  border: 1px solid #ddd;
-  padding: 8px;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.simulation-chart-panel .table-content th {
-  background-color: #f2f2f2;
-  font-weight: bold;
-  position: sticky;
-  top: 0;
-}
-
-.simulation-chart-panel .table-content tr:nth-child(even) {
-  background-color: #f9f9f9;
-}
-
-.simulation-chart-panel .table-content tr:hover {
-  background-color: #f1f1f1;
-}
