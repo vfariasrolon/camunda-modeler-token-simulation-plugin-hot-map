@@ -267,7 +267,7 @@ export default class SimulationController {
 
     let chartType = 'bar';
     if (metric === 'scatter') chartType = 'scatter';
-    if (metric === 'pareto') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
+    if (metric === 'pareto' || metric === 'paretoWaitTime') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
 
     const options = {
         scales: {
@@ -290,10 +290,11 @@ export default class SimulationController {
         metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
         metric === 'pareto' ? 'Número de Fallos' :
+        metric === 'paretoWaitTime' ? 'Tiempo de Espera Total (s)' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
-    if (metric === 'pareto') {
+    if (metric === 'pareto' || metric === 'paretoWaitTime') {
         options.scales.y1 = {
             type: 'linear',
             display: true,
@@ -433,6 +434,44 @@ export default class SimulationController {
                     data: failureData,
                     backgroundColor: 'rgba(255, 99, 132, 0.2)',
                     borderColor: 'rgba(255, 99, 132, 1)',
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'Porcentaje Acumulado',
+                    data: cumulativePercentage,
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    fill: false,
+                    yAxisID: 'y1',
+                }
+            ]
+        };
+    }
+
+    if (metric === 'paretoWaitTime') {
+        const waitingTasks = tasks.filter(t => t.totalWaitTime > 0);
+        waitingTasks.sort((a, b) => b.totalWaitTime - a.totalWaitTime);
+
+        const labels = waitingTasks.map(t => t.name);
+        const waitTimeData = waitingTasks.map(t => t.totalWaitTime / 1000); // Show in seconds
+        const totalWaitTime = waitTimeData.reduce((sum, time) => sum + time, 0);
+
+        let cumulative = 0;
+        const cumulativePercentage = waitTimeData.map(time => {
+            cumulative += time;
+            return totalWaitTime > 0 ? (cumulative / totalWaitTime) * 100 : 0;
+        });
+
+        return {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Tiempo de Espera Total (s)',
+                    data: waitTimeData,
+                    backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                    borderColor: 'rgba(255, 159, 64, 1)',
                     yAxisID: 'y',
                 },
                 {

@@ -30,6 +30,7 @@ export default class ChartPanel {
             <option value="resourceQuantity">Recursos Asignados por Tarea</option>
             <option value="scatter">Diagrama de Dispersión (Tiempo vs. Costo)</option>
             <option value="pareto">Diagrama de Pareto (Fallos)</option>
+            <option value="paretoWaitTime">Diagrama de Pareto (Tiempos de Espera)</option>
             <option value="dataTable">Vista de Tabla de Resultados</option>
           </select>
           <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
@@ -50,6 +51,7 @@ export default class ChartPanel {
           <p><strong>Recursos Asignados por Tarea:</strong> Muestra cuántas personas (\`quantityRequired\`) están asignadas a cada tarea según la configuración.</p>
           <p><strong>Diagrama de Dispersión (Tiempo vs. Costo):</strong> Cada punto representa un tipo de tarea. El eje X es el tiempo de proceso promedio y el eje Y es el costo total incurrido por todas las ejecuciones de esa tarea. Ayuda a identificar tareas que son a la vez largas (en promedio) y caras (en total).</p>
           <p><strong>Diagrama de Pareto (Fallos):</strong> Muestra las tareas que causan la mayoría de los fallos. Las barras (eje izquierdo) son el número de fallos por tarea, ordenadas de mayor a menor. La línea (eje derecho) es el porcentaje acumulado del total de fallos. Útil para aplicar la regla 80/20 e identificar los "pocos vitales" problemas.</p>
+          <p><strong>Diagrama de Pareto (Tiempos de Espera):</strong> Similar al de fallos, pero enfocado en el tiempo perdido. Ayuda a identificar qué pocas tareas son responsables de la mayor parte del tiempo de espera total en el proceso, señalando los cuellos de botella más significativos.</p>
           <p><strong>Vista de Tabla de Resultados:</strong> Muestra una tabla con los resultados detallados de la simulación para cada elemento del diagrama, similar a la que aparece en la consola.</p>
         </div>
       </div>
