@@ -9,11 +9,11 @@
   padding: 5px;
   display: none;
   z-index: 100;
+  flex-direction: column;
 }
 
 .simulation-palette.open {
   display: flex;
-  flex-direction: column;
 }
 
 .simulation-palette .bts-entry {
@@ -99,7 +99,6 @@
   border-bottom: 1px solid #eee;
   padding-bottom: 5px;
   margin-bottom: 10px;
-  font-weight: bold;
 }
 
 .simulation-chart-panel .header .close,
@@ -107,6 +106,7 @@
   background: none;
   border: none;
   cursor: pointer;
+  font-size: 20px;
   padding: 0 5px;
 }
 
@@ -115,13 +115,10 @@
     height: 18px;
 }
 
-.simulation-chart-panel .header .close {
-  font-size: 20px;
-}
-
 .simulation-chart-panel .help-content {
     padding: 10px;
     border-top: 1px solid #eee;
+    font-size: 12px;
 }
 
 .simulation-chart-panel .help-content.hidden,

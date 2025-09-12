@@ -8,43 +8,14 @@ import { getSimulationData, formatMilliseconds } from './util';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 
-const RunIcon = `
-  <span class="bts-icon">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-      <path d="M 4 2 L 4 14 L 14 8 Z" fill="currentColor" />
-    </svg>
-  </span>
-`;
-
-const ShowIcon = `
-  <span class="bts-icon">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -40 80 80">
-      <circle r="39"/>
-      <path fill="#fff" d="M0,38a38,38 0 0 1 0,-76a19,19 0 0 1 0,38a19,19 0 0 0 0,38"/>
-      <circle r="5" cy="19" fill="#fff"/>
-      <circle r="5" cy="-19"/>
-    </svg>
-  </span>
-`;
-
-const ChartIcon = `
-  <span class="bts-icon">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-      <path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z" />
-    </svg>
-  </span>
-`;
-
-const DataIcon = `
-  <span class="bts-icon">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-      <path d="M9,5V9H21V5M9,19H21V15H9M9,14H21V10H9M4,9H8V5H4M4,19H8V15H4M4,14H8V10H4V14Z" />
-    </svg>
-  </span>
-`;
+const RunIcon = `<path d="M 4 2 L 4 14 L 14 8 Z" fill="currentColor" />`;
+const ShowIcon = `<path d="M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z" />`;
+const ChartIcon = `<path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z" />`;
+const DataIcon = `<path d="M9,5V9H21V5M9,19H21V15H9M9,14H21V10H9M4,9H8V5H4M4,19H8V15H4M4,14H8V10H4V14Z" />`;
 
 export default class SimulationController {
-  constructor(eventBus, simulationEngine, tokenSimulationPalette, notifications, simulationPalette, elementRegistry, chartPanel, dataPanel) {
+  constructor(canvas, eventBus, simulationEngine, tokenSimulationPalette, notifications, simulationPalette, elementRegistry, chartPanel, dataPanel) {
+    this._canvas = canvas;
     this._eventBus = eventBus;
     this._simulationEngine = simulationEngine;
     this._tokenSimulationPalette = tokenSimulationPalette;
@@ -53,23 +24,25 @@ export default class SimulationController {
     this._elementRegistry = elementRegistry;
     this._chartPanel = chartPanel;
     this._dataPanel = dataPanel;
-    this._overlays = null;
+    this._overlays = canvas.get('overlays');
+
     this._heatmap = null;
     this._chart = null;
     this.simulationResults = null;
     this.lastMetric = null;
 
-    this._eventBus.on('canvas.init', ({ canvas }) => {
-      this._overlays = canvas.get('overlays');
+    this._eventBus.on('canvas.init', () => {
       this.init();
     });
   }
 
   init() {
-    const runButton = domify(`<div class="bts-entry" title="Ejecutar Simulación">${RunIcon}</div>`);
-    const showButton = domify(`<div class="bts-entry" title="Mostrar Análisis">${ShowIcon}</div>`);
-    const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos">${ChartIcon}</div>`);
-    const dataButton = domify(`<div class="bts-entry" title="Mostrar Datos">${DataIcon}</div>`);
+    const createButton = (title, path) => domify(`<div class="bts-entry" title="${title}"><span class="bts-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${path}</svg></span></div>`);
+
+    const runButton = createButton('Ejecutar Simulación', RunIcon);
+    const showButton = createButton('Mostrar Análisis de Simulación', ShowIcon);
+    const chartButton = createButton('Mostrar Gráficos', ChartIcon);
+    const dataButton = createButton('Mostrar Datos', DataIcon);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
@@ -217,7 +190,7 @@ export default class SimulationController {
       tasks.sort((a, b) => b.failureCount - a.failureCount);
       const totalFailures = tasks.reduce((sum, t) => sum + t.failureCount, 0);
       let cumulative = 0;
-      const cumulativePercentage = tasks.map(t => (cumulative += t.failureCount) / totalFailures * 100);
+      const cumulativePercentage = tasks.map(t => totalFailures > 0 ? (cumulative += t.failureCount) / totalFailures * 100 : 0);
       return {
         labels: tasks.map(t => t.name),
         datasets: [
@@ -260,19 +233,19 @@ export default class SimulationController {
     if (this._overlays) {
       this._overlays.remove({ type: 'simulation-overlay' });
     }
-    const canvasContainer = this._elementRegistry.get('canvas').getContainer();
+    const canvasContainer = this._canvas.getContainer();
     domClasses(canvasContainer).remove('heatmap-shown');
   }
 
   createHeatmap() {
     if (this._heatmap) return;
-    const canvas = this._elementRegistry.get('canvas');
-    this._heatmap = new SimpleHeatSVG(canvas);
-    domClasses(canvas.getContainer()).add('heatmap-shown');
+    this._heatmap = new SimpleHeatSVG(this._canvas);
+    domClasses(this._canvas.getContainer()).add('heatmap-shown');
   }
 }
 
 SimulationController.$inject = [
+  'canvas',
   'eventBus',
   'simulationEngine',
   'tokenSimulationPalette',

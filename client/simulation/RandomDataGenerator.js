@@ -33,11 +33,10 @@ const generateRealisticTimeObject = (distribution = 'fixed') => {
 };
 
 export default class RandomDataGenerator {
-  constructor(elementRegistry, modeling, bpmnFactory, editorActions, canvas) {
+  constructor(elementRegistry, modeling, bpmnFactory, editorActions) {
     this._elementRegistry = elementRegistry;
     this._modeling = modeling;
     this._bpmnFactory = bpmnFactory;
-    this._canvas = canvas;
 
     editorActions.register({
       generateRandomSimulationData: () => this.generate()
@@ -45,8 +44,6 @@ export default class RandomDataGenerator {
   }
 
   generate() {
-    console.log("--- INICIANDO GENERADOR DE DATOS (AVANZADO) ---");
-
     const allElements = this._elementRegistry.getAll();
     const processRoot = allElements.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
 
@@ -54,7 +51,7 @@ export default class RandomDataGenerator {
       const simulationConfig = {
         simulationConfig: { runValue: 1000 },
         resourcePools: [
-          { name: "Analistas", quantity: random(2, 5) },
+          { name: "Analistas", quantity: random(1, 3) },
           { name: "Gerentes", quantity: random(1, 2) }
         ]
       };
@@ -62,22 +59,20 @@ export default class RandomDataGenerator {
     }
 
     allElements.forEach(element => {
-      let data = null;
+      let data = {};
 
-      if (is(element, 'bpmn:StartEvent')) {
-        data = { arrivalRate: { distribution: "fixed", unit: 'minutes', value: random(5, 20) } };
-      } else if (is(element, 'bpmn:Task')) {
+      if (is(element, 'bpmn:Task')) {
         data = {
           processingTime: generateRealisticTimeObject('triangular'),
-          resources: { pool: "Analistas", quantityRequired: random(1, 2) },
+          resources: { pool: "Analistas", quantityRequired: 1 },
           cost: { value: random(10, 100), currency: "USD" },
-          failureRate: parseFloat((Math.random() * 0.2).toFixed(2)),
+          failureRate: parseFloat((Math.random() * 0.1).toFixed(2)),
           reworkTime: generateRealisticTimeObject('fixed')
         };
       } else if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
         let remainingProbability = 1.0;
         element.outgoing.forEach((flow, index) => {
-            let probability;
+            let probability = 0;
             if (index === element.outgoing.length - 1) {
               probability = remainingProbability;
             } else {
@@ -88,11 +83,10 @@ export default class RandomDataGenerator {
         });
       }
 
-      if (data) {
+      if (Object.keys(data).length > 0) {
         this.setSimulationData(element, data);
       }
     });
-    console.log("--- GENERADOR DE DATOS FINALIZADO ---");
   }
 
   setSimulationData(element, existingData = {}) {
@@ -127,6 +121,5 @@ RandomDataGenerator.$inject = [
   'elementRegistry',
   'modeling',
   'bpmnFactory',
-  'editorActions',
-  'canvas'
+  'editorActions'
 ];

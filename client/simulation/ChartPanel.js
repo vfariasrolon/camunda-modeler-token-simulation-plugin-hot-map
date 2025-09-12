@@ -73,7 +73,7 @@ export default class ChartPanel {
   }
 
   isOpen() {
-    return domClasses(this._container).has(PALETTE_OPEN_CLS);
+    return this._container && domClasses(this._container).has(PALETTE_OPEN_CLS);
   }
 
   toggle(open) {

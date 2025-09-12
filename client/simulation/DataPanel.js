@@ -85,7 +85,7 @@ export default class DataPanel {
     const list = domify('<ul></ul>');
     this._elementRegistry.forEach(element => {
       const data = getSimulationData(element);
-      if (data) {
+      if (data && Object.keys(data).length > 0) {
         const name = element.businessObject.name || element.id;
         const dataString = JSON.stringify(data, null, 2);
         const listItem = domify(`<li><strong>${name}</strong><pre>${dataString}</pre></li>`);
@@ -127,8 +127,8 @@ export default class DataPanel {
     return this._container && domClasses(this._container).has(PALETTE_OPEN_CLS);
   }
 
-  toggle(open) {
-    const shouldOpen = (open !== undefined) ? open : !this.isOpen();
+  toggle() {
+    const shouldOpen = !this.isOpen();
     if (shouldOpen) {
       this.showTab('input');
       domClasses(this._container).add(PALETTE_OPEN_CLS);

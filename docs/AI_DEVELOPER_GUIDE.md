@@ -59,12 +59,7 @@ Usa los servicios `modeling` y `bpmnFactory` para crear y actualizar las propied
 { "branchingProbability": 0.75 }
 ```
 
-**C. Para un Evento de Inicio:**
-```json
-{ "arrivalRate": { "distribution": "...", "unit": "...", "value": 0 } }
-```
-
-**D. Para el Proceso o un Participante:**
+**C. Para el Proceso o un Participante:**
 ```json
 {
   "simulationConfig": { "runValue": 1000 },

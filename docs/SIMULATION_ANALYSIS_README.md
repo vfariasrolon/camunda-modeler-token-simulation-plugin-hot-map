@@ -21,7 +21,7 @@ Para ejecutar una simulación, primero necesitas datos. La forma más sencilla e
 Una vez completada la simulación, puedes analizar los resultados de varias maneras:
 
 1.  **Análisis Visual (Heatmaps):**
-    -   Haz clic en el botón con el icono de **yin-yang** para abrir la paleta de análisis.
+    -   Haz clic en el botón con el icono de **ojo** para abrir la paleta de análisis.
     -   Selecciona una métrica (ej. Frecuencia, Costo, Tiempo de Espera) para visualizarla como un mapa de calor sobre el diagrama.
 
 2.  **Análisis Gráfico (Panel de Gráficos):**
