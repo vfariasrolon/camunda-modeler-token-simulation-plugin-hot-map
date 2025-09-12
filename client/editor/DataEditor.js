@@ -72,7 +72,8 @@ export default class DataEditor {
     });
   }
 
-  openModal(element) {
+  async openModal(element) {
+    await this._ensureRootData();
     this._selectedElement = element;
     this.updateModalContent();
     this._modal.classList.remove('hidden');
@@ -257,7 +258,7 @@ export default class DataEditor {
       });
   }
 
-  save() {
+  async save() {
     if (!this._selectedElement) return;
 
     const body = this._modal.querySelector('.sim-data-editor-body');
@@ -265,33 +266,37 @@ export default class DataEditor {
     let newData = {};
 
     if (is(this._selectedElement, 'bpmn:Task')) {
+      const poolName = body.querySelector('[name="resources.pool"]').value;
+      if (poolName) {
+        await this._ensureResourcePoolExists(poolName);
+      }
       newData = {
         processingTime: {
-          value: parseFloat(body.querySelector('[name="processingTime.value"]').value),
+          value: parseFloat(body.querySelector('[name="processingTime.value"]').value || 0),
           unit: body.querySelector('[name="processingTime.unit"]').value
         },
         cost: {
-          value: parseFloat(body.querySelector('[name="cost.value"]').value),
-          currency: body.querySelector('[name="cost.currency"]').value
+          value: parseFloat(body.querySelector('[name="cost.value"]').value || 0),
+          currency: body.querySelector('[name="cost.currency"]').value || 'USD'
         },
         resources: {
-          pool: body.querySelector('[name="resources.pool"]').value,
-          quantityRequired: parseInt(body.querySelector('[name="resources.quantityRequired"]').value, 10)
+          pool: poolName,
+          quantityRequired: parseInt(body.querySelector('[name="resources.quantityRequired"]').value || 1, 10)
         },
-        failureRate: parseFloat(body.querySelector('[name="failureRate"]').value),
+        failureRate: parseFloat(body.querySelector('[name="failureRate"]').value || 0),
         reworkTime: {
-          value: parseFloat(body.querySelector('[name="reworkTime.value"]').value),
+          value: parseFloat(body.querySelector('[name="reworkTime.value"]').value || 0),
           unit: body.querySelector('[name="reworkTime.unit"]').value
         }
       };
     } else if (is(this._selectedElement, 'bpmn:SequenceFlow')) {
       newData = {
-        branchingProbability: parseFloat(body.querySelector('[name="branchingProbability"]').value)
+        branchingProbability: parseFloat(body.querySelector('[name="branchingProbability"]').value || 0.5)
       };
     } else if (is(this._selectedElement, 'bpmn:StartEvent')) {
       newData = {
         arrivalRate: {
-          value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value),
+          value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value || 1),
           unit: body.querySelector('[name="arrivalRate.unit"]').value
         }
       };
@@ -301,13 +306,13 @@ export default class DataEditor {
       poolRows.forEach(row => {
         const name = row.querySelector('input[name*="name"]').value;
         const quantity = parseInt(row.querySelector('input[name*="quantity"]').value, 10);
-        if (name && quantity) {
+        if (name && quantity > 0) {
           resourcePools.push({ name, quantity });
         }
       });
       newData = {
         simulationConfig: {
-          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
+          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value || 1000, 10)
         },
         resourcePools
       };
@@ -315,10 +320,48 @@ export default class DataEditor {
       return;
     }
 
-    const finalData = { ...existingData, ...newData };
+    await this._saveData(this._selectedElement, newData, existingData);
+    this._notifications.showNotification({ text: 'Propiedades de simulación guardadas.', type: 'info', duration: 3000 });
+    this.closeModal();
+  }
+
+  _getRootElement() {
+    const root = this._canvas.getRootElement();
+    return is(root, 'bpmn:Collaboration')
+      ? this._elementRegistry.find(el => is(el, 'bpmn:Participant'))
+      : root;
+  }
+
+  async _ensureRootData() {
+    const rootElement = this._getRootElement();
+    if (rootElement && !getSimulationData(rootElement)) {
+      const defaultRootData = {
+        simulationConfig: { runValue: 1000 },
+        resourcePools: []
+      };
+      await this._saveData(rootElement, defaultRootData);
+    }
+  }
+
+  async _ensureResourcePoolExists(poolName) {
+    const rootElement = this._getRootElement();
+    if (!rootElement) return;
+
+    const rootData = getSimulationData(rootElement) || { resourcePools: [] };
+    const poolExists = rootData.resourcePools.some(p => p.name === poolName);
+
+    if (!poolExists) {
+      rootData.resourcePools.push({ name: poolName, quantity: 1 });
+      await this._saveData(rootElement, rootData);
+    }
+  }
+
+  _saveData(element, newData, existingData = null) {
+    const currentData = existingData || getSimulationData(element) || {};
+    const finalData = { ...currentData, ...newData };
     const simulationDataString = JSON.stringify(finalData, null, 2);
 
-    const businessObject = this._selectedElement.businessObject;
+    const businessObject = element.businessObject;
     let extensionElements = businessObject.get('extensionElements');
     if (!extensionElements) {
       extensionElements = this._bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
@@ -338,12 +381,10 @@ export default class DataEditor {
 
     simProperty.value = simulationDataString;
 
-    this._modeling.updateProperties(this._selectedElement, {
+    // This is an async operation in some contexts, but we can treat it as sync here.
+    this._modeling.updateProperties(element, {
       extensionElements: extensionElements
     });
-
-    this._notifications.showNotification({ text: 'Propiedades de simulación guardadas.', type: 'info', duration: 3000 });
-    this.closeModal();
   }
 }
 
