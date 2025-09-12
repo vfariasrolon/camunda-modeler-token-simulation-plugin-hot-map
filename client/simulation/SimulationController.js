@@ -14,7 +14,7 @@ const ChartIcon = `<path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z" 
 const DataIcon = `<path d="M9,5V9H21V5M9,19H21V15H9M9,14H21V10H9M4,9H8V5H4M4,19H8V15H4M4,14H8V10H4V14Z" />`;
 
 export default class SimulationController {
-  constructor(canvas, eventBus, simulationEngine, tokenSimulationPalette, notifications, simulationPalette, elementRegistry, chartPanel, dataPanel) {
+  constructor(canvas, eventBus, simulationEngine, tokenSimulationPalette, notifications, simulationPalette, elementRegistry, chartPanel, dataPanel, overlays) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._simulationEngine = simulationEngine;
@@ -24,7 +24,7 @@ export default class SimulationController {
     this._elementRegistry = elementRegistry;
     this._chartPanel = chartPanel;
     this._dataPanel = dataPanel;
-    this._overlays = canvas.get('overlays');
+    this._overlays = overlays;
 
     this._heatmap = null;
     this._chart = null;
@@ -253,5 +253,6 @@ SimulationController.$inject = [
   'simulationPalette',
   'elementRegistry',
   'chartPanel',
-  'dataPanel'
+  'dataPanel',
+  'overlays'
 ];
