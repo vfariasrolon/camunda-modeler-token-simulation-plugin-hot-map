@@ -8,6 +8,9 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, formatMilliseconds } from './util';
 
+// Re-add ClockIcon if it's used for other metrics
+const ClockIcon = '<path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,7V12H17V14H10V7H12Z" />';
+
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
   <span class="bts-icon">
@@ -52,7 +55,7 @@ export default class SimulationController {
     this._chart = null;
     this._radius = 20;
     this._blur = 10;
-    this.simulationResults = null;
+    this.simulationOutput = null;
     this.lastMetric = null;
 
     this._eventBus.on('canvas.init', () => {
@@ -84,7 +87,7 @@ export default class SimulationController {
 
   runSimulation() {
     this.clear();
-    this.simulationResults = this._simulationEngine.run();
+    this.simulationOutput = this._simulationEngine.run();
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
   }
 
@@ -110,24 +113,23 @@ export default class SimulationController {
         }
       });
     } else {
-      if (!this.simulationResults) {
+      if (!this.simulationOutput || !this.simulationOutput.resultsPerElement) {
           this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
           return;
       }
-      this.simulationResults.forEach((result, elementId) => {
+      this.simulationOutput.resultsPerElement.forEach((result, elementId) => {
           const element = this._elementRegistry.get(elementId);
           if (!element || !is(element, 'bpmn:FlowNode')) return;
 
           let value = 0;
           if (metric === 'frequency') value = result.executionCount;
           else if (metric === 'cost') value = result.totalCost;
-          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000; // Average
-          else if (metric === 'totalWaitTime') value = result.totalWaitTime / 1000; // Total
-          else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
-          else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1);
+          else if (metric === 'totalWaitTime') value = result.totalWaitTime;
+          else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1);
+          else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1);
           else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
-          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1) / 1000;
-          else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
+          else if (metric === 'totalIdleTime') value = result.totalIdleTime;
 
           if (value > max) max = value;
           if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
@@ -142,12 +144,12 @@ export default class SimulationController {
   showOverlays(metric) {
     const elements = metric === 'resourceQuantity'
       ? this._elementRegistry.filter(el => is(el, 'bpmn:Task'))
-      : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
+      : this.simulationOutput && this.simulationOutput.resultsPerElement ? Array.from(this.simulationOutput.resultsPerElement.keys()).map(id => this._elementRegistry.get(id)) : [];
 
     elements.forEach(element => {
         if (!element) return;
         let overlayText = '';
-        const result = this.simulationResults ? this.simulationResults.get(element.id) : null;
+        const result = this.simulationOutput ? this.simulationOutput.resultsPerElement.get(element.id) : null;
 
         if (metric === 'resourceQuantity') {
             const data = getSimulationData(element);
@@ -164,12 +166,7 @@ export default class SimulationController {
                     const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
                     overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
                 }
-                else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
-                  overlayText = `E.Carro: ${formatMilliseconds(result.totalTransportWaitTime / (result.executionCount || 1))}`;
-                }
-                else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
-                  overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
-                }
+                else if (metric === 'totalIdleTime') overlayText = `Tiempo Ocioso: ${formatMilliseconds(result.totalIdleTime)}`;
             } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${formatMilliseconds(result.totalCycleTime / (result.executionCount || 1))}`;
             }
@@ -179,7 +176,7 @@ export default class SimulationController {
 
         if (result && is(element, 'bpmn:ExclusiveGateway')) {
             element.outgoing.forEach(flow => {
-                const flowResult = this.simulationResults.get(flow.id);
+                const flowResult = this.simulationOutput.resultsPerElement.get(flow.id);
                 if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
                     const percentage = (flowResult.executionCount / result.executionCount * 100).toFixed(1);
                     this._overlays.add(flow.id, 'simulation-overlay', { position: { top: -15, left: -20 }, html: `<div class="simulation-overlay-text">${flowResult.executionCount} (${percentage}%)</div>` });
@@ -190,6 +187,7 @@ export default class SimulationController {
   }
 
   showChart() {
+    this._chartPanel.setSummary('');
     const metric = this._chartPanel.getChartType();
 
     if (metric === 'inputParams') {
@@ -200,19 +198,19 @@ export default class SimulationController {
     }
 
     if (metric === 'resultsTable') {
-      if (!this.simulationResults) {
+      if (!this.simulationOutput || !this.simulationOutput.resultsPerElement) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
         return;
       }
-      const tableHtml = this.createResultsTable(this.simulationResults);
+      const tableHtml = this.createResultsTable(this.simulationOutput.resultsPerElement);
       this._chartPanel.showHtmlContent(tableHtml);
       return;
     }
 
     this._chartPanel.showCanvas(); // Ensure canvas is visible for charts
 
-    if (!this.simulationResults && metric !== 'resourceQuantity') {
+    if (!this.simulationOutput && metric !== 'resourceQuantity') {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         return;
     }
@@ -223,23 +221,33 @@ export default class SimulationController {
 
     const chartConfig = this.getChartConfig(metric);
 
-    const ctx = this._chartPanel.getCanvas().getContext('2d');
-    this._chart = new Chart(ctx, chartConfig);
+    if (chartConfig) {
+      const ctx = this._chartPanel.getCanvas().getContext('2d');
+      this._chart = new Chart(ctx, chartConfig);
+    }
   }
 
   getChartConfig(metric) {
     const chartData = this.getChartData(metric);
 
+    if (!chartData) {
+      return;
+    }
+
     let chartType = 'bar';
     if (metric === 'scatter') chartType = 'scatter';
+    if (metric === 'productionFlow') chartType = 'line';
     if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
 
     const options = {
         scales: {
+            x: {
+              display: true,
+              title: {
+                display: true
+              }
+            },
             y: {
-                type: 'linear',
-                display: true,
-                position: 'left',
                 beginAtZero: true,
                 title: {
                     display: true,
@@ -251,12 +259,13 @@ export default class SimulationController {
 
     const yAxisTitle =
         metric === 'cost' ? 'Costo Total ($)' :
-        metric === 'processTime' ? 'Tiempo de Proceso Total (s)' :
-        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
+        metric === 'processTime' ? 'Tiempo de Proceso Total (ms)' :
+        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (ms)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
         metric === 'pareto' ? 'Número de Fallos' :
         metric === 'paretoTime' ? 'Tiempo de Proceso Total' :
         metric === 'paretoCost' ? 'Costo Total ($)' :
+        metric === 'totalIdleTime' ? 'Tiempo Inactivo Total' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -283,7 +292,7 @@ export default class SimulationController {
             position: 'bottom',
             title: {
                 display: true,
-                text: 'Tiempo de Proceso Promedio (s)'
+                text: 'Tiempo de Proceso Promedio (ms)'
             }
         };
         options.scales.y.title = {
@@ -292,17 +301,45 @@ export default class SimulationController {
         };
     }
 
+    if (metric === 'productionFlow') {
+      options.scales.x = {
+        type: 'linear',
+        position: 'bottom',
+        title: {
+            display: true,
+            text: 'Tiempo de Simulación'
+        },
+        ticks: {
+            callback: function(value) {
+                return formatMilliseconds(value);
+            }
+        }
+      };
+      options.scales.y = {
+        beginAtZero: true,
+        title: {
+          display: true,
+          text: 'Unidades Completadas'
+        },
+        ticks: {
+            stepSize: 1
+        }
+      };
+    }
+
     // For pareto, datasets are pre-built. For others, build them now.
     const datasets = chartData.datasets ? chartData.datasets : [{
         label: chartData.label,
         data: chartData.data,
-        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-        borderColor: 'rgba(75, 192, 192, 1)',
-        borderWidth: 1
+        backgroundColor: metric === 'productionFlow' ? 'rgba(153, 102, 255, 0.2)' : 'rgba(75, 192, 192, 0.2)',
+        borderColor: metric === 'productionFlow' ? 'rgba(153, 102, 255, 1)' : 'rgba(75, 192, 192, 1)',
+        borderWidth: 1,
+        stepped: metric === 'productionFlow' ? 'before' : false,
+        fill: metric === 'productionFlow'
     }];
 
-    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes'];
-    if (timeMetrics.includes(metric) || metric === 'paretoTime') {
+    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes', 'paretoTime', 'totalIdleTime', 'cycleTime'];
+    if (timeMetrics.includes(metric)) {
         options.plugins = {
             tooltip: {
                 callbacks: {
@@ -323,6 +360,23 @@ export default class SimulationController {
                 }
             }
         };
+    }
+
+    if (metric === 'productionFlow') {
+      options.plugins = {
+        tooltip: {
+          callbacks: {
+            title: function() {
+              return 'Flujo de Producción';
+            },
+            label: function(context) {
+              const label = `Tiempo: ${formatMilliseconds(context.parsed.x)}`;
+              const value = `Unidades: ${context.parsed.y}`;
+              return [label, value];
+            }
+          }
+        }
+      };
     }
 
     if (metric === 'paretoCost') {
@@ -354,7 +408,7 @@ export default class SimulationController {
                 callbacks: {
                     label: function(context) {
                         const label = context.dataset.label || '';
-                        const time = formatMilliseconds(context.parsed.x * 1000); // convert seconds back to ms for formatting
+                        const time = formatMilliseconds(context.parsed.x);
                         const cost = context.parsed.y.toFixed(2);
                         return `${context.chart.data.labels[context.dataIndex]}: (${time}, $${cost})`;
                     }
@@ -465,6 +519,7 @@ export default class SimulationController {
             <th>Ejecuciones</th>
             <th>Fallos</th>
             <th>Espera Total</th>
+            <th>Tiempo Inactivo</th>
             <th>Proceso Total</th>
             <th>Costo Total</th>
           </tr>
@@ -481,6 +536,7 @@ export default class SimulationController {
             <td>${result.executionCount}</td>
             <td>${result.failureCount}</td>
             <td>${formatMilliseconds(result.totalWaitTime)}</td>
+            <td>${formatMilliseconds(result.totalIdleTime)}</td>
             <td>${formatMilliseconds(result.totalProcessingTime)}</td>
             <td>$${result.totalCost.toFixed(2)}</td>
           </tr>
@@ -504,17 +560,61 @@ export default class SimulationController {
             }
         });
     } else {
-        this.simulationResults.forEach((result, elementId) => {
+      if (this.simulationOutput && this.simulationOutput.resultsPerElement) {
+        this.simulationOutput.resultsPerElement.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
             if (element && is(element, 'bpmn:Task')) {
                 tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
+      }
+    }
+
+    if (metric === 'productionFlow') {
+      if (!this.simulationOutput || !this.simulationOutput.completionLog) {
+        this._chartPanel.setSummary('');
+        return { data: [], labels: [], label: 'Flujo de Producción' };
+      }
+
+      const {
+        completionLog,
+        globalResults
+      } = this.simulationOutput;
+
+      const sortedTimes = completionLog.sort((a, b) => a - b);
+      const data = [];
+      data.push({ x: 0, y: 0 });
+
+      let integral = 0;
+      let lastTime = 0;
+      let lastCount = 0;
+
+      sortedTimes.forEach((timestamp, index) => {
+        const units = index + 1;
+
+        integral += (timestamp - lastTime) * lastCount;
+
+        data.push({ x: timestamp, y: lastCount });
+        data.push({ x: timestamp, y: units });
+        lastTime = timestamp;
+        lastCount = units;
+      });
+
+      const finalTime = globalResults.finalCompletionTime;
+      if (finalTime > lastTime) {
+        integral += (finalTime - lastTime) * lastCount;
+        data.push({ x: finalTime, y: lastCount });
+      }
+
+      const summary = `Tiempo Total: ${formatMilliseconds(finalTime)} | Trabajo Total: ${formatMilliseconds(integral)}`;
+      this._chartPanel.setSummary(summary);
+
+      return { data, labels: [], label: 'Unidades producidas a lo largo del tiempo' };
     }
 
     if (metric === 'scatter') {
         const scatterData = tasks.map(t => ({
-            x: t.totalProcessingTime / (t.executionCount || 1) / 1000,
+            x: t.totalProcessingTime / (t.executionCount || 1),
             y: t.totalCost
         }));
         return { data: scatterData, labels: tasks.map(t => t.name), label: 'Tiempo de Proceso vs. Costo' };
@@ -642,6 +742,8 @@ export default class SimulationController {
     else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
     else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
     else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
+    else if (metric === 'totalIdleTime') { dataProperty = 'totalIdleTime'; label = 'Tiempo Inactivo Total'; }
+
 
     tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
 
@@ -657,7 +759,7 @@ export default class SimulationController {
 
   clear() {
     this.lastMetric = null;
-    this.simulationResults = null;
+    this.simulationOutput = null;
     this.clearOverlaysAndHeatmap();
     if (this._chart) {
       this._chart.destroy();

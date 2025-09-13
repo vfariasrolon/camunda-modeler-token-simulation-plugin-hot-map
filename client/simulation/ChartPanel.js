@@ -25,6 +25,7 @@ export default class ChartPanel {
           <select class="chart-select">
             <option value="inputParams">Parámetros de Entrada (Tabla)</option>
             <option value="resultsTable">Resultados de Simulación (Tabla)</option>
+            <option value="productionFlow">Flujo de Producción</option>
             <option value="cost">Top 5 por Costo</option>
             <option value="processTime">Top 5 por Tiempo de Proceso</option>
             <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
@@ -42,10 +43,12 @@ export default class ChartPanel {
           <div class="html-content"></div>
           <canvas id="simulationChartCanvas"></canvas>
         </div>
+        <div class="summary"></div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
           <p><strong>Parámetros de Entrada (Tabla):</strong> Muestra una tabla con todos los datos de simulación configurados para cada elemento del diagrama (tiempos, costos, probabilidades, etc.). Útil para verificar la configuración antes de ejecutar la simulación.</p>
           <p><strong>Resultados de Simulación (Tabla):</strong> Presenta una tabla con las métricas de salida agregadas para cada elemento del diagrama después de ejecutar la simulación. Incluye conteos de ejecución, fallos, tiempos y costos totales.</p>
+          <p><strong>Flujo de Producción:</strong> Un gráfico que muestra el número de instancias completadas a lo largo del tiempo de simulación. Es útil para entender el rendimiento del proceso y la tasa de producción.</p>
           <p><strong>Top 5 por Costo:</strong> Muestra las 5 tareas más caras de todo el proceso.</p>
           <p><strong>Top 5 por Tiempo de Proceso:</strong> Muestra las 5 tareas que más tiempo de trabajo activo consumen.</p>
           <p><strong>Top 5 por Tiempo de Espera (Recursos):</strong> Muestra las 5 tareas donde se pierde más tiempo esperando a que un recurso (persona) esté disponible. Indica cuellos de botella de personal.</p>
@@ -97,6 +100,10 @@ export default class ChartPanel {
     htmlContent.innerHTML = ''; // Clear it
     domClasses(this.canvas).remove('hidden');
     domClasses(htmlContent).add('hidden');
+  }
+
+  setSummary(text) {
+    this.summaryContainer.innerText = text;
   }
 
   isOpen() {

@@ -1,5 +1,6 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData } from './util';
+import WorkCalendar from './WorkCalendar.js';
 
 const triangular = (min, mode, max) => {
   const F = (max - min) / (mode - min);
@@ -59,6 +60,8 @@ export default class SimulationEngine {
     this.instanceStates = new Map();
     this.clock = 0;
     this.completedInstances = 0;
+    this.calendar = null;
+    this.completionLog = [];
   }
 
   initialize() {
@@ -68,10 +71,13 @@ export default class SimulationEngine {
     this.results = new Map();
     this.resourcePools = new Map();
     this.instanceStates = new Map();
+    this.calendar = null;
+    this.completionLog = [];
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
+        totalIdleTime: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -124,6 +130,7 @@ export default class SimulationEngine {
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
+      this.completionLog.push(this.clock);
       elementResults.totalCycleTime += (this.clock - startTime);
       this.instanceStates.delete(instanceId);
       return;
@@ -174,7 +181,20 @@ export default class SimulationEngine {
     const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
-    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost, quantityRequired };
+
+    let completionTime = time + processingTime;
+
+    // Adjust for work calendar if available
+    if (this.calendar) {
+      const adjustedTime = this.calendar.adjustTimestamp(completionTime);
+      if (adjustedTime > completionTime) {
+        const idleTime = adjustedTime - completionTime;
+        this.results.get(element.id).totalIdleTime += idleTime;
+      }
+      completionTime = adjustedTime;
+    }
+
+    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: completionTime, instanceId, startTime, processingTime, cost, quantityRequired };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
       const pool = this.resourcePools.get(data.resources.pool);
@@ -190,38 +210,83 @@ export default class SimulationEngine {
 
   run() {
     this.initialize();
-    const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
-    const configData = getSimulationData(processRoot);
-    const { runValue } = configData ? configData.simulationConfig : { runValue: 100 };
+    let configData = null;
+
+    // New: Search for a root initiator in StartEvents
+    const startEvents = this._elementRegistry.filter(el => is(el, 'bpmn:StartEvent'));
+    for (const startEvent of startEvents) {
+      const data = getSimulationData(startEvent);
+      if (data && data.isRootInitiator) {
+        configData = data;
+        break; // Found it, stop searching
+      }
+    }
+
+    // Fallback for old simulation configurations on Process/Participant
+    if (!configData) {
+      const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
+      if (processRoot) {
+        configData = getSimulationData(processRoot);
+      }
+    }
+
+    const simulationMode = configData && configData.simulationMode ? configData.simulationMode : 'arrivalRate';
+    let simulationRuns = 100; // default
+    let arrivalInterval = 1000; // default for arrivalRate mode
+
+    if (simulationMode === 'productionBatch') {
+      simulationRuns = configData && configData.productionTarget ? configData.productionTarget : 1;
+      if (configData.workCalendar) {
+        this.calendar = new WorkCalendar(configData.workCalendar);
+      }
+    } else { // 'arrivalRate' mode
+      simulationRuns = (configData && configData.simulationConfig && configData.simulationConfig.runValue) || 100;
+    }
+
     if (configData && configData.resourcePools) {
       configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
     const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
-    if (!startEvent) return this.results;
-
-    const startEventData = getSimulationData(startEvent);
-    let arrivalInterval = 1000; // Default to 1 second if not specified
-    if (startEventData && startEventData.arrivalRate) {
-      const rate = startEventData.arrivalRate.value;
-      const unit = startEventData.arrivalRate.unit; // per second, minute, or hour
-      if (rate > 0) {
-        let intervalInSeconds;
-        if (unit === 'second') {
-          intervalInSeconds = 1 / rate;
-        } else if (unit === 'minute') {
-          intervalInSeconds = 60 / rate;
-        } else { // hour
-          intervalInSeconds = 3600 / rate;
-        }
-        arrivalInterval = intervalInSeconds * 1000;
-      }
+    if (!startEvent) {
+      return {
+        resultsPerElement: this.results,
+        globalResults: {},
+        completionLog: []
+      };
     }
 
-    this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
-    this.instanceStates.set(1, { gateways: {} });
+    if (simulationMode === 'productionBatch') {
+      for (let i = 1; i <= simulationRuns; i++) {
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: i, startTime: 0 });
+        this.instanceStates.set(i, { gateways: {} });
+      }
+    } else { // arrivalRate mode
+      const startEventData = getSimulationData(startEvent);
+      if (startEventData && startEventData.arrivalRate) {
+        const rate = startEventData.arrivalRate.value;
+        const unit = startEventData.arrivalRate.unit; // per second, minute, or hour
+        if (rate > 0) {
+          let intervalInSeconds;
+          if (unit === 'second') {
+            intervalInSeconds = 1 / rate;
+          } else if (unit === 'minute') {
+            intervalInSeconds = 60 / rate;
+          } else { // hour
+            intervalInSeconds = 3600 / rate;
+          }
+          arrivalInterval = intervalInSeconds * 1000;
+        }
+      }
+      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
+      this.instanceStates.set(1, { gateways: {} });
+    }
     let instanceCounter = 1;
 
     while (!this.eventQueue.isEmpty()) {
+      if (simulationMode === 'productionBatch' && this.completedInstances >= simulationRuns) {
+        break;
+      }
+
       const event = this.eventQueue.next();
       this.clock = event.time;
 
@@ -247,18 +312,34 @@ export default class SimulationEngine {
         this.processEvent(event);
       }
 
-      if (this.completedInstances >= runValue) break;
-      if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
-        instanceCounter++;
-        const nextArrivalTime = event.time + arrivalInterval;
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
-        this.instanceStates.set(instanceCounter, { gateways: {} });
+      if (simulationMode === 'arrivalRate') {
+        if (is(event.element, 'bpmn:StartEvent') && instanceCounter < simulationRuns) {
+          instanceCounter++;
+          const nextArrivalTime = event.time + arrivalInterval;
+          this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
+          this.instanceStates.set(instanceCounter, { gateways: {} });
+        }
       }
     }
 
-    console.log("--- Simulation Finished ---");
-    console.table(Object.fromEntries(this.results));
-    return this.results;
+    const globalResults = {
+      finalCompletionTime: this.clock,
+      totalProductiveTime: 0,
+      totalResourceWaitTime: 0,
+      totalCalendarIdleTime: 0
+    };
+
+    for (const result of this.results.values()) {
+      globalResults.totalProductiveTime += result.totalProcessingTime;
+      globalResults.totalResourceWaitTime += result.totalWaitTime;
+      globalResults.totalCalendarIdleTime += result.totalIdleTime;
+    }
+
+    return {
+        resultsPerElement: this.results,
+        globalResults,
+        completionLog: this.completionLog
+    };
   }
 }
 
