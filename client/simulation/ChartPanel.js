@@ -23,28 +23,37 @@ export default class ChartPanel {
       <div class="${PALETTE_CLS}">
         <div class="header">
           <select class="chart-select">
+            <option value="inputParams">Parámetros de Entrada (Tabla)</option>
+            <option value="resultsTable">Resultados de Simulación (Tabla)</option>
             <option value="cost">Top 5 por Costo</option>
             <option value="processTime">Top 5 por Tiempo de Proceso</option>
             <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
             <option value="resourceQuantity">Recursos Asignados por Tarea</option>
             <option value="scatter">Diagrama de Dispersión (Tiempo vs. Costo)</option>
             <option value="pareto">Diagrama de Pareto (Fallos)</option>
+            <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
+            <option value="paretoCost">Diagrama de Pareto (Costos)</option>
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
           </select>
           <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
           <button class="close" title="Cerrar">×</button>
         </div>
         <div class="content">
+          <div class="html-content"></div>
           <canvas id="simulationChartCanvas"></canvas>
         </div>
         <div class="help-content hidden">
-          <h4>Ayuda de Gráficos de Simulación</h4>
+          <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
+          <p><strong>Parámetros de Entrada (Tabla):</strong> Muestra una tabla con todos los datos de simulación configurados para cada elemento del diagrama (tiempos, costos, probabilidades, etc.). Útil para verificar la configuración antes de ejecutar la simulación.</p>
+          <p><strong>Resultados de Simulación (Tabla):</strong> Presenta una tabla con las métricas de salida agregadas para cada elemento del diagrama después de ejecutar la simulación. Incluye conteos de ejecución, fallos, tiempos y costos totales.</p>
           <p><strong>Top 5 por Costo:</strong> Muestra las 5 tareas más caras de todo el proceso.</p>
           <p><strong>Top 5 por Tiempo de Proceso:</strong> Muestra las 5 tareas que más tiempo de trabajo activo consumen.</p>
           <p><strong>Top 5 por Tiempo de Espera (Recursos):</strong> Muestra las 5 tareas donde se pierde más tiempo esperando a que un recurso (persona) esté disponible. Indica cuellos de botella de personal.</p>
           <p><strong>Recursos Asignados por Tarea:</strong> Muestra cuántas personas (\`quantityRequired\`) están asignadas a cada tarea según la configuración.</p>
           <p><strong>Diagrama de Dispersión (Tiempo vs. Costo):</strong> Cada punto representa un tipo de tarea. El eje X es el tiempo de proceso promedio y el eje Y es el costo total incurrido por todas las ejecuciones de esa tarea. Ayuda a identificar tareas que son a la vez largas (en promedio) y caras (en total).</p>
           <p><strong>Diagrama de Pareto (Fallos):</strong> Muestra las tareas que causan la mayoría de los fallos. Las barras (eje izquierdo) son el número de fallos por tarea, ordenadas de mayor a menor. La línea (eje derecho) es el porcentaje acumulado del total de fallos. Útil para aplicar la regla 80/20 e identificar los "pocos vitales" problemas.</p>
+          <p><strong>Diagrama de Pareto (Tiempos):</strong> Similar al de fallos, pero analiza el tiempo de proceso total. Ayuda a identificar qué pocas tareas contribuyen a la mayor parte del tiempo de trabajo total en el proceso. Las barras son el tiempo total de proceso por tarea, y la línea es el porcentaje acumulado.</p>
+          <p><strong>Diagrama de Pareto (Costos):</strong> Aplica el principio de Pareto a los costos. Ayuda a identificar las tareas que son responsables de la mayor parte del costo total del proceso. Las barras son el costo total por tarea, y la línea es el porcentaje acumulado.</p>
           <p><strong>Tiempos de Espera por Tarea (Completo):</strong> Muestra el tiempo total de espera acumulado para cada tarea del proceso, ordenado de mayor a menor. A diferencia de los gráficos "Top 5", esta vista incluye todas las tareas para un análisis exhaustivo de los "tiempos muertos" y cuellos de botella de recursos.</p>
         </div>
       </div>
@@ -74,6 +83,20 @@ export default class ChartPanel {
 
   getCanvas() {
     return this.canvas;
+  }
+
+  showHtmlContent(html) {
+    const htmlContent = this._container.querySelector('.html-content');
+    htmlContent.innerHTML = html;
+    domClasses(this.canvas).add('hidden');
+    domClasses(htmlContent).remove('hidden');
+  }
+
+  showCanvas() {
+    const htmlContent = this._container.querySelector('.html-content');
+    htmlContent.innerHTML = ''; // Clear it
+    domClasses(this.canvas).remove('hidden');
+    domClasses(htmlContent).add('hidden');
   }
 
   isOpen() {

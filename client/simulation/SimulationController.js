@@ -192,6 +192,26 @@ export default class SimulationController {
   showChart() {
     const metric = this._chartPanel.getChartType();
 
+    if (metric === 'inputParams') {
+      const data = this.getInputParametersData();
+      const tableHtml = this.createInputParametersTable(data);
+      this._chartPanel.showHtmlContent(tableHtml);
+      return;
+    }
+
+    if (metric === 'resultsTable') {
+      if (!this.simulationResults) {
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+        this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
+        return;
+      }
+      const tableHtml = this.createResultsTable(this.simulationResults);
+      this._chartPanel.showHtmlContent(tableHtml);
+      return;
+    }
+
+    this._chartPanel.showCanvas(); // Ensure canvas is visible for charts
+
     if (!this.simulationResults && metric !== 'resourceQuantity') {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         return;
@@ -212,7 +232,7 @@ export default class SimulationController {
 
     let chartType = 'bar';
     if (metric === 'scatter') chartType = 'scatter';
-    if (metric === 'pareto') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
+    if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
 
     const options = {
         scales: {
@@ -235,10 +255,12 @@ export default class SimulationController {
         metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
         metric === 'pareto' ? 'Número de Fallos' :
+        metric === 'paretoTime' ? 'Tiempo de Proceso Total' :
+        metric === 'paretoCost' ? 'Costo Total ($)' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
-    if (metric === 'pareto') {
+    if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') {
         options.scales.y1 = {
             type: 'linear',
             display: true,
@@ -280,7 +302,7 @@ export default class SimulationController {
     }];
 
     const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes'];
-    if (timeMetrics.includes(metric)) {
+    if (timeMetrics.includes(metric) || metric === 'paretoTime') {
         options.plugins = {
             tooltip: {
                 callbacks: {
@@ -290,16 +312,40 @@ export default class SimulationController {
                             label += ': ';
                         }
                         if (context.parsed.y !== null) {
+                          if (context.dataset.yAxisID === 'y1') {
+                            label += context.parsed.y.toFixed(1) + '%';
+                          } else {
                             label += formatMilliseconds(context.parsed.y);
+                          }
                         }
                         return label;
                     }
                 }
             }
         };
-        // The data is already in ms, but the axis title says seconds.
-        // Let's keep the axis title as a general guide but format the raw data in the tooltip.
-        // The getChartData for these metrics does not divide by 1000, so we pass the raw ms.
+    }
+
+    if (metric === 'paretoCost') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        let label = context.dataset.label || '';
+                        if (label) {
+                            label += ': ';
+                        }
+                        if (context.parsed.y !== null) {
+                          if (context.dataset.yAxisID === 'y1') {
+                            label += context.parsed.y.toFixed(1) + '%';
+                          } else {
+                            label += '$' + context.parsed.y.toFixed(2);
+                          }
+                        }
+                        return label;
+                    }
+                }
+            }
+        };
     }
 
     if (metric === 'scatter') {
@@ -325,6 +371,125 @@ export default class SimulationController {
       },
       options: options
     };
+  }
+
+  getInputParametersData() {
+    const allElements = this._elementRegistry.getAll();
+    const elementsWithData = [];
+    allElements.forEach(element => {
+      // We are interested in elements that can have simulation data
+      if (is(element, 'bpmn:Process') || is(element, 'bpmn:Participant') || is(element, 'bpmn:Task') || is(element, 'bpmn:StartEvent') || (is(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway')) {
+        const data = getSimulationData(element);
+        if (data && Object.keys(data).length > 0) {
+          elementsWithData.push({
+            id: element.id,
+            name: element.businessObject.name || element.id,
+            type: element.type,
+            data: data
+          });
+        }
+      }
+    });
+    return elementsWithData;
+  }
+
+  createInputParametersTable(data) {
+    if (!data || data.length === 0) {
+      return '<p style="text-align: center; margin-top: 20px;">No se encontraron elementos con datos de simulación configurados.</p>';
+    }
+
+    let tableHtml = `
+      <table class="sim-results-table">
+        <thead>
+          <tr>
+            <th>Elemento</th>
+            <th>Tipo</th>
+            <th>Parámetro</th>
+            <th>Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    data.forEach(element => {
+      Object.entries(element.data).forEach(([key, value]) => {
+        if (key === 'resourcePools' && Array.isArray(value)) {
+           value.forEach(pool => {
+              tableHtml += `
+                <tr>
+                  <td>${element.name}</td>
+                  <td>${element.type.replace('bpmn:', '')}</td>
+                  <td>resourcePools</td>
+                  <td>${pool.name} (Qty: ${pool.quantity})</td>
+                </tr>
+              `;
+           });
+        } else if (typeof value !== 'object' || value === null) {
+          tableHtml += `
+            <tr>
+              <td>${element.name}</td>
+              <td>${element.type.replace('bpmn:', '')}</td>
+              <td>${key}</td>
+              <td>${JSON.stringify(value)}</td>
+            </tr>
+          `;
+        } else {
+          Object.entries(value).forEach(([subKey, subValue]) => {
+            tableHtml += `
+              <tr>
+                <td>${element.name}</td>
+                <td>${element.type.replace('bpmn:', '')}</td>
+                <td>${key}.${subKey}</td>
+                <td>${JSON.stringify(subValue)}</td>
+              </tr>
+            `;
+          });
+        }
+      });
+    });
+
+    tableHtml += '</tbody></table>';
+    return tableHtml;
+  }
+
+  createResultsTable(results) {
+    if (!results || results.size === 0) {
+      return '<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles. Por favor, ejecute una simulación primero.</p>';
+    }
+
+    let tableHtml = `
+      <table class="sim-results-table">
+        <thead>
+          <tr>
+            <th>Elemento</th>
+            <th>Ejecuciones</th>
+            <th>Fallos</th>
+            <th>Espera Total</th>
+            <th>Proceso Total</th>
+            <th>Costo Total</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    results.forEach(result => {
+      // Only show elements that were executed or have some value
+      if (result.executionCount > 0 || result.totalCost > 0 || result.totalProcessingTime > 0) {
+        tableHtml += `
+          <tr>
+            <td>${result.name}</td>
+            <td>${result.executionCount}</td>
+            <td>${result.failureCount}</td>
+            <td>${formatMilliseconds(result.totalWaitTime)}</td>
+            <td>${formatMilliseconds(result.totalProcessingTime)}</td>
+            <td>$${result.totalCost.toFixed(2)}</td>
+          </tr>
+        `;
+      }
+    });
+
+    tableHtml += '</tbody></table>';
+    return tableHtml;
   }
 
   getChartData(metric) {
@@ -386,6 +551,82 @@ export default class SimulationController {
                     data: cumulativePercentage,
                     borderColor: 'rgba(75, 192, 192, 1)',
                     backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    fill: false,
+                    yAxisID: 'y1',
+                }
+            ]
+        };
+    }
+
+    if (metric === 'paretoCost') {
+        const costTasks = tasks.filter(t => t.totalCost > 0);
+        costTasks.sort((a, b) => b.totalCost - a.totalCost);
+
+        const labels = costTasks.map(t => t.name);
+        const costData = costTasks.map(t => t.totalCost);
+        const totalCostValue = costData.reduce((sum, count) => sum + count, 0);
+
+        let cumulative = 0;
+        const cumulativePercentage = costData.map(count => {
+            cumulative += count;
+            return totalCostValue > 0 ? (cumulative / totalCostValue) * 100 : 0;
+        });
+
+        return {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Costo Total',
+                    data: costData,
+                    backgroundColor: 'rgba(255, 206, 86, 0.2)',
+                    borderColor: 'rgba(255, 206, 86, 1)',
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'Porcentaje Acumulado',
+                    data: cumulativePercentage,
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    fill: false,
+                    yAxisID: 'y1',
+                }
+            ]
+        };
+    }
+
+    if (metric === 'paretoTime') {
+        const timedTasks = tasks.filter(t => t.totalProcessingTime > 0);
+        timedTasks.sort((a, b) => b.totalProcessingTime - a.totalProcessingTime);
+
+        const labels = timedTasks.map(t => t.name);
+        const timeData = timedTasks.map(t => t.totalProcessingTime);
+        const totalTime = timeData.reduce((sum, count) => sum + count, 0);
+
+        let cumulative = 0;
+        const cumulativePercentage = timeData.map(count => {
+            cumulative += count;
+            return totalTime > 0 ? (cumulative / totalTime) * 100 : 0;
+        });
+
+        return {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Tiempo de Proceso Total',
+                    data: timeData,
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'Porcentaje Acumulado',
+                    data: cumulativePercentage,
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
                     fill: false,
                     yAxisID: 'y1',
                 }
