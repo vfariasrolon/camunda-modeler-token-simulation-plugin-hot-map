@@ -136,6 +136,46 @@
 }
 
 .simulation-chart-panel .help-content.hidden,
-.simulation-chart-panel .content.hidden {
+.simulation-chart-panel .content.hidden,
+.simulation-chart-panel .html-content.hidden {
+    display: none;
+}
+
+/* Styles for HTML Table Views */
+.simulation-chart-panel .content {
+    max-height: 60vh; /* Limit height to 60% of viewport height */
+    overflow-y: auto; /* Add vertical scroll if content overflows */
+}
+
+.simulation-chart-panel .html-content {
+    width: 100%;
+    height: 100%;
+    overflow: auto; /* Scrollbars for the table container itself */
+}
+
+.sim-results-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed; /* Prevent table from expanding uncontrollably */
+}
+
+.sim-results-table th,
+.sim-results-table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+    word-wrap: break-word; /* Wrap long text */
+}
+
+.sim-results-table th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+}
+
+.sim-results-table tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.simulation-chart-panel canvas.hidden {
     display: none;
 }
