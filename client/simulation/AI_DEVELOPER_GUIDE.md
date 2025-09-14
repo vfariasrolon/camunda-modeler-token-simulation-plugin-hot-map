@@ -21,6 +21,44 @@ El flujo de trabajo general es el siguiente:
 
 En resumen, este plugin transforma Camunda Modeler de una herramienta de modelado a una plataforma de **inteligencia de procesos**, permitiendo la toma de decisiones basada en datos cuantitativos.
 
+## Guía de la Interfaz de Usuario
+
+El plugin añade varios controles a la interfaz de Camunda Modeler para ejecutar la simulación y visualizar los resultados.
+
+### Barra de Herramientas Principal
+
+En la barra de herramientas principal (generalmente a la izquierda, junto a la paleta de elementos BPMN), se añaden tres nuevos botones:
+
+| Icono | Título | Función |
+| :--- | :--- | :--- |
+| **▶️** | **Ejecutar Simulación** | Inicia el motor de simulación. Lee los `simulationData` del diagrama, ejecuta la simulación completa en segundo plano y guarda los resultados agregados para su análisis. |
+| **☯️** | **Mostrar Análisis** | Abre la **Paleta de Análisis**. Esta paleta lateral permite visualizar diferentes métricas de la simulación directamente sobre el diagrama en forma de mapa de calor (heatmap). |
+| **📊** | **Mostrar Gráficos** | Abre el **Panel de Gráficos** en la parte inferior de la pantalla. Este panel ofrece un análisis más profundo con tablas de datos y diversos tipos de gráficos (barras, dispersión, Pareto). |
+
+### Paleta de Análisis (Heatmap)
+
+Esta paleta se abre al hacer clic en el botón del Yin-Yang (☯️). Cada botón aplica un "filtro" o mapa de calor diferente sobre el diagrama.
+
+| Icono | Nombre de la Métrica | Explicación |
+| :--- | :--- | :--- |
+| **←** | **Atrás** | Cierra la paleta de análisis. |
+| **$** | **Costo (Cost)** | Visualiza el **costo total acumulado** en cada tarea. |
+| **🕒** | **Tiempo de Espera (Wait Time)** | Muestra el **tiempo de espera promedio** de cada tarea. Es clave para detectar **cuellos de botella** de recursos. |
+| **🕒** | **Tiempo de Espera Total** | Muestra el **tiempo total de espera sumado**, no el promedio. |
+| **↻** | **Tiempo de Ciclo (Cycle Time)** | Muestra el **tiempo promedio total de un caso** (de principio a fin). Se visualiza sobre los eventos de fin. |
+| **📊** | **Frecuencia (Frequency)** | Muestra el **número de veces que se ha ejecutado** cada elemento, revelando las rutas más comunes. |
+| **🕒** | **Tiempo de Proceso (Process Time)** | Muestra el **tiempo de trabajo activo** promedio en cada tarea. |
+| **🐞** | **Tasa de Fallos (Failure Rate)** | Visualiza las tareas donde ocurren más fallos. |
+| **🚚** | **Espera de Transporte** | Muestra el tiempo perdido esperando por un vehículo o lote (si la lógica está activada). |
+| **⚠️** | **Despachos Ineficientes** | Muestra el número de despachos de transporte ineficientes (ej. un vehículo que sale sin estar lleno). |
+| **👥** | **Cantidad de Recursos** | Muestra el **número de recursos configurados** para cada tarea. |
+
+#### Controles de la Paleta
+
+*   **Limpiar**: Elimina el mapa de calor y las etiquetas de datos del diagrama.
+*   **R+ / R-**: Aumentan/disminuyen el **Radio** de las manchas de calor.
+*   **B+ / B-**: Aumentan/disminuyen el **Blur** (desenfoque) del mapa de calor.
+
 ## Estructura del Proyecto y Archivos Clave
 
 A continuación se detalla la estructura de los archivos más importantes del plugin y sus responsabilidades.
