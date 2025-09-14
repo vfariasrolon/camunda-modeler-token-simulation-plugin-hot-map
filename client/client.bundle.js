@@ -866,7 +866,6 @@ class ChartPanel {
             <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
             <option value="paretoCost">Diagrama de Pareto (Costos)</option>
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
-            <option value="estimations" data-production="true">Estimaciones de Producción</option>
           </select>
           <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
           <button class="close" title="Cerrar">×</button>
@@ -1152,6 +1151,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "default": () => (/* binding */ SimulationController)
 /* harmony export */ });
 /* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var chart_js_auto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! chart.js/auto */ "./node_modules/chart.js/auto/auto.js");
@@ -1162,6 +1162,7 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
+// Geometric icons to match the look and feel of the editor
 const RunIcon = `
   <span class="bts-icon">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
@@ -1233,78 +1234,605 @@ class SimulationController {
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
-
-    // Hide estimation chart option by default
-    const estimationOption = this._chartPanel.getContainer().querySelector('[data-production="true"]');
-    if (estimationOption) {
-      estimationOption.style.display = 'none';
-    }
   }
 
   runSimulation() {
     this.clear();
     this.simulationResults = this._simulationEngine.run();
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
-
-    const estimationOption = this._chartPanel.getContainer().querySelector('[data-production="true"]');
-    if (estimationOption) {
-      estimationOption.style.display = this._simulationEngine.workCalendar ? '' : 'none';
-    }
   }
 
-  // ... (adjustHeatmap, showMetric, showOverlays are the same)
+  adjustHeatmap(type, amount) {
+      if (type === 'radius') this._radius = Math.max(1, this._radius + amount);
+      else if (type === 'blur') this._blur = Math.max(0, this._blur + amount);
+      if (this.lastMetric) this.showMetric(this.lastMetric);
+  }
+
+  showMetric(metric) {
+    this.clearOverlaysAndHeatmap();
+    this.lastMetric = metric;
+    const dataPoints = [];
+    let max = 0;
+
+    if (metric === 'resourceQuantity') {
+      this._elementRegistry.forEach(element => {
+        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task')) {
+          const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
+          const value = (data && data.resources && data.resources.quantityRequired) || 0;
+          if (value > max) max = value;
+          if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
+        }
+      });
+    } else {
+      if (!this.simulationResults) {
+          this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+          return;
+      }
+      this.simulationResults.forEach((result, elementId) => {
+          const element = this._elementRegistry.get(elementId);
+          if (!element || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:FlowNode')) return;
+
+          let value = 0;
+          if (metric === 'frequency') value = result.executionCount;
+          else if (metric === 'cost') value = result.totalCost;
+          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000; // Average
+          else if (metric === 'totalWaitTime') value = result.totalWaitTime / 1000; // Total
+          else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
+          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
+
+          if (value > max) max = value;
+          if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
+      });
+    }
+
+    this.createHeatmap();
+    this._heatmap.data(dataPoints).max(max || 1).radius(this._radius, this._blur).draw();
+    this.showOverlays(metric);
+  }
+
+  showOverlays(metric) {
+    const elements = metric === 'resourceQuantity'
+      ? this._elementRegistry.filter(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task'))
+      : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
+
+    elements.forEach(element => {
+        if (!element) return;
+        let overlayText = '';
+        const result = this.simulationResults ? this.simulationResults.get(element.id) : null;
+
+        if (metric === 'resourceQuantity') {
+            const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
+            const value = (data && data.resources && data.resources.quantityRequired) || 0;
+            if (value > 0) overlayText = `Recursos: ${value}`;
+        } else if (result) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task')) {
+                if (metric === 'cost') overlayText = `Costo: $${result.totalCost.toFixed(2)}`;
+                else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalWaitTime / (result.executionCount || 1))}`;
+                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalWaitTime)}`;
+                else if (metric === 'processTime') overlayText = `Proceso: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalProcessingTime / (result.executionCount || 1))}`;
+                else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
+                else if (metric === 'failureRate' && result.executionCount > 0) {
+                    const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
+                    overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
+                }
+                else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
+                  overlayText = `E.Carro: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalTransportWaitTime / (result.executionCount || 1))}`;
+                }
+                else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
+                  overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
+                }
+            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+                overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalCycleTime / (result.executionCount || 1))}`;
+            }
+        }
+
+        if (overlayText) this._overlays.add(element, 'simulation-overlay', { position: { bottom: -5, left: element.width / 2 - 20 }, html: `<div class="simulation-overlay-text">${overlayText}</div>` });
+
+        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:ExclusiveGateway')) {
+            element.outgoing.forEach(flow => {
+                const flowResult = this.simulationResults.get(flow.id);
+                if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
+                    const percentage = (flowResult.executionCount / result.executionCount * 100).toFixed(1);
+                    this._overlays.add(flow.id, 'simulation-overlay', { position: { top: -15, left: -20 }, html: `<div class="simulation-overlay-text">${flowResult.executionCount} (${percentage}%)</div>` });
+                }
+            });
+        }
+    });
+  }
 
   showChart() {
     const metric = this._chartPanel.getChartType();
 
-    if (metric === 'estimations') {
-      const tableHtml = this.createEstimationsTable();
+    if (metric === 'inputParams') {
+      const data = this.getInputParametersData();
+      const tableHtml = this.createInputParametersTable(data);
       this._chartPanel.showHtmlContent(tableHtml);
       return;
     }
 
-    // ... (rest of showChart logic is the same)
+    if (metric === 'resultsTable') {
+      if (!this.simulationResults) {
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+        this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
+        return;
+      }
+      const tableHtml = this.createResultsTable(this.simulationResults);
+      this._chartPanel.showHtmlContent(tableHtml);
+      return;
+    }
+
+    this._chartPanel.showCanvas(); // Ensure canvas is visible for charts
+
+    if (!this.simulationResults && metric !== 'resourceQuantity') {
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+        return;
+    }
+
+    if (this._chart) {
+      this._chart.destroy();
+    }
+
+    const chartConfig = this.getChartConfig(metric);
+
+    const ctx = this._chartPanel.getCanvas().getContext('2d');
+    this._chart = new chart_js_auto__WEBPACK_IMPORTED_MODULE_1__["default"](ctx, chartConfig);
   }
 
-  createEstimationsTable() {
-    if (!this.simulationResults || !this._simulationEngine.workCalendar) {
-      return '<p style="text-align: center; margin-top: 20px;">No hay estimaciones de producción disponibles. Ejecute una simulación en modo de producción primero.</p>';
+  getChartConfig(metric) {
+    const chartData = this.getChartData(metric);
+
+    let chartType = 'bar';
+    if (metric === 'scatter') chartType = 'scatter';
+    if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
+
+    const options = {
+        scales: {
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: 'Valor' // Placeholder
+                }
+            }
+        }
+    };
+
+    const yAxisTitle =
+        metric === 'cost' ? 'Costo Total ($)' :
+        metric === 'processTime' ? 'Tiempo de Proceso Total (s)' :
+        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
+        metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
+        metric === 'pareto' ? 'Número de Fallos' :
+        metric === 'paretoTime' ? 'Tiempo de Proceso Total' :
+        metric === 'paretoCost' ? 'Costo Total ($)' :
+        'Valor';
+    options.scales.y.title.text = yAxisTitle;
+
+    if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') {
+        options.scales.y1 = {
+            type: 'linear',
+            display: true,
+            position: 'right',
+            min: 0,
+            max: 100,
+            title: {
+                display: true,
+                text: 'Porcentaje Acumulado (%)'
+            },
+            grid: {
+                drawOnChartArea: false, // only draw grid for primary axis
+            },
+        };
     }
 
-    const rootElementId = this._simulationEngine.rootElementId;
-    const rootResults = this.simulationResults.get(rootElementId);
-
-    if (!rootResults) {
-      return '<p style="text-align: center; margin-top: 20px;">No se encontraron resultados para el elemento raíz.</p>';
+    if (metric === 'scatter') {
+        options.scales.x = {
+            type: 'linear',
+            position: 'bottom',
+            title: {
+                display: true,
+                text: 'Tiempo de Proceso Promedio (s)'
+            }
+        };
+        options.scales.y.title = {
+            display: true,
+            text: 'Costo Total ($)'
+        };
     }
 
-    const completionDate = rootResults.estimatedCompletionDate
-      ? rootResults.estimatedCompletionDate.toLocaleString('es-ES', { dateStyle: 'full', timeStyle: 'medium' })
-      : 'N/A';
-    const totalOvertime = rootResults.totalOvertime
-      ? (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(rootResults.totalOvertime)
-      : '0s';
+    // For pareto, datasets are pre-built. For others, build them now.
+    const datasets = chartData.datasets ? chartData.datasets : [{
+        label: chartData.label,
+        data: chartData.data,
+        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+        borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 1
+    }];
 
-    return `
-      <h4 class="sim-results-header">Estimaciones de Producción</h4>
-      <table class="sim-results-table summary-table">
+    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes'];
+    if (timeMetrics.includes(metric) || metric === 'paretoTime') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        let label = context.dataset.label || '';
+                        if (label) {
+                            label += ': ';
+                        }
+                        if (context.parsed.y !== null) {
+                          if (context.dataset.yAxisID === 'y1') {
+                            label += context.parsed.y.toFixed(1) + '%';
+                          } else {
+                            label += (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(context.parsed.y);
+                          }
+                        }
+                        return label;
+                    }
+                }
+            }
+        };
+    }
+
+    if (metric === 'paretoCost') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        let label = context.dataset.label || '';
+                        if (label) {
+                            label += ': ';
+                        }
+                        if (context.parsed.y !== null) {
+                          if (context.dataset.yAxisID === 'y1') {
+                            label += context.parsed.y.toFixed(1) + '%';
+                          } else {
+                            label += '$' + context.parsed.y.toFixed(2);
+                          }
+                        }
+                        return label;
+                    }
+                }
+            }
+        };
+    }
+
+    if (metric === 'scatter') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        const label = context.dataset.label || '';
+                        const time = (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(context.parsed.x * 1000); // convert seconds back to ms for formatting
+                        const cost = context.parsed.y.toFixed(2);
+                        return `${context.chart.data.labels[context.dataIndex]}: (${time}, $${cost})`;
+                    }
+                }
+            }
+        };
+    }
+
+    return {
+      type: chartType,
+      data: {
+        labels: chartData.labels,
+        datasets: datasets
+      },
+      options: options
+    };
+  }
+
+  getInputParametersData() {
+    const allElements = this._elementRegistry.getAll();
+    const elementsWithData = [];
+    allElements.forEach(element => {
+      // We are interested in elements that can have simulation data
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway')) {
+        const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
+        if (data && Object.keys(data).length > 0) {
+          elementsWithData.push({
+            id: element.id,
+            name: element.businessObject.name || element.id,
+            type: element.type,
+            data: data
+          });
+        }
+      }
+    });
+    return elementsWithData;
+  }
+
+  createInputParametersTable(data) {
+    if (!data || data.length === 0) {
+      return '<p style="text-align: center; margin-top: 20px;">No se encontraron elementos con datos de simulación configurados.</p>';
+    }
+
+    let tableHtml = `
+      <table class="sim-results-table">
         <thead>
           <tr>
-            <th>Fecha de Finalización Estimada</th>
-            <th>Horas Extras Totales Requeridas</th>
+            <th>Elemento</th>
+            <th>Tipo</th>
+            <th>Parámetro</th>
+            <th>Valor</th>
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>${completionDate}</td>
-            <td>${totalOvertime}</td>
-          </tr>
-        </tbody>
-      </table>
     `;
+
+    data.forEach(element => {
+      Object.entries(element.data).forEach(([key, value]) => {
+        if (key === 'resourcePools' && Array.isArray(value)) {
+           value.forEach(pool => {
+              tableHtml += `
+                <tr>
+                  <td>${element.name}</td>
+                  <td>${element.type.replace('bpmn:', '')}</td>
+                  <td>resourcePools</td>
+                  <td>${pool.name} (Qty: ${pool.quantity})</td>
+                </tr>
+              `;
+           });
+        } else if (typeof value !== 'object' || value === null) {
+          tableHtml += `
+            <tr>
+              <td>${element.name}</td>
+              <td>${element.type.replace('bpmn:', '')}</td>
+              <td>${key}</td>
+              <td>${JSON.stringify(value)}</td>
+            </tr>
+          `;
+        } else {
+          Object.entries(value).forEach(([subKey, subValue]) => {
+            tableHtml += `
+              <tr>
+                <td>${element.name}</td>
+                <td>${element.type.replace('bpmn:', '')}</td>
+                <td>${key}.${subKey}</td>
+                <td>${JSON.stringify(subValue)}</td>
+              </tr>
+            `;
+          });
+        }
+      });
+    });
+
+    tableHtml += '</tbody></table>';
+    return tableHtml;
   }
 
-  // ... (getChartConfig, getInputParametersData, createInputParametersTable, createResultsTable, getChartData, clear, etc. are the same, but with all productionScurve logic removed)
+  createResultsTable(results) {
+    if (!results || results.size === 0) {
+      return '<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles. Por favor, ejecute una simulación primero.</p>';
+    }
+
+    let tableHtml = `
+      <table class="sim-results-table">
+        <thead>
+          <tr>
+            <th>Elemento</th>
+            <th>Ejecuciones</th>
+            <th>Fallos</th>
+            <th>Espera Total</th>
+            <th>Proceso Total</th>
+            <th>Costo Total</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    results.forEach(result => {
+      // Only show elements that were executed or have some value
+      if (result.executionCount > 0 || result.totalCost > 0 || result.totalProcessingTime > 0) {
+        tableHtml += `
+          <tr>
+            <td>${result.name}</td>
+            <td>${result.executionCount}</td>
+            <td>${result.failureCount}</td>
+            <td>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalWaitTime)}</td>
+            <td>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalProcessingTime)}</td>
+            <td>$${result.totalCost.toFixed(2)}</td>
+          </tr>
+        `;
+      }
+    });
+
+    tableHtml += '</tbody></table>';
+    return tableHtml;
+  }
+
+  getChartData(metric) {
+    const tasks = [];
+
+    if (metric === 'resourceQuantity') {
+        this._elementRegistry.forEach(element => {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task')) {
+                const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
+                const value = (data && data.resources && data.resources.quantityRequired) || 0;
+                tasks.push({ name: element.businessObject.name || element.id, value: value });
+            }
+        });
+    } else {
+        this.simulationResults.forEach((result, elementId) => {
+            const element = this._elementRegistry.get(elementId);
+            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task')) {
+                tasks.push({ ...result, name: element.businessObject.name || element.id });
+            }
+        });
+    }
+
+    if (metric === 'scatter') {
+        const scatterData = tasks.map(t => ({
+            x: t.totalProcessingTime / (t.executionCount || 1) / 1000,
+            y: t.totalCost
+        }));
+        return { data: scatterData, labels: tasks.map(t => t.name), label: 'Tiempo de Proceso vs. Costo' };
+    }
+
+    if (metric === 'pareto') {
+        const failedTasks = tasks.filter(t => t.failureCount > 0);
+        failedTasks.sort((a, b) => b.failureCount - a.failureCount);
+
+        const labels = failedTasks.map(t => t.name);
+        const failureData = failedTasks.map(t => t.failureCount);
+        const totalFailures = failureData.reduce((sum, count) => sum + count, 0);
+
+        let cumulative = 0;
+        const cumulativePercentage = failureData.map(count => {
+            cumulative += count;
+            return totalFailures > 0 ? (cumulative / totalFailures) * 100 : 0;
+        });
+
+        return {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Número de Fallos',
+                    data: failureData,
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'Porcentaje Acumulado',
+                    data: cumulativePercentage,
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    fill: false,
+                    yAxisID: 'y1',
+                }
+            ]
+        };
+    }
+
+    if (metric === 'paretoCost') {
+        const costTasks = tasks.filter(t => t.totalCost > 0);
+        costTasks.sort((a, b) => b.totalCost - a.totalCost);
+
+        const labels = costTasks.map(t => t.name);
+        const costData = costTasks.map(t => t.totalCost);
+        const totalCostValue = costData.reduce((sum, count) => sum + count, 0);
+
+        let cumulative = 0;
+        const cumulativePercentage = costData.map(count => {
+            cumulative += count;
+            return totalCostValue > 0 ? (cumulative / totalCostValue) * 100 : 0;
+        });
+
+        return {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Costo Total',
+                    data: costData,
+                    backgroundColor: 'rgba(255, 206, 86, 0.2)',
+                    borderColor: 'rgba(255, 206, 86, 1)',
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'Porcentaje Acumulado',
+                    data: cumulativePercentage,
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    fill: false,
+                    yAxisID: 'y1',
+                }
+            ]
+        };
+    }
+
+    if (metric === 'paretoTime') {
+        const timedTasks = tasks.filter(t => t.totalProcessingTime > 0);
+        timedTasks.sort((a, b) => b.totalProcessingTime - a.totalProcessingTime);
+
+        const labels = timedTasks.map(t => t.name);
+        const timeData = timedTasks.map(t => t.totalProcessingTime);
+        const totalTime = timeData.reduce((sum, count) => sum + count, 0);
+
+        let cumulative = 0;
+        const cumulativePercentage = timeData.map(count => {
+            cumulative += count;
+            return totalTime > 0 ? (cumulative / totalTime) * 100 : 0;
+        });
+
+        return {
+            labels,
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Tiempo de Proceso Total',
+                    data: timeData,
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'Porcentaje Acumulado',
+                    data: cumulativePercentage,
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    fill: false,
+                    yAxisID: 'y1',
+                }
+            ]
+        };
+    }
+
+    let dataProperty, label;
+    if (metric === 'cost') { dataProperty = 'totalCost'; label = 'Costo Total por Tarea'; }
+    else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
+    else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
+    else if (metric === 'allWaitTimes') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
+    else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
+    else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
+    else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
+
+    tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
+
+    const chartTasks = metric === 'allWaitTimes'
+        ? tasks.filter(t => t[dataProperty] > 0)
+        : tasks.filter(t => t[dataProperty] > 0).slice(0, 5);
+
+    const labels = chartTasks.map(t => t.name);
+    const data = chartTasks.map(t => t[dataProperty]);
+
+    return { data, labels, label };
+  }
+
+  clear() {
+    this.lastMetric = null;
+    this.simulationResults = null;
+    this.clearOverlaysAndHeatmap();
+    if (this._chart) {
+      this._chart.destroy();
+      this._chart = null;
+    }
+  }
+
+  clearOverlaysAndHeatmap() {
+    if (this._heatmap) {
+      this._heatmap.destroy();
+      this._heatmap = null;
+    }
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
+    this._overlays.remove({ type: 'simulation-overlay' });
+  }
+
+  createHeatmap() {
+    if (this._heatmap) return;
+    this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+  }
 }
 
 SimulationController.$inject = [
@@ -1333,10 +1861,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationEngine)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
-/* harmony import */ var _WorkCalendar_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./WorkCalendar.js */ "./client/simulation/WorkCalendar.js");
-
 
 
 
@@ -1398,9 +1924,6 @@ class SimulationEngine {
     this.instanceStates = new Map();
     this.clock = 0;
     this.completedInstances = 0;
-    this.workCalendar = null;
-    this.progressSnapshots = [];
-    this.rootElementId = null;
   }
 
   initialize() {
@@ -1410,9 +1933,6 @@ class SimulationEngine {
     this.results = new Map();
     this.resourcePools = new Map();
     this.instanceStates = new Map();
-    this.workCalendar = null;
-    this.progressSnapshots = [];
-    this.rootElementId = null;
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
@@ -1426,8 +1946,8 @@ class SimulationEngine {
     if (!element.outgoing || element.outgoing.length === 0) {
       return [];
     }
-    // ... (rest of the method is unchanged)
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:ParallelGateway')) {
+
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -1436,7 +1956,7 @@ class SimulationEngine {
     }
 
     let chosenFlow = null;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = Math.random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
@@ -1469,11 +1989,7 @@ class SimulationEngine {
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
-      this.progressSnapshots.push([new Date(this.clock.getTime()), this.completedInstances]);
-      const cycleTime = this.workCalendar
-        ? (this.clock.getTime() - startTime.getTime())
-        : (this.clock - startTime);
-      elementResults.totalCycleTime += cycleTime;
+      elementResults.totalCycleTime += (this.clock - startTime);
       this.instanceStates.delete(instanceId);
       return;
     }
@@ -1488,14 +2004,16 @@ class SimulationEngine {
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(nextElement);
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
+
         gatewayState.arrived.add(nextConnection.id);
+
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(nextElement, 'bpmn:Task') && data) {
+      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(nextElement, 'bpmn:Task') && data) {
         this.scheduleTask({ type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime });
       } else {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
@@ -1518,23 +2036,10 @@ class SimulationEngine {
       processingTime += reworkTime;
       this.results.get(element.id).failureCount++;
     }
-
-    let completionTime, overtimeMs = 0;
-    if (this.workCalendar) {
-      const calc = this.workCalendar.addWorkTime(time, processingTime);
-      completionTime = calc.finalDate;
-      overtimeMs = calc.overtimeMs;
-    } else {
-      completionTime = time + processingTime;
-    }
-
-    if (overtimeMs > 0 && this.rootElementId) {
-      this.results.get(this.rootElementId).totalOvertime += overtimeMs;
-    }
-
     const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
+
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
-    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: completionTime, instanceId, startTime, processingTime, cost, quantityRequired };
+    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost, quantityRequired };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
       const pool = this.resourcePools.get(data.resources.pool);
@@ -1550,68 +2055,36 @@ class SimulationEngine {
 
   run() {
     this.initialize();
-
-    let rootElement = this._elementRegistry.find(el => {
-      const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el);
-      return data && data.rootCheckpoint === true;
-    });
-
-    if (!rootElement) {
-      rootElement = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Participant')) || this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Process'));
-    }
-    this.rootElementId = rootElement.id;
-    this.results.get(this.rootElementId).totalOvertime = 0;
-
-    const configData = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(rootElement) || {};
-    const productionMode = !!configData.rootCheckpoint;
-    const productionTarget = configData.productionTarget || 1;
-    const legacyRunValue = configData.simulationConfig ? configData.simulationConfig.runValue : 100;
-    const finalTarget = productionMode ? productionTarget : legacyRunValue;
-
-    if (productionMode && configData.workSchedule) {
-      this.workCalendar = new _WorkCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](configData.workSchedule);
-      this.clock = new Date();
-      this.workCalendar.adjustToStartOfWork(this.clock);
-    } else {
-      this.clock = 0;
-    }
-
-    if (configData.resourcePools) {
+    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(el, 'bpmn:Participant'));
+    const configData = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(processRoot);
+    const { runValue } = configData ? configData.simulationConfig : { runValue: 100 };
+    if (configData && configData.resourcePools) {
       configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
-
-    const startEvent = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:StartEvent'));
-    if (!startEvent) {
-      console.error("Simulation Error: No Start Event found.");
-      return this.results;
-    }
-
-    let instanceCounter = 0;
-    const initialTime = this.clock;
-    this.progressSnapshots.push([new Date(initialTime.getTime ? initialTime.getTime() : initialTime), 0]);
-
-    if (productionMode) {
-      for (let i = 0; i < productionTarget; i++) {
-        instanceCounter++;
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: initialTime, instanceId: instanceCounter, startTime: initialTime });
-        this.instanceStates.set(instanceCounter, { gateways: {} });
-      }
-    } else {
-      instanceCounter++;
-      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: initialTime, instanceId: instanceCounter, startTime: initialTime });
-      this.instanceStates.set(instanceCounter, { gateways: {} });
-    }
+    const startEvent = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(el, 'bpmn:StartEvent'));
+    if (!startEvent) return this.results;
 
     const startEventData = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(startEvent);
-    let arrivalInterval = 1000;
-    if (!productionMode && startEventData && startEventData.arrivalRate) {
-        const rate = startEventData.arrivalRate.value;
-        const unit = startEventData.arrivalRate.unit;
-        if (rate > 0) {
-            let intervalInSeconds = (unit === 'second') ? 1 / rate : (unit === 'minute') ? 60 / rate : 3600 / rate;
-            arrivalInterval = intervalInSeconds * 1000;
+    let arrivalInterval = 1000; // Default to 1 second if not specified
+    if (startEventData && startEventData.arrivalRate) {
+      const rate = startEventData.arrivalRate.value;
+      const unit = startEventData.arrivalRate.unit; // per second, minute, or hour
+      if (rate > 0) {
+        let intervalInSeconds;
+        if (unit === 'second') {
+          intervalInSeconds = 1 / rate;
+        } else if (unit === 'minute') {
+          intervalInSeconds = 60 / rate;
+        } else { // hour
+          intervalInSeconds = 3600 / rate;
         }
+        arrivalInterval = intervalInSeconds * 1000;
+      }
     }
+
+    this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
+    this.instanceStates.set(1, { gateways: {} });
+    let instanceCounter = 1;
 
     while (!this.eventQueue.isEmpty()) {
       const event = this.eventQueue.next();
@@ -1621,36 +2094,15 @@ class SimulationEngine {
         const results = this.results.get(event.element.id);
         results.totalProcessingTime += event.processingTime;
         results.totalCost += event.cost;
-        if (event.waitStart) {
-          const waitTime = this.workCalendar
-            ? this.clock.getTime() - event.waitStart.getTime()
-            : this.clock - event.waitStart;
-          results.totalWaitTime += waitTime;
-        }
+        if (event.waitStart) results.totalWaitTime += (this.clock - event.waitStart);
 
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(event.element);
         if (data && data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
           const pool = this.resourcePools.get(data.resources.pool);
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
-            const waitTime = this.workCalendar
-              ? this.clock.getTime() - nextTask.waitStart.getTime()
-              : this.clock - nextTask.waitStart;
-            this.results.get(nextTask.element.id).totalWaitTime += waitTime;
-
-            let completionTime, overtimeMs = 0;
-            if (this.workCalendar) {
-              const calc = this.workCalendar.addWorkTime(this.clock, nextTask.processingTime);
-              completionTime = calc.finalDate;
-              overtimeMs = calc.overtimeMs;
-            } else {
-              completionTime = this.clock + nextTask.processingTime;
-            }
-            if (overtimeMs > 0 && this.rootElementId) {
-              this.results.get(this.rootElementId).totalOvertime += overtimeMs;
-            }
-            nextTask.time = completionTime;
-
+            this.results.get(nextTask.element.id).totalWaitTime += (this.clock - nextTask.waitStart);
+            nextTask.time = this.clock + nextTask.processingTime;
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
           });
@@ -1660,11 +2112,8 @@ class SimulationEngine {
         this.processEvent(event);
       }
 
-      if (this.completedInstances >= finalTarget) {
-        break;
-      }
-
-      if (!productionMode && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(event.element, 'bpmn:StartEvent') && instanceCounter < finalTarget) {
+      if (this.completedInstances >= runValue) break;
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
         const nextArrivalTime = event.time + arrivalInterval;
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
@@ -1672,17 +2121,7 @@ class SimulationEngine {
       }
     }
 
-    const finalResults = this.results.get(this.rootElementId);
-    if (finalResults) {
-      finalResults.estimatedCompletionDate = this.clock;
-      finalResults.progressSnapshots = this.progressSnapshots;
-    }
-
     console.log("--- Simulation Finished ---");
-    console.log(`Completed ${this.completedInstances} instances.`);
-    if (this.workCalendar) {
-      console.log(`Estimated Completion Time: ${this.clock.toLocaleString()}`);
-    }
     console.table(Object.fromEntries(this.results));
     return this.results;
   }
@@ -1878,131 +2317,6 @@ class SimulationPalette {
 }
 
 SimulationPalette.$inject = [ 'canvas', 'eventBus' ];
-
-
-/***/ }),
-
-/***/ "./client/simulation/WorkCalendar.js":
-/*!*******************************************!*\
-  !*** ./client/simulation/WorkCalendar.js ***!
-  \*******************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (/* binding */ WorkCalendar)
-/* harmony export */ });
-/**
- * WorkCalendar class to handle time calculations based on a work schedule.
- */
-class WorkCalendar {
-  constructor(schedule) {
-    if (!schedule || !schedule.startTime || !schedule.endTime || !schedule.workDays) {
-      throw new Error('WorkCalendar: Invalid schedule provided.');
-    }
-
-    this.schedule = schedule;
-
-    const [startH, startM] = schedule.startTime.split(':').map(Number);
-    this.startHours = startH;
-    this.startMinutes = startM;
-
-    const [endH, endM] = schedule.endTime.split(':').map(Number);
-    this.endHours = endH;
-    this.endMinutes = endM;
-
-    const [overtimeH, overtimeM] = (schedule.overtimeLimit || schedule.endTime).split(':').map(Number);
-    this.overtimeHours = overtimeH;
-    this.overtimeMinutes = overtimeM;
-
-    this.lunchBreakMs = (schedule.lunchBreakHours || 0) * 60 * 60 * 1000;
-  }
-
-  /**
-   * Checks if a given date is a working day according to the schedule.
-   * @param {Date} date
-   * @returns {boolean}
-   */
-  isWorkDay(date) {
-    const day = date.getDay(); // Sunday=0, Monday=1, ..., Saturday=6
-    return this.schedule.workDays.includes(day);
-  }
-
-  /**
-   * Calculates the end date and time after adding a duration of work,
-   * and tracks overtime.
-   * @param {Date} startDate
-   * @param {number} durationMs - The duration of work in milliseconds.
-   * @returns {{finalDate: Date, overtimeMs: number}} The final date and the amount of overtime used.
-   */
-  addWorkTime(startDate, durationMs) {
-    let currentDate = new Date(startDate.getTime());
-    let remainingDurationMs = durationMs;
-    let overtimeMs = 0;
-
-    this.adjustToStartOfWork(currentDate);
-
-    while (remainingDurationMs > 0) {
-      if (!this.isWorkDay(currentDate)) {
-        currentDate.setDate(currentDate.getDate() + 1);
-        this.adjustToStartOfWork(currentDate);
-        continue;
-      }
-
-      const regularEndTime = new Date(currentDate.getTime()).setHours(this.endHours, this.endMinutes, 0, 0);
-      const overtimeLimitTime = new Date(currentDate.getTime()).setHours(this.overtimeHours, this.overtimeMinutes, 0, 0);
-
-      // --- Regular Hours ---
-      if (currentDate.getTime() < regularEndTime) {
-        const remainingRegularTime = regularEndTime - currentDate.getTime();
-        const timeToAdd = Math.min(remainingDurationMs, remainingRegularTime);
-        currentDate.setTime(currentDate.getTime() + timeToAdd);
-        remainingDurationMs -= timeToAdd;
-        if (remainingDurationMs <= 0) break;
-      }
-
-      // --- Overtime Hours ---
-      if (currentDate.getTime() < overtimeLimitTime) {
-        const remainingOvertime = overtimeLimitTime - currentDate.getTime();
-        const timeToAdd = Math.min(remainingDurationMs, remainingOvertime);
-        currentDate.setTime(currentDate.getTime() + timeToAdd);
-        remainingDurationMs -= timeToAdd;
-        overtimeMs += timeToAdd;
-        if (remainingDurationMs <= 0) break;
-      }
-
-      // If duration still remains, move to the start of the next day
-      currentDate.setDate(currentDate.getDate() + 1);
-      this.adjustToStartOfWork(currentDate);
-    }
-
-    return { finalDate: currentDate, overtimeMs };
-  }
-
-  /**
-   * Adjusts a given date to the beginning of the next available work slot.
-   * @param {Date} date - The date to adjust (will be mutated).
-   */
-  adjustToStartOfWork(date) {
-    while (!this.isWorkDay(date)) {
-      date.setDate(date.getDate() + 1);
-      date.setHours(this.startHours, this.startMinutes, 0, 0);
-    }
-
-    const startTime = new Date(date.getTime()).setHours(this.startHours, this.startMinutes, 0, 0);
-    const overtimeLimitTime = new Date(date.getTime()).setHours(this.overtimeHours, this.overtimeMinutes, 0, 0);
-
-    if (date.getTime() >= overtimeLimitTime) {
-      date.setDate(date.getDate() + 1);
-      date.setHours(this.startHours, this.startMinutes, 0, 0);
-      // Recursive call to handle moving from a Friday to a Monday
-      this.adjustToStartOfWork(date);
-    } else if (date.getTime() < startTime) {
-      date.setTime(startTime);
-    }
-  }
-}
 
 
 /***/ }),
@@ -11895,21 +12209,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
 .simulation-chart-panel canvas.hidden {
     display: none;
 }
-
-.sim-results-header {
-  margin-top: 15px;
-  margin-bottom: 5px;
-  margin-left: 10px;
-  font-weight: bold;
-  font-size: 1.1em;
-  border-bottom: 1px solid #ccc;
-  padding-bottom: 5px;
-}
-
-.summary-table {
-  margin-bottom: 20px !important;
-}
-`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"AAAA;;;CAGC;;AAED,uBAAuB;AACvB;EACE,kBAAkB;EAClB,SAAS;EACT,UAAU,EAAE,gDAAgD;EAC5D,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,YAAY;EACZ,aAAa,EAAE,sBAAsB;EACrC,YAAY;AACd;;AAEA;EACE,aAAa;EACb,sBAAsB;AACxB;;AAEA;EACE,YAAY;EACZ,eAAe;EACf,kBAAkB;EAClB,WAAW;EACX,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,YAAY;EACZ,gBAAgB;AAClB;;AAEA;IACI,eAAe;IACf,iBAAiB;AACrB;;AAEA;EACE,gBAAgB;AAClB;;AAEA;EACE,WAAW;EACX,YAAY;AACd;;AAEA;EACE,aAAa;EACb,0BAA0B;EAC1B,mBAAmB;EACnB,iBAAiB;EACjB,kBAAkB;EAClB,UAAU;AACZ;;;AAGA,aAAa;AACb;EACE,8BAA8B;EAC9B,YAAY;EACZ,gBAAgB;EAChB,kBAAkB;EAClB,eAAe;EACf,mBAAmB;AACrB;;AAEA,sBAAsB;AACtB;IACI,4BAA4B;AAChC;;AAEA;IACI,kBAAkB;IAClB,MAAM;IACN,OAAO;IACP,WAAW;IACX,YAAY;IACZ,oBAAoB;IACpB,wBAAwB;IACxB,YAAY;AAChB;;AAEA,gBAAgB;AAChB;EACE,kBAAkB;EAClB,YAAY;EACZ,WAAW;EACX,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,aAAa;EACb,aAAa;EACb,YAAY;EACZ,aAAa;EACb,sCAAsC;AACxC;;AAEA;EACE,cAAc;AAChB;;AAEA;EACE,aAAa;EACb,8BAA8B;EAC9B,mBAAmB;EACnB,6BAA6B;EAC7B,mBAAmB;EACnB,mBAAmB;EACnB,iBAAiB;AACnB;;AAEA;;EAEE,gBAAgB;EAChB,YAAY;EACZ,eAAe;EACf,cAAc;AAChB;;AAEA;IACI,WAAW;IACX,YAAY;AAChB;;AAEA;EACE,eAAe;AACjB;;AAEA;IACI,aAAa;IACb,0BAA0B;AAC9B;;AAEA;;;IAGI,aAAa;AACjB;;AAEA,gCAAgC;AAChC;IACI,gBAAgB,EAAE,2CAA2C;IAC7D,gBAAgB,EAAE,6CAA6C;AACnE;;AAEA;IACI,WAAW;IACX,YAAY;IACZ,cAAc,EAAE,8CAA8C;AAClE;;AAEA;IACI,WAAW;IACX,yBAAyB;IACzB,mBAAmB,EAAE,gDAAgD;AACzE;;AAEA;;IAEI,sBAAsB;IACtB,YAAY;IACZ,gBAAgB;IAChB,qBAAqB,EAAE,mBAAmB;AAC9C;;AAEA;IACI,yBAAyB;IACzB,iBAAiB;AACrB;;AAEA;IACI,yBAAyB;AAC7B;;AAEA;IACI,aAAa;AACjB;;AAEA;EACE,gBAAgB;EAChB,kBAAkB;EAClB,iBAAiB;EACjB,iBAAiB;EACjB,gBAAgB;EAChB,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA;EACE,8BAA8B;AAChC","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Chart Panel */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 10px;\n  display: none;\n  z-index: 100;\n  width: 1000px;\n  box-shadow: 0 5px 15px rgba(0,0,0,0.2);\n}\n\n.simulation-chart-panel.open {\n  display: block;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 5px;\n  margin-bottom: 10px;\n  font-weight: bold;\n}\n\n.simulation-chart-panel .header .close,\n.simulation-chart-panel .header .help-button {\n  background: none;\n  border: none;\n  cursor: pointer;\n  padding: 0 5px;\n}\n\n.simulation-chart-panel .header .help-button svg {\n    width: 18px;\n    height: 18px;\n}\n\n.simulation-chart-panel .header .close {\n  font-size: 20px;\n}\n\n.simulation-chart-panel .help-content {\n    padding: 10px;\n    border-top: 1px solid #eee;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n    display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n    max-height: 60vh; /* Limit height to 60% of viewport height */\n    overflow-y: auto; /* Add vertical scroll if content overflows */\n}\n\n.simulation-chart-panel .html-content {\n    width: 100%;\n    height: 100%;\n    overflow: auto; /* Scrollbars for the table container itself */\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n.sim-results-header {\n  margin-top: 15px;\n  margin-bottom: 5px;\n  margin-left: 10px;\n  font-weight: bold;\n  font-size: 1.1em;\n  border-bottom: 1px solid #ccc;\n  padding-bottom: 5px;\n}\n\n.summary-table {\n  margin-bottom: 20px !important;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"AAAA;;;CAGC;;AAED,uBAAuB;AACvB;EACE,kBAAkB;EAClB,SAAS;EACT,UAAU,EAAE,gDAAgD;EAC5D,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,YAAY;EACZ,aAAa,EAAE,sBAAsB;EACrC,YAAY;AACd;;AAEA;EACE,aAAa;EACb,sBAAsB;AACxB;;AAEA;EACE,YAAY;EACZ,eAAe;EACf,kBAAkB;EAClB,WAAW;EACX,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,YAAY;EACZ,gBAAgB;AAClB;;AAEA;IACI,eAAe;IACf,iBAAiB;AACrB;;AAEA;EACE,gBAAgB;AAClB;;AAEA;EACE,WAAW;EACX,YAAY;AACd;;AAEA;EACE,aAAa;EACb,0BAA0B;EAC1B,mBAAmB;EACnB,iBAAiB;EACjB,kBAAkB;EAClB,UAAU;AACZ;;;AAGA,aAAa;AACb;EACE,8BAA8B;EAC9B,YAAY;EACZ,gBAAgB;EAChB,kBAAkB;EAClB,eAAe;EACf,mBAAmB;AACrB;;AAEA,sBAAsB;AACtB;IACI,4BAA4B;AAChC;;AAEA;IACI,kBAAkB;IAClB,MAAM;IACN,OAAO;IACP,WAAW;IACX,YAAY;IACZ,oBAAoB;IACpB,wBAAwB;IACxB,YAAY;AAChB;;AAEA,gBAAgB;AAChB;EACE,kBAAkB;EAClB,YAAY;EACZ,WAAW;EACX,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,aAAa;EACb,aAAa;EACb,YAAY;EACZ,aAAa;EACb,sCAAsC;AACxC;;AAEA;EACE,cAAc;AAChB;;AAEA;EACE,aAAa;EACb,8BAA8B;EAC9B,mBAAmB;EACnB,6BAA6B;EAC7B,mBAAmB;EACnB,mBAAmB;EACnB,iBAAiB;AACnB;;AAEA;;EAEE,gBAAgB;EAChB,YAAY;EACZ,eAAe;EACf,cAAc;AAChB;;AAEA;IACI,WAAW;IACX,YAAY;AAChB;;AAEA;EACE,eAAe;AACjB;;AAEA;IACI,aAAa;IACb,0BAA0B;AAC9B;;AAEA;;;IAGI,aAAa;AACjB;;AAEA,gCAAgC;AAChC;IACI,gBAAgB,EAAE,2CAA2C;IAC7D,gBAAgB,EAAE,6CAA6C;AACnE;;AAEA;IACI,WAAW;IACX,YAAY;IACZ,cAAc,EAAE,8CAA8C;AAClE;;AAEA;IACI,WAAW;IACX,yBAAyB;IACzB,mBAAmB,EAAE,gDAAgD;AACzE;;AAEA;;IAEI,sBAAsB;IACtB,YAAY;IACZ,gBAAgB;IAChB,qBAAqB,EAAE,mBAAmB;AAC9C;;AAEA;IACI,yBAAyB;IACzB,iBAAiB;AACrB;;AAEA;IACI,yBAAyB;AAC7B;;AAEA;IACI,aAAa;AACjB","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Chart Panel */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 10px;\n  display: none;\n  z-index: 100;\n  width: 1000px;\n  box-shadow: 0 5px 15px rgba(0,0,0,0.2);\n}\n\n.simulation-chart-panel.open {\n  display: block;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 5px;\n  margin-bottom: 10px;\n  font-weight: bold;\n}\n\n.simulation-chart-panel .header .close,\n.simulation-chart-panel .header .help-button {\n  background: none;\n  border: none;\n  cursor: pointer;\n  padding: 0 5px;\n}\n\n.simulation-chart-panel .header .help-button svg {\n    width: 18px;\n    height: 18px;\n}\n\n.simulation-chart-panel .header .close {\n  font-size: 20px;\n}\n\n.simulation-chart-panel .help-content {\n    padding: 10px;\n    border-top: 1px solid #eee;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n    display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n    max-height: 60vh; /* Limit height to 60% of viewport height */\n    overflow-y: auto; /* Add vertical scroll if content overflows */\n}\n\n.simulation-chart-panel .html-content {\n    width: 100%;\n    height: 100%;\n    overflow: auto; /* Scrollbars for the table container itself */\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 

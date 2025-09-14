@@ -34,7 +34,6 @@ export default class ChartPanel {
             <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
             <option value="paretoCost">Diagrama de Pareto (Costos)</option>
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
-            <option value="estimations" data-production="true">Estimaciones de Producción</option>
           </select>
           <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
           <button class="close" title="Cerrar">×</button>
