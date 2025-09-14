@@ -2,6 +2,64 @@
 
 Este documento es una guía técnica para agentes de IA. Describe cómo interactuar con los datos de simulación (`simulationData`) almacenados dentro de los diagramas BPMN en este proyecto. El objetivo es permitir que un agente pueda construir nuevas herramientas, como un panel de propiedades, para editar estos datos.
 
+## Análisis General del Plugin: ¿Qué Hace y Cómo Funciona?
+
+Este proyecto es un **plugin para Camunda Modeler** que añade una potente capacidad de **simulación y análisis de procesos de negocio**. Su objetivo es permitir a un usuario analizar y optimizar un proceso BPMN antes de su implementación.
+
+El flujo de trabajo general es el siguiente:
+
+1.  **Definición de Datos de Simulación**: El usuario enriquece el diagrama BPMN con datos específicos para la simulación. Por ejemplo, a una tarea se le puede asignar su tiempo de procesamiento, su costo, los recursos que necesita e incluso su probabilidad de fallo. Estos datos se almacenan directamente en el archivo `.bpmn` dentro de una propiedad de extensión llamada `simulationData`.
+
+2.  **Ejecución de la Simulación**: El plugin contiene un **motor de simulación de eventos discretos**. Al iniciar la simulación, este motor lee los datos `simulationData` de cada elemento y ejecuta el proceso de forma virtual un número configurable de veces (ej. 1000 instancias). Durante la ejecución, recopila métricas detalladas sobre el rendimiento del proceso.
+
+3.  **Análisis y Visualización de Resultados**: Una vez finalizada la simulación, el plugin ofrece herramientas visuales para analizar los resultados:
+    *   **Mapa de Calor (Heatmap)**: Colorea el diagrama para mostrar visualmente los "puntos calientes" del proceso, como las tareas que consumen más tiempo o las rutas más transitadas.
+    *   **Panel de Gráficos Avanzados**: Muestra un panel con múltiples gráficos para un análisis más profundo, incluyendo:
+        *   **Gráficos de Barras**: Para identificar las tareas "Top 5" por costo, tiempo de espera o tiempo de procesamiento.
+        *   **Diagrama de Dispersión**: Para correlacionar el costo y el tiempo de las tareas.
+        *   **Diagrama de Pareto**: Para aplicar el principio 80/20 e identificar qué pocas tareas son responsables de la mayoría de los fallos del proceso.
+
+En resumen, este plugin transforma Camunda Modeler de una herramienta de modelado a una plataforma de **inteligencia de procesos**, permitiendo la toma de decisiones basada en datos cuantitativos.
+
+## Estructura del Proyecto y Archivos Clave
+
+A continuación se detalla la estructura de los archivos más importantes del plugin y sus responsabilidades.
+
+| Archivo / Directorio | Propósito | Conexiones Principales |
+| :--- | :--- | :--- |
+| `index.js` | **Punto de entrada principal del plugin**. Es el primer archivo que Camunda Modeler carga. Su función es registrar el resto del código del plugin. | Carga `client/client.js` y `menu.js`. |
+| `menu.js` | **Define los menús del plugin** en la barra superior de Camunda Modeler, como "Insertar Lógica de Simulación (Datos Aleatorios)". | Es llamado por `index.js`. |
+| `package.json` | Archivo de configuración estándar de Node.js. Define el nombre del proyecto, sus **dependencias** (como `bpmn-js`) y los scripts para construirlo. | Define qué paquetes se instalan al ejecutar `npm install`. |
+| `webpack.config.js` | Configuración de Webpack, una herramienta que **empaqueta todo el código JavaScript del cliente** (`client/`) en un único archivo (`client/client.bundle.js`) que el navegador puede entender. | Lee de `client/client.js` y produce `client/client.bundle.js`. |
+| **`client/`** | **Directorio que contiene todo el código que se ejecuta en la interfaz de usuario** (el "lado del cliente"). | |
+| `client/client.js` | **Punto de entrada del código del cliente**. Aquí se inician todos los módulos de la interfaz, como los controladores y paneles. | Carga e inicializa los módulos de `client/simulation/` y `client/editor/`. |
+| **`client/simulation/`** | **El corazón del plugin**. Contiene toda la lógica para la simulación y el análisis. | |
+| `simulation/SimulationEngine.js` | **El cerebro de la simulación**. Contiene la lógica para ejecutar la simulación de eventos discretos, calcular probabilidades, manejar recursos, etc. Es pura lógica, no tiene interfaz de usuario. | Es utilizado por `SimulationController.js`. |
+| `simulation/SimulationController.js` | **El orquestador**. Conecta la interfaz de usuario con la lógica de negocio. Escucha los clics en los botones, inicia el `SimulationEngine`, y muestra/oculta los paneles de resultados. | Interactúa con `SimulationEngine.js`, `SimulationPalette.js` y `ChartPanel.js`. |
+| `simulation/SimulationPalette.js` | Define y gestiona los **botones de la interfaz** (Play, Heatmap, Gráficos) que aparecen en la paleta de herramientas del modelador. | Envía eventos al `SimulationController.js` cuando se hace clic en un botón. |
+| `simulation/ChartPanel.js` | Implementa toda la **interfaz del panel de gráficos**. Contiene el código para dibujar los gráficos de barras, dispersión y Pareto usando los resultados de la simulación. | Es controlado por `SimulationController.js`. |
+| `simulation/RandomDataGenerator.js` | Contiene la lógica para **generar datos de simulación aleatorios** y poblarlos en el diagrama, que se activa desde el menú definido en `menu.js`. | Modifica el diagrama usando los servicios de `bpmn-js`. |
+
+## Componentes de Software y Conceptos Clave
+
+Para extender o modificar este plugin, es fundamental comprender los siguientes componentes y conceptos:
+
+1.  **El Objeto `simulationData`**:
+    *   Es un **objeto JSON** que contiene todos los parámetros de simulación para un elemento BPMN.
+    *   **No se guarda en un archivo aparte**, sino que se almacena como un *string* dentro de una propiedad XML (`camunda:property`) en el propio archivo `.bpmn`.
+    *   Su estructura varía según el tipo de elemento (no es lo mismo para una Tarea que para una Compuerta). La guía técnica de lectura/escritura y el prompt de ejemplo más adelante detallan la estructura exacta para cada caso.
+
+2.  **Servicios de `bpmn-js`**:
+    El plugin no modifica el XML del BPMN directamente. En su lugar, utiliza una API (un conjunto de servicios) que `bpmn-js` provee para interactuar con el diagrama de forma segura. Los más importantes son:
+    *   `selection`: Para saber qué elemento tiene seleccionado el usuario.
+    *   `elementRegistry`: Para obtener el objeto de un elemento a partir de su ID.
+    *   `modeling`: **El servicio más importante para hacer cambios**. Se usa para actualizar propiedades, crear o borrar elementos.
+    *   `bpmnFactory`: Se usa para crear nuevos elementos BPMN (como una `camunda:property`) que luego se añaden al diagrama con `modeling`.
+
+3.  **Clases Principales**:
+    *   `SimulationEngine`: La clase que contiene la lógica pura de la simulación. No tiene interfaz de usuario y opera sobre los datos del modelo.
+    *   `SimulationController`: La clase que actúa como "pegamento" o controlador, conectando la interfaz de usuario (botones, paneles) con el motor de simulación.
+
 ## 1. Arquitectura de Datos: ¿Dónde se guardan los datos?
 
 Los datos de simulación no se guardan en un archivo separado. Se almacenan directamente dentro del archivo `.bpmn` (que es un XML) como una **propiedad de extensión de Camunda**.
