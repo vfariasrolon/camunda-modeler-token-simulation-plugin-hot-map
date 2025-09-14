@@ -34,7 +34,7 @@ export default class ChartPanel {
             <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
             <option value="paretoCost">Diagrama de Pareto (Costos)</option>
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
-            <option value="productionScurve" data-production="true">Curva de Avance de Producción</option>
+            <option value="estimations" data-production="true">Estimaciones de Producción</option>
           </select>
           <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
           <button class="close" title="Cerrar">×</button>
@@ -127,17 +127,6 @@ export default class ChartPanel {
 
   show() {
     this.toggle(true);
-  }
-
-  toggleProductionCharts(show) {
-    const productionOption = this._container.querySelector('[data-production="true"]');
-    if (productionOption) {
-      // Reset selection if hiding and it's selected
-      if (!show && productionOption.selected) {
-        this.chartSelect.selectedIndex = 0;
-      }
-      productionOption.style.display = show ? '' : 'none';
-    }
   }
 }
 

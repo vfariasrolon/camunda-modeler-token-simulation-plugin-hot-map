@@ -24,10 +24,6 @@
   },
   "author": "Philipp Fromme",
   "license": "MIT",
-  "dependencies": {
-    "chartjs-adapter-date-fns": "^3.0.0",
-    "date-fns": "^3.0.0"
-  },
   "devDependencies": {
     "bpmn-js": "^18.6.3",
     "bpmn-js-token-simulation": "^0.38.1",

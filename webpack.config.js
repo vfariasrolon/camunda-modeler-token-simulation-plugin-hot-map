@@ -8,11 +8,6 @@ module.exports = {
     path: path.resolve(__dirname, 'client'),
     filename: 'client.bundle.js'
   },
-  resolve: {
-    alias: {
-      'chartjs-adapter-date-fns': path.resolve(__dirname, 'node_modules/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.js')
-    }
-  },
   module: {
     rules: [
       {
