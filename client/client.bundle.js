@@ -1542,11 +1542,156 @@ class SimulationController {
   }
 
   createInputParametersTable(data) {
-    // ... (unchanged)
+    if (!data || data.length === 0) {
+      return '<p style="text-align: center; margin-top: 20px;">No se encontraron elementos con datos de simulación configurados.</p>';
+    }
+
+    let tableHtml = `
+      <table class="sim-results-table">
+        <thead>
+          <tr>
+            <th>Elemento</th>
+            <th>Parámetro</th>
+            <th>Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    const dayMap = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+
+    data.forEach(element => {
+      const isRoot = element.data.rootCheckpoint;
+      const elementName = `${element.name} ${isRoot ? '(Raíz)' : ''}`;
+
+      Object.entries(element.data).forEach(([key, value]) => {
+        if (key === 'rootCheckpoint') return; // Don't show the checkpoint itself
+
+        if (key === 'workSchedule' && typeof value === 'object') {
+          const scheduleEntries = Object.entries(value);
+          scheduleEntries.forEach(([schedKey, schedValue], index) => {
+            let displayValue = JSON.stringify(schedValue);
+            if (schedKey === 'workDays') {
+              displayValue = schedValue.map(d => dayMap[d] || d).join(', ');
+            } else if (schedKey === 'lunchBreakHours') {
+              displayValue = `${schedValue} hora(s)`;
+            }
+            tableHtml += `
+              <tr>
+                ${index === 0 ? `<td rowspan="${scheduleEntries.length}">${elementName}</td>` : ''}
+                <td>Horario: ${schedKey}</td>
+                <td>${displayValue}</td>
+              </tr>`;
+          });
+        } else if (key === 'resourcePools' && Array.isArray(value)) {
+           value.forEach((pool, index) => {
+              tableHtml += `
+                <tr>
+                  ${index === 0 ? `<td rowspan="${value.length}">${elementName}</td>` : ''}
+                  <td>Pool de Recursos</td>
+                  <td>${pool.name} (Cantidad: ${pool.quantity})</td>
+                </tr>
+              `;
+           });
+        } else if (typeof value !== 'object' || value === null) {
+          tableHtml += `
+            <tr>
+              <td>${elementName}</td>
+              <td>${key}</td>
+              <td>${JSON.stringify(value)}</td>
+            </tr>
+          `;
+        } else {
+          const subEntries = Object.entries(value);
+          subEntries.forEach(([subKey, subValue], index) => {
+            tableHtml += `
+              <tr>
+                ${index === 0 ? `<td rowspan="${subEntries.length}">${element.name}</td>` : ''}
+                <td>${key}.${subKey}</td>
+                <td>${JSON.stringify(subValue)}</td>
+              </tr>
+            `;
+          });
+        }
+      });
+    });
+
+    tableHtml += '</tbody></table>';
+    return tableHtml;
   }
 
   createResultsTable(results) {
-    // ... (unchanged for now, will add overtime later)
+    if (!results || results.size === 0) {
+      return '<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles. Por favor, ejecute una simulación primero.</p>';
+    }
+
+    let tableHtml = '';
+
+    // Add production results summary if in production mode
+    if (this._simulationEngine.workCalendar) {
+      const rootElementId = this._simulationEngine.rootElementId;
+      const rootResults = results.get(rootElementId);
+      if (rootResults) {
+        const completionDate = rootResults.estimatedCompletionDate
+          ? rootResults.estimatedCompletionDate.toLocaleString('es-ES', { dateStyle: 'full', timeStyle: 'medium' })
+          : 'N/A';
+        const totalOvertime = rootResults.totalOvertime
+          ? (0,_util__WEBPACK_IMPORTED_MODULE_3__.formatMilliseconds)(rootResults.totalOvertime)
+          : '0s';
+
+        tableHtml += `
+          <h4 class="sim-results-header">Resumen de Producción</h4>
+          <table class="sim-results-table summary-table">
+            <thead>
+              <tr>
+                <th>Fecha de Finalización Estimada</th>
+                <th>Horas Extras Totales</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>${completionDate}</td>
+                <td>${totalOvertime}</td>
+              </tr>
+            </tbody>
+          </table>
+        `;
+      }
+    }
+
+    tableHtml += `
+      <h4 class="sim-results-header">Resultados por Elemento</h4>
+      <table class="sim-results-table">
+        <thead>
+          <tr>
+            <th>Elemento</th>
+            <th>Ejecuciones</th>
+            <th>Fallos</th>
+            <th>Espera Total</th>
+            <th>Proceso Total</th>
+            <th>Costo Total</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    results.forEach(result => {
+      if (result.executionCount > 0 || result.totalCost > 0 || result.totalProcessingTime > 0) {
+        tableHtml += `
+          <tr>
+            <td>${result.name}</td>
+            <td>${result.executionCount}</td>
+            <td>${result.failureCount}</td>
+            <td>${(0,_util__WEBPACK_IMPORTED_MODULE_3__.formatMilliseconds)(result.totalWaitTime)}</td>
+            <td>${(0,_util__WEBPACK_IMPORTED_MODULE_3__.formatMilliseconds)(result.totalProcessingTime)}</td>
+            <td>$${result.totalCost.toFixed(2)}</td>
+          </tr>
+        `;
+      }
+    });
+
+    tableHtml += '</tbody></table>';
+    return tableHtml;
   }
 
   getChartData(metric) {
@@ -12229,7 +12374,21 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
 .simulation-chart-panel canvas.hidden {
     display: none;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"AAAA;;;CAGC;;AAED,uBAAuB;AACvB;EACE,kBAAkB;EAClB,SAAS;EACT,UAAU,EAAE,gDAAgD;EAC5D,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,YAAY;EACZ,aAAa,EAAE,sBAAsB;EACrC,YAAY;AACd;;AAEA;EACE,aAAa;EACb,sBAAsB;AACxB;;AAEA;EACE,YAAY;EACZ,eAAe;EACf,kBAAkB;EAClB,WAAW;EACX,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,YAAY;EACZ,gBAAgB;AAClB;;AAEA;IACI,eAAe;IACf,iBAAiB;AACrB;;AAEA;EACE,gBAAgB;AAClB;;AAEA;EACE,WAAW;EACX,YAAY;AACd;;AAEA;EACE,aAAa;EACb,0BAA0B;EAC1B,mBAAmB;EACnB,iBAAiB;EACjB,kBAAkB;EAClB,UAAU;AACZ;;;AAGA,aAAa;AACb;EACE,8BAA8B;EAC9B,YAAY;EACZ,gBAAgB;EAChB,kBAAkB;EAClB,eAAe;EACf,mBAAmB;AACrB;;AAEA,sBAAsB;AACtB;IACI,4BAA4B;AAChC;;AAEA;IACI,kBAAkB;IAClB,MAAM;IACN,OAAO;IACP,WAAW;IACX,YAAY;IACZ,oBAAoB;IACpB,wBAAwB;IACxB,YAAY;AAChB;;AAEA,gBAAgB;AAChB;EACE,kBAAkB;EAClB,YAAY;EACZ,WAAW;EACX,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,aAAa;EACb,aAAa;EACb,YAAY;EACZ,aAAa;EACb,sCAAsC;AACxC;;AAEA;EACE,cAAc;AAChB;;AAEA;EACE,aAAa;EACb,8BAA8B;EAC9B,mBAAmB;EACnB,6BAA6B;EAC7B,mBAAmB;EACnB,mBAAmB;EACnB,iBAAiB;AACnB;;AAEA;;EAEE,gBAAgB;EAChB,YAAY;EACZ,eAAe;EACf,cAAc;AAChB;;AAEA;IACI,WAAW;IACX,YAAY;AAChB;;AAEA;EACE,eAAe;AACjB;;AAEA;IACI,aAAa;IACb,0BAA0B;AAC9B;;AAEA;;;IAGI,aAAa;AACjB;;AAEA,gCAAgC;AAChC;IACI,gBAAgB,EAAE,2CAA2C;IAC7D,gBAAgB,EAAE,6CAA6C;AACnE;;AAEA;IACI,WAAW;IACX,YAAY;IACZ,cAAc,EAAE,8CAA8C;AAClE;;AAEA;IACI,WAAW;IACX,yBAAyB;IACzB,mBAAmB,EAAE,gDAAgD;AACzE;;AAEA;;IAEI,sBAAsB;IACtB,YAAY;IACZ,gBAAgB;IAChB,qBAAqB,EAAE,mBAAmB;AAC9C;;AAEA;IACI,yBAAyB;IACzB,iBAAiB;AACrB;;AAEA;IACI,yBAAyB;AAC7B;;AAEA;IACI,aAAa;AACjB","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Chart Panel */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 10px;\n  display: none;\n  z-index: 100;\n  width: 1000px;\n  box-shadow: 0 5px 15px rgba(0,0,0,0.2);\n}\n\n.simulation-chart-panel.open {\n  display: block;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 5px;\n  margin-bottom: 10px;\n  font-weight: bold;\n}\n\n.simulation-chart-panel .header .close,\n.simulation-chart-panel .header .help-button {\n  background: none;\n  border: none;\n  cursor: pointer;\n  padding: 0 5px;\n}\n\n.simulation-chart-panel .header .help-button svg {\n    width: 18px;\n    height: 18px;\n}\n\n.simulation-chart-panel .header .close {\n  font-size: 20px;\n}\n\n.simulation-chart-panel .help-content {\n    padding: 10px;\n    border-top: 1px solid #eee;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n    display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n    max-height: 60vh; /* Limit height to 60% of viewport height */\n    overflow-y: auto; /* Add vertical scroll if content overflows */\n}\n\n.simulation-chart-panel .html-content {\n    width: 100%;\n    height: 100%;\n    overflow: auto; /* Scrollbars for the table container itself */\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n"],"sourceRoot":""}]);
+
+.sim-results-header {
+  margin-top: 15px;
+  margin-bottom: 5px;
+  margin-left: 10px;
+  font-weight: bold;
+  font-size: 1.1em;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 5px;
+}
+
+.summary-table {
+  margin-bottom: 20px !important;
+}
+`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"AAAA;;;CAGC;;AAED,uBAAuB;AACvB;EACE,kBAAkB;EAClB,SAAS;EACT,UAAU,EAAE,gDAAgD;EAC5D,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,YAAY;EACZ,aAAa,EAAE,sBAAsB;EACrC,YAAY;AACd;;AAEA;EACE,aAAa;EACb,sBAAsB;AACxB;;AAEA;EACE,YAAY;EACZ,eAAe;EACf,kBAAkB;EAClB,WAAW;EACX,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,YAAY;EACZ,gBAAgB;AAClB;;AAEA;IACI,eAAe;IACf,iBAAiB;AACrB;;AAEA;EACE,gBAAgB;AAClB;;AAEA;EACE,WAAW;EACX,YAAY;AACd;;AAEA;EACE,aAAa;EACb,0BAA0B;EAC1B,mBAAmB;EACnB,iBAAiB;EACjB,kBAAkB;EAClB,UAAU;AACZ;;;AAGA,aAAa;AACb;EACE,8BAA8B;EAC9B,YAAY;EACZ,gBAAgB;EAChB,kBAAkB;EAClB,eAAe;EACf,mBAAmB;AACrB;;AAEA,sBAAsB;AACtB;IACI,4BAA4B;AAChC;;AAEA;IACI,kBAAkB;IAClB,MAAM;IACN,OAAO;IACP,WAAW;IACX,YAAY;IACZ,oBAAoB;IACpB,wBAAwB;IACxB,YAAY;AAChB;;AAEA,gBAAgB;AAChB;EACE,kBAAkB;EAClB,YAAY;EACZ,WAAW;EACX,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,aAAa;EACb,aAAa;EACb,YAAY;EACZ,aAAa;EACb,sCAAsC;AACxC;;AAEA;EACE,cAAc;AAChB;;AAEA;EACE,aAAa;EACb,8BAA8B;EAC9B,mBAAmB;EACnB,6BAA6B;EAC7B,mBAAmB;EACnB,mBAAmB;EACnB,iBAAiB;AACnB;;AAEA;;EAEE,gBAAgB;EAChB,YAAY;EACZ,eAAe;EACf,cAAc;AAChB;;AAEA;IACI,WAAW;IACX,YAAY;AAChB;;AAEA;EACE,eAAe;AACjB;;AAEA;IACI,aAAa;IACb,0BAA0B;AAC9B;;AAEA;;;IAGI,aAAa;AACjB;;AAEA,gCAAgC;AAChC;IACI,gBAAgB,EAAE,2CAA2C;IAC7D,gBAAgB,EAAE,6CAA6C;AACnE;;AAEA;IACI,WAAW;IACX,YAAY;IACZ,cAAc,EAAE,8CAA8C;AAClE;;AAEA;IACI,WAAW;IACX,yBAAyB;IACzB,mBAAmB,EAAE,gDAAgD;AACzE;;AAEA;;IAEI,sBAAsB;IACtB,YAAY;IACZ,gBAAgB;IAChB,qBAAqB,EAAE,mBAAmB;AAC9C;;AAEA;IACI,yBAAyB;IACzB,iBAAiB;AACrB;;AAEA;IACI,yBAAyB;AAC7B;;AAEA;IACI,aAAa;AACjB;;AAEA;EACE,gBAAgB;EAChB,kBAAkB;EAClB,iBAAiB;EACjB,iBAAiB;EACjB,gBAAgB;EAChB,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA;EACE,8BAA8B;AAChC","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Chart Panel */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 10px;\n  display: none;\n  z-index: 100;\n  width: 1000px;\n  box-shadow: 0 5px 15px rgba(0,0,0,0.2);\n}\n\n.simulation-chart-panel.open {\n  display: block;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 5px;\n  margin-bottom: 10px;\n  font-weight: bold;\n}\n\n.simulation-chart-panel .header .close,\n.simulation-chart-panel .header .help-button {\n  background: none;\n  border: none;\n  cursor: pointer;\n  padding: 0 5px;\n}\n\n.simulation-chart-panel .header .help-button svg {\n    width: 18px;\n    height: 18px;\n}\n\n.simulation-chart-panel .header .close {\n  font-size: 20px;\n}\n\n.simulation-chart-panel .help-content {\n    padding: 10px;\n    border-top: 1px solid #eee;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n    display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n    max-height: 60vh; /* Limit height to 60% of viewport height */\n    overflow-y: auto; /* Add vertical scroll if content overflows */\n}\n\n.simulation-chart-panel .html-content {\n    width: 100%;\n    height: 100%;\n    overflow: auto; /* Scrollbars for the table container itself */\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n.sim-results-header {\n  margin-top: 15px;\n  margin-bottom: 5px;\n  margin-left: 10px;\n  font-weight: bold;\n  font-size: 1.1em;\n  border-bottom: 1px solid #ccc;\n  padding-bottom: 5px;\n}\n\n.summary-table {\n  margin-bottom: 20px !important;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 
