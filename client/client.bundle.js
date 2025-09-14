@@ -1151,6 +1151,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationController)
 /* harmony export */ });
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dom */ "./node_modules/min-dom/dist/index.esm.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var chart_js_auto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! chart.js/auto */ "./node_modules/chart.js/auto/auto.js");
@@ -1161,9 +1162,32 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-const RunIcon = `...`; // (content omitted for brevity)
-const ShowIcon = `...`;
-const ChartIcon = `...`;
+const RunIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+      <path d="M 4 2 L 4 14 L 14 8 Z" fill="currentColor" />
+    </svg>
+  </span>
+`;
+
+const ShowIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -40 80 80">
+      <circle r="39"/>
+      <path fill="#fff" d="M0,38a38,38 0 0 1 0,-76a19,19 0 0 1 0,38a19,19 0 0 0 0,38"/>
+      <circle r="5" cy="19" fill="#fff"/>
+      <circle r="5" cy="-19"/>
+    </svg>
+  </span>
+`;
+
+const ChartIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z" />
+    </svg>
+  </span>
+`;
 
 class SimulationController {
   constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel) {
@@ -1190,7 +1214,31 @@ class SimulationController {
   }
 
   init() {
-    // ... (init logic is the same)
+    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`<div class="bts-entry" title="Ejecutar Simulación">${RunIcon}</div>`);
+    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`<div class="bts-entry" title="Mostrar Análisis">${ShowIcon}</div>`);
+    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`<div class="bts-entry" title="Mostrar Gráficos">${ChartIcon}</div>`);
+
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(runButton, 'click', () => this.runSimulation());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
+
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry(runButton, 12);
+    this._tokenSimulationPalette.addEntry(showButton, 13);
+    this._tokenSimulationPalette.addEntry(chartButton, 14);
+
+    this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
+    this._simulationPalette.setClearCallback(this.clear.bind(this));
+    this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
+
+    this._eventBus.on('simulation.charts.opened', () => this.showChart());
+    this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
+
+    // Hide estimation chart option by default
+    const estimationOption = this._chartPanel.getContainer().querySelector('[data-production="true"]');
+    if (estimationOption) {
+      estimationOption.style.display = 'none';
+    }
   }
 
   runSimulation() {

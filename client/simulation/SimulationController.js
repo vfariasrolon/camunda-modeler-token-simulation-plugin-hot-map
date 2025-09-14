@@ -8,9 +8,32 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, formatMilliseconds } from './util';
 
-const RunIcon = `...`; // (content omitted for brevity)
-const ShowIcon = `...`;
-const ChartIcon = `...`;
+const RunIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+      <path d="M 4 2 L 4 14 L 14 8 Z" fill="currentColor" />
+    </svg>
+  </span>
+`;
+
+const ShowIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -40 80 80">
+      <circle r="39"/>
+      <path fill="#fff" d="M0,38a38,38 0 0 1 0,-76a19,19 0 0 1 0,38a19,19 0 0 0 0,38"/>
+      <circle r="5" cy="19" fill="#fff"/>
+      <circle r="5" cy="-19"/>
+    </svg>
+  </span>
+`;
+
+const ChartIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path d="M22,21H2V3H4V19H6V10H10V19H12V6H16V19H18V14H22V21Z" />
+    </svg>
+  </span>
+`;
 
 export default class SimulationController {
   constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel) {
@@ -37,7 +60,31 @@ export default class SimulationController {
   }
 
   init() {
-    // ... (init logic is the same)
+    const runButton = domify(`<div class="bts-entry" title="Ejecutar Simulación">${RunIcon}</div>`);
+    const showButton = domify(`<div class="bts-entry" title="Mostrar Análisis">${ShowIcon}</div>`);
+    const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos">${ChartIcon}</div>`);
+
+    domEvent.bind(runButton, 'click', () => this.runSimulation());
+    domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    domEvent.bind(chartButton, 'click', () => this._chartPanel.toggle());
+
+    this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry(runButton, 12);
+    this._tokenSimulationPalette.addEntry(showButton, 13);
+    this._tokenSimulationPalette.addEntry(chartButton, 14);
+
+    this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
+    this._simulationPalette.setClearCallback(this.clear.bind(this));
+    this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
+
+    this._eventBus.on('simulation.charts.opened', () => this.showChart());
+    this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
+
+    // Hide estimation chart option by default
+    const estimationOption = this._chartPanel.getContainer().querySelector('[data-production="true"]');
+    if (estimationOption) {
+      estimationOption.style.display = 'none';
+    }
   }
 
   runSimulation() {
