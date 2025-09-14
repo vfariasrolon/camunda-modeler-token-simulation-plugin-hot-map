@@ -1,5 +1,6 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData } from './util';
+import WorkCalendar from './WorkCalendar.js';
 
 const triangular = (min, mode, max) => {
   const F = (max - min) / (mode - min);
@@ -59,6 +60,9 @@ export default class SimulationEngine {
     this.instanceStates = new Map();
     this.clock = 0;
     this.completedInstances = 0;
+    this.workCalendar = null;
+    this.progressSnapshots = [];
+    this.rootElementId = null;
   }
 
   initialize() {
@@ -68,6 +72,9 @@ export default class SimulationEngine {
     this.results = new Map();
     this.resourcePools = new Map();
     this.instanceStates = new Map();
+    this.workCalendar = null;
+    this.progressSnapshots = [];
+    this.rootElementId = null;
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
@@ -81,7 +88,6 @@ export default class SimulationEngine {
     if (!element.outgoing || element.outgoing.length === 0) {
       return [];
     }
-
     if (is(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
@@ -124,7 +130,11 @@ export default class SimulationEngine {
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
-      elementResults.totalCycleTime += (this.clock - startTime);
+      this.progressSnapshots.push([new Date(this.clock.getTime ? this.clock.getTime() : this.clock), this.completedInstances]);
+      const cycleTime = this.workCalendar
+        ? (this.clock.getTime() - startTime.getTime())
+        : (this.clock - startTime);
+      elementResults.totalCycleTime += cycleTime;
       this.instanceStates.delete(instanceId);
       return;
     }
@@ -142,9 +152,7 @@ export default class SimulationEngine {
       if (is(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
-
         gatewayState.arrived.add(nextConnection.id);
-
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
@@ -171,10 +179,23 @@ export default class SimulationEngine {
       processingTime += reworkTime;
       this.results.get(element.id).failureCount++;
     }
-    const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
 
+    let completionTime, overtimeMs = 0;
+    if (this.workCalendar) {
+      const calc = this.workCalendar.addWorkTime(time, processingTime);
+      completionTime = calc.finalDate;
+      overtimeMs = calc.overtimeMs;
+    } else {
+      completionTime = time + processingTime;
+    }
+
+    if (overtimeMs > 0 && this.rootElementId) {
+      this.results.get(this.rootElementId).totalOvertime += overtimeMs;
+    }
+
+    const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
-    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost, quantityRequired };
+    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: completionTime, instanceId, startTime, processingTime, cost, quantityRequired };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
       const pool = this.resourcePools.get(data.resources.pool);
@@ -190,36 +211,68 @@ export default class SimulationEngine {
 
   run() {
     this.initialize();
-    const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
-    const configData = getSimulationData(processRoot);
-    const { runValue } = configData ? configData.simulationConfig : { runValue: 100 };
-    if (configData && configData.resourcePools) {
+
+    let rootElement = this._elementRegistry.find(el => {
+      const data = getSimulationData(el);
+      return data && data.rootCheckpoint === true;
+    });
+
+    if (!rootElement) {
+      rootElement = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant')) || this._elementRegistry.find(el => is(el, 'bpmn:Process'));
+    }
+    this.rootElementId = rootElement.id;
+    this.results.get(this.rootElementId).totalOvertime = 0;
+
+    const configData = getSimulationData(rootElement) || {};
+    const productionMode = !!configData.rootCheckpoint;
+    const productionTarget = configData.productionTarget || 1;
+    const legacyRunValue = configData.simulationConfig ? configData.simulationConfig.runValue : 100;
+    const finalTarget = productionMode ? productionTarget : legacyRunValue;
+
+    if (productionMode && configData.workSchedule) {
+      this.workCalendar = new WorkCalendar(configData.workSchedule);
+      this.clock = new Date();
+      this.workCalendar.adjustToStartOfWork(this.clock);
+    } else {
+      this.clock = 0;
+    }
+
+    if (configData.resourcePools) {
       configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
-    const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
-    if (!startEvent) return this.results;
 
-    const startEventData = getSimulationData(startEvent);
-    let arrivalInterval = 1000; // Default to 1 second if not specified
-    if (startEventData && startEventData.arrivalRate) {
-      const rate = startEventData.arrivalRate.value;
-      const unit = startEventData.arrivalRate.unit; // per second, minute, or hour
-      if (rate > 0) {
-        let intervalInSeconds;
-        if (unit === 'second') {
-          intervalInSeconds = 1 / rate;
-        } else if (unit === 'minute') {
-          intervalInSeconds = 60 / rate;
-        } else { // hour
-          intervalInSeconds = 3600 / rate;
-        }
-        arrivalInterval = intervalInSeconds * 1000;
-      }
+    const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
+    if (!startEvent) {
+      console.error("Simulation Error: No Start Event found.");
+      return this.results;
     }
 
-    this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
-    this.instanceStates.set(1, { gateways: {} });
-    let instanceCounter = 1;
+    let instanceCounter = 0;
+    const initialTime = this.clock;
+    this.progressSnapshots.push([new Date(initialTime.getTime ? initialTime.getTime() : initialTime), 0]);
+
+    if (productionMode) {
+      for (let i = 0; i < productionTarget; i++) {
+        instanceCounter++;
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: initialTime, instanceId: instanceCounter, startTime: initialTime });
+        this.instanceStates.set(instanceCounter, { gateways: {} });
+      }
+    } else {
+      instanceCounter++;
+      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: initialTime, instanceId: instanceCounter, startTime: initialTime });
+      this.instanceStates.set(instanceCounter, { gateways: {} });
+    }
+
+    const startEventData = getSimulationData(startEvent);
+    let arrivalInterval = 1000;
+    if (!productionMode && startEventData && startEventData.arrivalRate) {
+        const rate = startEventData.arrivalRate.value;
+        const unit = startEventData.arrivalRate.unit;
+        if (rate > 0) {
+            let intervalInSeconds = (unit === 'second') ? 1 / rate : (unit === 'minute') ? 60 / rate : 3600 / rate;
+            arrivalInterval = intervalInSeconds * 1000;
+        }
+    }
 
     while (!this.eventQueue.isEmpty()) {
       const event = this.eventQueue.next();
@@ -229,15 +282,36 @@ export default class SimulationEngine {
         const results = this.results.get(event.element.id);
         results.totalProcessingTime += event.processingTime;
         results.totalCost += event.cost;
-        if (event.waitStart) results.totalWaitTime += (this.clock - event.waitStart);
+        if (event.waitStart) {
+          const waitTime = this.workCalendar
+            ? this.clock.getTime() - event.waitStart.getTime()
+            : this.clock - event.waitStart;
+          results.totalWaitTime += waitTime;
+        }
 
         const data = getSimulationData(event.element);
         if (data && data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
           const pool = this.resourcePools.get(data.resources.pool);
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
-            this.results.get(nextTask.element.id).totalWaitTime += (this.clock - nextTask.waitStart);
-            nextTask.time = this.clock + nextTask.processingTime;
+            const waitTime = this.workCalendar
+              ? this.clock.getTime() - nextTask.waitStart.getTime()
+              : this.clock - nextTask.waitStart;
+            this.results.get(nextTask.element.id).totalWaitTime += waitTime;
+
+            let completionTime, overtimeMs = 0;
+            if (this.workCalendar) {
+              const calc = this.workCalendar.addWorkTime(this.clock, nextTask.processingTime);
+              completionTime = calc.finalDate;
+              overtimeMs = calc.overtimeMs;
+            } else {
+              completionTime = this.clock + nextTask.processingTime;
+            }
+            if (overtimeMs > 0 && this.rootElementId) {
+              this.results.get(this.rootElementId).totalOvertime += overtimeMs;
+            }
+            nextTask.time = completionTime;
+
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
           });
@@ -247,8 +321,11 @@ export default class SimulationEngine {
         this.processEvent(event);
       }
 
-      if (this.completedInstances >= runValue) break;
-      if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
+      if (this.completedInstances >= finalTarget) {
+        break;
+      }
+
+      if (!productionMode && is(event.element, 'bpmn:StartEvent') && instanceCounter < finalTarget) {
         instanceCounter++;
         const nextArrivalTime = event.time + arrivalInterval;
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
@@ -256,7 +333,17 @@ export default class SimulationEngine {
       }
     }
 
+    const finalResults = this.results.get(this.rootElementId);
+    if (finalResults) {
+      finalResults.estimatedCompletionDate = this.clock;
+      finalResults.progressSnapshots = this.progressSnapshots;
+    }
+
     console.log("--- Simulation Finished ---");
+    console.log(`Completed ${this.completedInstances} instances.`);
+    if (this.workCalendar) {
+      console.log(`Estimated Completion Time: ${this.clock.toLocaleString()}`);
+    }
     console.table(Object.fromEntries(this.results));
     return this.results;
   }
