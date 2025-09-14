@@ -7,7 +7,7 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import 'chartjs-adapter-date-fns';
-import { es } from 'date-fns/locale';
+import { es } from 'date-fns/locale/es';
 import { getSimulationData, formatMilliseconds } from './util';
 
 // Geometric icons to match the look and feel of the editor
