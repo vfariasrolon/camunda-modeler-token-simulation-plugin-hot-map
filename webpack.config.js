@@ -6,12 +6,7 @@ module.exports = {
   entry: './client/client.js',
   output: {
     path: path.resolve(__dirname, 'client'),
-    filename: '[name].bundle.js'
-  },
-  optimization: {
-    splitChunks: {
-      chunks: 'all',
-    },
+    filename: 'client.bundle.js'
   },
   module: {
     rules: [

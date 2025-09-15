@@ -5,6 +5,7 @@ import {
 } from 'min-dom';
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
+import Chart from 'chart.js/auto';
 import { getSimulationData, formatMilliseconds } from './util';
 
 // Geometric icons to match the look and feel of the editor
@@ -49,7 +50,6 @@ export default class SimulationController {
 
     this._heatmap = null;
     this._chart = null;
-    this._Chart = null;
     this._radius = 20;
     this._blur = 10;
     this.simulationResults = null;
@@ -189,7 +189,7 @@ export default class SimulationController {
     });
   }
 
-  async showChart() {
+  showChart() {
     const metric = this._chartPanel.getChartType();
 
     if (metric === 'inputParams') {
@@ -221,15 +221,10 @@ export default class SimulationController {
       this._chart.destroy();
     }
 
-    if (!this._Chart) {
-      const { default: Chart } = await import('chart.js/auto');
-      this._Chart = Chart;
-    }
-
     const chartConfig = this.getChartConfig(metric);
 
     const ctx = this._chartPanel.getCanvas().getContext('2d');
-    this._chart = new this._Chart(ctx, chartConfig);
+    this._chart = new Chart(ctx, chartConfig);
   }
 
   getChartConfig(metric) {
