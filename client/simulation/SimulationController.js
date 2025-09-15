@@ -5,7 +5,6 @@ import {
 } from 'min-dom';
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
-import Chart from 'chart.js/auto';
 import { getSimulationData, formatMilliseconds } from './util';
 
 // Geometric icons to match the look and feel of the editor
@@ -217,14 +216,23 @@ export default class SimulationController {
         return;
     }
 
+    // DESTRUYE EL GRÁFICO ANTERIOR (SI EXISTE)
     if (this._chart) {
       this._chart.destroy();
+      this._chart = null; // Asegúrate de limpiarlo
     }
 
-    const chartConfig = this.getChartConfig(metric);
+    // ¡AQUÍ ESTÁ LA MAGIA!
+    // Carga Chart.js dinámicamente SOLO cuando este método es llamado
+    import('./chart-loader.js').then(({ Chart }) => {
 
-    const ctx = this._chartPanel.getCanvas().getContext('2d');
-    this._chart = new Chart(ctx, chartConfig);
+        const chartConfig = this.getChartConfig(metric);
+        const ctx = this._chartPanel.getCanvas().getContext('2d');
+
+        // Crea la nueva instancia del gráfico DENTRO del callback del import
+        this._chart = new Chart(ctx, chartConfig);
+
+    }).catch(error => console.error('Error al cargar el módulo de gráficos', error));
   }
 
   getChartConfig(metric) {

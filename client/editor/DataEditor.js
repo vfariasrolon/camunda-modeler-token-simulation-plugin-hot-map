@@ -28,7 +28,7 @@ export default class DataEditor {
   }
 
   init() {
-    this.createModal();
+    // this.createModal();  <-- ¡QUITA ESTO DE AQUÍ!
 
     this._eventBus.on('selection.changed', ({ newSelection }) => {
       this.removeOverlay();
@@ -73,6 +73,11 @@ export default class DataEditor {
   }
 
   openModal(element) {
+    // ¡Crea el modal solo la primera vez que se abre!
+    if (!this._modal) {
+      this.createModal();
+    }
+
     this._selectedElement = element;
     this.updateModalContent();
     this._modal.classList.remove('hidden');
