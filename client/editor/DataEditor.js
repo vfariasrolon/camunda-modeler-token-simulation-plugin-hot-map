@@ -169,12 +169,28 @@ export default class DataEditor {
   _getProcessDefaults(data = {}) {
     const defaults = {
       simulationConfig: { runValue: 1000 },
-      resourcePools: []
+      resourcePools: [],
+      calendar: {
+        workingDays: [1, 2, 3, 4, 5], // Mon-Fri
+        workingHours: { start: '09:00', end: '17:00' }
+      },
+      cost: {
+        waitCostPerHour: 0,
+        baseRatePerHour: 50 // Default base salary
+      },
+      overtime: {
+        limitHours: 9,
+        payMultiplier: 2,
+        excessPayMultiplier: 3
+      }
     };
     return {
       ...defaults,
       ...data,
-      simulationConfig: { ...defaults.simulationConfig, ...(data.simulationConfig || {}) }
+      simulationConfig: { ...defaults.simulationConfig, ...(data.simulationConfig || {}) },
+      calendar: { ...defaults.calendar, ...(data.calendar || {}) },
+      cost: { ...defaults.cost, ...(data.cost || {}) },
+      overtime: { ...defaults.overtime, ...(data.overtime || {}) }
     };
   }
 
@@ -241,7 +257,7 @@ export default class DataEditor {
   }
 
   renderProcessForm(container, data) {
-    const { simulationConfig, resourcePools } = data;
+    const { simulationConfig, resourcePools, calendar, cost, overtime } = data;
     const poolsHtml = resourcePools.map((pool, index) => `
       <div class="resource-pool-row">
         <input type="text" name="resourcePools[${index}].name" value="${pool.name}" placeholder="Nombre del Pool">
@@ -250,16 +266,60 @@ export default class DataEditor {
       </div>
     `).join('');
 
+    const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const workingDaysCheckboxes = days.map((day, index) => `
+      <label>
+        <input type="checkbox" name="calendar.workingDays" value="${index}" ${calendar.workingDays.includes(index) ? 'checked' : ''}>
+        ${day}
+      </label>
+    `).join('');
+
     container.innerHTML = `
       <div class="form-group">
         <label>Instancias a Simular (runValue)</label>
         <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
       </div>
-      <div class="form-group">
-        <label>Piscinas de Recursos (resourcePools)</label>
+      <fieldset>
+        <legend>Calendario Laboral</legend>
+        <div class="form-group">
+          <label>Días Laborales</label>
+          <div class="checkbox-group">${workingDaysCheckboxes}</div>
+        </div>
+        <div class="form-group">
+          <label>Horario Laboral</label>
+          <input type="time" name="calendar.workingHours.start" value="${calendar.workingHours.start}">
+          <span>-</span>
+          <input type="time" name="calendar.workingHours.end" value="${calendar.workingHours.end}">
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Piscinas de Recursos (resourcePools)</legend>
         <div id="resource-pools-container">${poolsHtml}</div>
         <button id="add-pool" class="add-button">+</button>
-      </div>
+      </fieldset>
+      <fieldset>
+          <legend>Reglas de Costos y Horas Extras</legend>
+          <div class="form-group">
+              <label>Costo Base por Hora ($)</label>
+              <input type="number" name="cost.baseRatePerHour" value="${cost.baseRatePerHour}" min="0">
+          </div>
+          <div class="form-group">
+              <label>Costo de Espera por Hora ($)</label>
+              <input type="number" name="cost.waitCostPerHour" value="${cost.waitCostPerHour}" min="0">
+          </div>
+          <div class="form-group">
+              <label>Límite Horas Extras Semanales</label>
+              <input type="number" name="overtime.limitHours" value="${overtime.limitHours}" min="0">
+          </div>
+          <div class="form-group">
+              <label>Multiplicador Pago Normal (e.g., 2 = Doble)</label>
+              <input type="number" name="overtime.payMultiplier" value="${overtime.payMultiplier}" min="1">
+          </div>
+          <div class="form-group">
+              <label>Multiplicador Pago Excedente (e.g., 3 = Triple)</label>
+              <input type="number" name="overtime.excessPayMultiplier" value="${overtime.excessPayMultiplier}" min="1">
+          </div>
+      </fieldset>
     `;
 
     const poolsContainer = container.querySelector('#resource-pools-container');
@@ -340,11 +400,40 @@ export default class DataEditor {
           resourcePools.push({ name, quantity });
         }
       });
+      const workingDays = Array.from(body.querySelectorAll('[name="calendar.workingDays"]:checked'))
+                                 .map(input => parseInt(input.value, 10));
+      const workingHours = {
+        start: body.querySelector('[name="calendar.workingHours.start"]').value,
+        end: body.querySelector('[name="calendar.workingHours.end"]').value
+      };
+
       newData = {
         simulationConfig: {
           runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
         },
-        resourcePools
+        resourcePools,
+        calendar: {
+          workingDays,
+          workingHours: {
+            start: {
+              hour: parseInt(workingHours.start.split(':')[0], 10),
+              minute: parseInt(workingHours.start.split(':')[1], 10)
+            },
+            end: {
+              hour: parseInt(workingHours.end.split(':')[0], 10),
+              minute: parseInt(workingHours.end.split(':')[1], 10)
+            }
+          }
+        },
+        cost: {
+          baseRatePerHour: parseFloat(body.querySelector('[name="cost.baseRatePerHour"]').value),
+          waitCostPerHour: parseFloat(body.querySelector('[name="cost.waitCostPerHour"]').value)
+        },
+        overtime: {
+          limitHours: parseInt(body.querySelector('[name="overtime.limitHours"]').value, 10),
+          payMultiplier: parseFloat(body.querySelector('[name="overtime.payMultiplier"]').value),
+          excessPayMultiplier: parseFloat(body.querySelector('[name="overtime.excessPayMultiplier"]').value)
+        }
       };
     } else {
       return;

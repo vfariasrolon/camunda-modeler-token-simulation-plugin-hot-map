@@ -84,7 +84,16 @@ export default class SimulationController {
 
   runSimulation() {
     this.clear();
-    this.simulationResults = this._simulationEngine.run();
+
+    // TODO: Get calendar settings from a new UI properties panel
+    const simulationOptions = {
+      calendar: {
+        // workingDays: [1, 2, 3, 4, 5],
+        // workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }
+      }
+    };
+
+    this.simulationResults = this._simulationEngine.run(simulationOptions);
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
   }
 
@@ -121,13 +130,18 @@ export default class SimulationController {
           let value = 0;
           if (metric === 'frequency') value = result.executionCount;
           else if (metric === 'cost') value = result.totalCost;
-          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1) / 1000; // Average
-          else if (metric === 'totalWaitTime') value = result.totalWaitTime / 1000; // Total
-          else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1) / 1000;
-          else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1); // Average
+          else if (metric === 'totalWaitTime') value = result.totalWaitTime; // Total
+          else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1);
+          else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1);
           else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
-          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1) / 1000;
+          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1);
           else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
+          else if (metric === 'overtime') value = result.totalOvertime;
+          else if (metric === 'reworkTime') value = result.totalReworkTime;
+          else if (metric === 'reworkCost') value = result.totalReworkCost;
+          else if (metric === 'waitTimeCost') value = result.totalWaitTimeCost;
+
 
           if (value > max) max = value;
           if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
@@ -170,6 +184,10 @@ export default class SimulationController {
                 else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
                   overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
                 }
+                else if (metric === 'overtime') overlayText = `H. Extras: ${formatMilliseconds(result.totalOvertime)}`;
+                else if (metric === 'reworkTime') overlayText = `T. Reparación: ${formatMilliseconds(result.totalReworkTime)}`;
+                else if (metric === 'reworkCost') overlayText = `Costo Reparación: $${result.totalReworkCost.toFixed(2)}`;
+                else if (metric === 'waitTimeCost') overlayText = `Costo Espera: $${result.totalWaitTimeCost.toFixed(2)}`;
             } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${formatMilliseconds(result.totalCycleTime / (result.executionCount || 1))}`;
             }
@@ -257,6 +275,10 @@ export default class SimulationController {
         metric === 'pareto' ? 'Número de Fallos' :
         metric === 'paretoTime' ? 'Tiempo de Proceso Total' :
         metric === 'paretoCost' ? 'Costo Total ($)' :
+        metric === 'overtime' ? 'Tiempo Extra Total (s)' :
+        metric === 'reworkTime' ? 'Tiempo de Reparación Total (s)' :
+        metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
+        metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -301,7 +323,7 @@ export default class SimulationController {
         borderWidth: 1
     }];
 
-    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes'];
+    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes', 'overtime', 'reworkTime'];
     if (timeMetrics.includes(metric) || metric === 'paretoTime') {
         options.plugins = {
             tooltip: {
@@ -642,6 +664,10 @@ export default class SimulationController {
     else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
     else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
     else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
+    else if (metric === 'overtime') { dataProperty = 'totalOvertime'; label = 'Tiempo Extra Total'; }
+    else if (metric === 'reworkTime') { dataProperty = 'totalReworkTime'; label = 'Tiempo de Reparación Total'; }
+    else if (metric === 'reworkCost') { dataProperty = 'totalReworkCost'; label = 'Costo de Reparación Total'; }
+    else if (metric === 'waitTimeCost') { dataProperty = 'totalWaitTimeCost'; label = 'Costo de Espera Total'; }
 
     tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
 

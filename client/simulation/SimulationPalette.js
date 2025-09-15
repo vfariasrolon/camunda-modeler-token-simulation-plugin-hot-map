@@ -14,6 +14,9 @@ const WarningIcon = '<path d="M13 14h-2V9h2m0-6h-2v2h2M1 21h22L12 2 1 21z"/>';
 const GroupIcon = '<path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>';
 const BackIcon = '<path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />';
 
+const DollarIcon = '<path d="M11.5,2C6.81,2 3,5.81 3,10.5C3,15.19 6.81,19 11.5,19C16.19,19 20,15.19 20,10.5C20,5.81 16.19,2 11.5,2M11.5,4C15.09,4 18,6.91 18,10.5C18,14.09 15.09,17 11.5,17C7.91,17 5,14.09 5,10.5C5,6.91 7.91,4 11.5,4M10.5,5V6.5H12.5V5H10.5M10.5,7.5V9.5H12.5V11.5H10.5V13H12.5C13.6,13 14.5,12.1 14.5,11V8C14.5,6.9 13.6,6 12.5,6H10.5V7.5Z" />';
+const OvertimeIcon = '<path d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M16.2,16.2L11,13V7H12.5V12.2L17,14.9L16.2,16.2Z" />';
+
 const PALETTE_CLS = 'simulation-palette';
 const PALETTE_OPEN_CLS = 'open';
 
@@ -84,6 +87,26 @@ export default class SimulationPalette {
         title: 'Visualizar Tasa de Fallos',
         icon: BugIcon,
         metric: 'failureRate'
+    });
+    this.addEntry({
+        title: 'Visualizar Tiempo de Reparación por Fallo',
+        icon: BugIcon,
+        metric: 'reworkTime'
+    });
+    this.addEntry({
+        title: 'Visualizar Costo de Reparación por Fallo',
+        icon: DollarIcon,
+        metric: 'reworkCost'
+    });
+    this.addEntry({
+        title: 'Visualizar Horas Extras',
+        icon: OvertimeIcon,
+        metric: 'overtime'
+    });
+    this.addEntry({
+        title: 'Visualizar Costo de Tiempos Muertos',
+        icon: DollarIcon,
+        metric: 'waitTimeCost'
     });
     this.addEntry({
         title: 'Visualizar Espera de Transporte',

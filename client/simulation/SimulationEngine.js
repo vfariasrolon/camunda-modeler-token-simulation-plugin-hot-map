@@ -1,5 +1,6 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData } from './util';
+import BusinessCalendar from '../../../src/features/simulation/BusinessCalendar.js';
 
 const triangular = (min, mode, max) => {
   const F = (max - min) / (mode - min);
@@ -59,19 +60,23 @@ export default class SimulationEngine {
     this.instanceStates = new Map();
     this.clock = 0;
     this.completedInstances = 0;
+    this.calendar = null; // Will be initialized on run
   }
 
-  initialize() {
+  initialize(options) {
     this.clock = 0;
     this.completedInstances = 0;
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
     this.instanceStates = new Map();
+    this.weeklyStats = new Map(); // For overtime tracking
+    this.calendar = new BusinessCalendar(options.calendar);
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
+        totalOvertime: 0, totalReworkTime: 0, totalReworkCost: 0, totalWaitTimeCost: 0, totalOvertimeCost: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -124,7 +129,7 @@ export default class SimulationEngine {
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
-      elementResults.totalCycleTime += (this.clock - startTime);
+      elementResults.totalCycleTime += this.calendar.calculateElapsedTime(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);
       return;
     }
@@ -159,6 +164,9 @@ export default class SimulationEngine {
   scheduleTask(taskEvent) {
     const { element, time, instanceId, startTime } = taskEvent;
     const data = getSimulationData(element);
+    const processData = getSimulationData(this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant')));
+    const baseRatePerHour = processData.cost.baseRatePerHour || 0;
+
     let processingTime = 0;
     if (data.processingTime.distribution === 'fixed') {
       processingTime = timeToMilliseconds(data.processingTime.value, data.processingTime.unit);
@@ -166,15 +174,48 @@ export default class SimulationEngine {
       const randomValue = triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max);
       processingTime = timeToMilliseconds(randomValue, data.processingTime.unit);
     }
+
+    let reworkTime = 0;
+    let reworkCost = 0;
     if (data.failureRate && Math.random() < data.failureRate) {
-      const reworkTime = data.reworkTime ? timeToMilliseconds(data.reworkTime.value, data.reworkTime.unit) : 0;
+      reworkTime = data.reworkTime ? timeToMilliseconds(data.reworkTime.value, data.reworkTime.unit) : 0;
       processingTime += reworkTime;
       this.results.get(element.id).failureCount++;
+      reworkCost = (reworkTime / 3600000) * baseRatePerHour;
     }
-    const cost = data.cost ? (data.cost.value / 3600000) * processingTime : 0;
+
+    const processingCost = (processingTime / 3600000) * baseRatePerHour;
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
-    const newTaskEvent = { type: 'TASK_COMPLETE', element, time: time + processingTime, instanceId, startTime, processingTime, cost, quantityRequired };
+    const endTime = this.calendar.addWorkingTime(new Date(time), processingTime).getTime();
+
+    const taskOvertimeDuration = endTime > this.calendar.getWorkdayEnd(new Date(endTime)).getTime()
+      ? (endTime - this.calendar.getWorkdayEnd(new Date(endTime)).getTime())
+      : 0;
+
+    const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
+    if (!this.weeklyStats.has(instanceId)) this.weeklyStats.set(instanceId, new Map());
+    const instanceWeeklyStats = this.weeklyStats.get(instanceId);
+    if (!instanceWeeklyStats.has(weekNumber)) instanceWeeklyStats.set(weekNumber, { overtime: 0 });
+    const currentWeeklyOvertime = instanceWeeklyStats.get(weekNumber).overtime;
+
+    const overtimeRules = processData.overtime;
+    const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
+
+    const normalOvertime = Math.min(taskOvertimeDuration, Math.max(0, limitInMillis - currentWeeklyOvertime));
+    const excessOvertime = Math.max(0, taskOvertimeDuration - normalOvertime);
+
+    const overtimeCost =
+      ((normalOvertime / 3600000) * baseRatePerHour * overtimeRules.payMultiplier) +
+      ((excessOvertime / 3600000) * baseRatePerHour * overtimeRules.excessPayMultiplier);
+
+    instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
+
+    const newTaskEvent = {
+      type: 'TASK_COMPLETE', element, time: endTime, instanceId, startTime,
+      processingTime, reworkTime, overtime: taskOvertimeDuration,
+      processingCost, reworkCost, overtimeCost, quantityRequired
+    };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
       const pool = this.resourcePools.get(data.resources.pool);
@@ -188,8 +229,8 @@ export default class SimulationEngine {
     }
   }
 
-  run() {
-    this.initialize();
+  run(options = {}) {
+    this.initialize(options);
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const configData = getSimulationData(processRoot);
     const { runValue } = configData ? configData.simulationConfig : { runValue: 100 };
@@ -228,16 +269,37 @@ export default class SimulationEngine {
       if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
         results.totalProcessingTime += event.processingTime;
-        results.totalCost += event.cost;
-        if (event.waitStart) results.totalWaitTime += (this.clock - event.waitStart);
+        results.totalReworkTime += event.reworkTime;
+        results.totalOvertime += event.overtime;
+
+        const waitTimeCost = results.totalWaitTimeCost; // Preserve this as it's calculated on release
+        results.totalCost = (results.totalCost - waitTimeCost) + event.processingCost + event.reworkCost + event.overtimeCost + waitTimeCost;
+        results.totalReworkCost += event.reworkCost;
+        results.totalOvertimeCost += event.overtimeCost;
+
+        if (event.waitStart) {
+          const waitTime = this.calendar.calculateElapsedTime(new Date(event.waitStart), new Date(this.clock));
+          results.totalWaitTime += waitTime;
+          const waitCostPerHour = getSimulationData(processRoot)?.cost?.waitCostPerHour || 0;
+          const currentWaitCost = (waitTime / 3600000) * waitCostPerHour;
+          results.totalWaitTimeCost += currentWaitCost;
+          results.totalCost += currentWaitCost;
+        }
 
         const data = getSimulationData(event.element);
         if (data && data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
           const pool = this.resourcePools.get(data.resources.pool);
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
-            this.results.get(nextTask.element.id).totalWaitTime += (this.clock - nextTask.waitStart);
-            nextTask.time = this.clock + nextTask.processingTime;
+            const nextTaskResults = this.results.get(nextTask.element.id);
+            const waitTime = this.calendar.calculateElapsedTime(new Date(nextTask.waitStart), new Date(this.clock));
+            nextTaskResults.totalWaitTime += waitTime;
+            const waitCostPerHour = getSimulationData(processRoot)?.cost?.waitCostPerHour || 0;
+            const currentWaitCost = (waitTime / 3600000) * waitCostPerHour;
+            nextTaskResults.totalWaitTimeCost += currentWaitCost;
+            nextTaskResults.totalCost += currentWaitCost;
+
+            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.processingTime).getTime();
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
           });
@@ -250,7 +312,7 @@ export default class SimulationEngine {
       if (this.completedInstances >= runValue) break;
       if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
-        const nextArrivalTime = event.time + arrivalInterval;
+        const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalInterval).getTime();
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
