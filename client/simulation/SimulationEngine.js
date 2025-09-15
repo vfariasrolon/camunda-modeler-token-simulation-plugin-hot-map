@@ -1,6 +1,6 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData } from './util';
-import BusinessCalendar from '../../../src/features/simulation/BusinessCalendar.js';
+import BusinessCalendar from './BusinessCalendar.js';
 
 const triangular = (min, mode, max) => {
   const F = (max - min) / (mode - min);
