@@ -2,11 +2,16 @@ const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
-  mode: 'development',
+  mode: 'production',
   entry: './client/client.js',
   output: {
     path: path.resolve(__dirname, 'client'),
-    filename: 'client.bundle.js'
+    filename: '[name].bundle.js'
+  },
+  optimization: {
+    splitChunks: {
+      chunks: 'all',
+    },
   },
   module: {
     rules: [
@@ -29,5 +34,5 @@ module.exports = {
       ],
     })
   ],
-  devtool: 'cheap-module-source-map'
+  devtool: 'source-map'
 };
