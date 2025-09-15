@@ -84,16 +84,8 @@ export default class SimulationController {
 
   runSimulation() {
     this.clear();
-
-    // TODO: Get calendar settings from a new UI properties panel
-    const simulationOptions = {
-      calendar: {
-        // workingDays: [1, 2, 3, 4, 5],
-        // workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }
-      }
-    };
-
-    this.simulationResults = this._simulationEngine.run(simulationOptions);
+    // Engine now finds its own configuration by looking for the root start event
+    this.simulationResults = this._simulationEngine.run();
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
   }
 

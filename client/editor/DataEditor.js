@@ -158,11 +158,30 @@ export default class DataEditor {
   }
 
   _getStartEventDefaults(data = {}) {
-    const defaults = { arrivalRate: { value: 60, unit: 'minute' } };
+    const defaults = {
+      arrivalRate: { value: 60, unit: 'minute' },
+      isRoot: false,
+      calendar: {
+        workingDays: [1, 2, 3, 4, 5],
+        workingHours: { start: '09:00', end: '17:00' }
+      },
+      cost: {
+        waitCostPerHour: 0,
+        baseRatePerHour: 50
+      },
+      overtime: {
+        limitHours: 9,
+        payMultiplier: 2,
+        excessPayMultiplier: 3
+      }
+    };
     return {
       ...defaults,
       ...data,
-      arrivalRate: { ...defaults.arrivalRate, ...(data.arrivalRate || {}) }
+      arrivalRate: { ...defaults.arrivalRate, ...(data.arrivalRate || {}) },
+      calendar: { ...defaults.calendar, ...(data.calendar || {}) },
+      cost: { ...defaults.cost, ...(data.cost || {}) },
+      overtime: { ...defaults.overtime, ...(data.overtime || {}) }
     };
   }
 
@@ -243,28 +262,7 @@ export default class DataEditor {
   }
 
   renderStartEventForm(container, data) {
-    const { arrivalRate } = data;
-    container.innerHTML = `
-      <div class="form-group">
-        <label>Tasa de Llegada (arrivalRate)</label>
-        <input type="number" name="arrivalRate.value" value="${arrivalRate.value}">
-        <select name="arrivalRate.unit">
-          <option value="minute" ${arrivalRate.unit === 'minute' ? 'selected' : ''}>por Minuto</option>
-          <option value="hour" ${arrivalRate.unit === 'hour' ? 'selected' : ''}>por Hora</option>
-        </select>
-      </div>
-    `;
-  }
-
-  renderProcessForm(container, data) {
-    const { simulationConfig, resourcePools, calendar, cost, overtime } = data;
-    const poolsHtml = resourcePools.map((pool, index) => `
-      <div class="resource-pool-row">
-        <input type="text" name="resourcePools[${index}].name" value="${pool.name}" placeholder="Nombre del Pool">
-        <input type="number" name="resourcePools[${index}].quantity" value="${pool.quantity}" placeholder="Cantidad">
-        <button class="remove-pool" data-index="${index}">-</button>
-      </div>
-    `).join('');
+    const { arrivalRate, isRoot, calendar, cost, overtime } = data;
 
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const workingDaysCheckboxes = days.map((day, index) => `
@@ -276,9 +274,21 @@ export default class DataEditor {
 
     container.innerHTML = `
       <div class="form-group">
-        <label>Instancias a Simular (runValue)</label>
-        <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
+        <label>Tasa de Llegada (arrivalRate)</label>
+        <input type="number" name="arrivalRate.value" value="${arrivalRate.value}">
+        <select name="arrivalRate.unit">
+          <option value="minute" ${arrivalRate.unit === 'minute' ? 'selected' : ''}>por Minuto</option>
+          <option value="hour" ${arrivalRate.unit === 'hour' ? 'selected' : ''}>por Hora</option>
+        </select>
       </div>
+      <hr/>
+      <div class="form-group">
+        <label class="is-root-label">
+            <input type="checkbox" name="isRoot" ${isRoot ? 'checked' : ''}>
+            Usar como Configuración Raíz (init_root)
+        </label>
+      </div>
+      <p class="helper-text">Marque esta casilla para que las reglas de calendario y costos de este evento de inicio se apliquen a toda la simulación.</p>
       <fieldset>
         <legend>Calendario Laboral</legend>
         <div class="form-group">
@@ -291,11 +301,6 @@ export default class DataEditor {
           <span>-</span>
           <input type="time" name="calendar.workingHours.end" value="${calendar.workingHours.end}">
         </div>
-      </fieldset>
-      <fieldset>
-        <legend>Piscinas de Recursos (resourcePools)</legend>
-        <div id="resource-pools-container">${poolsHtml}</div>
-        <button id="add-pool" class="add-button">+</button>
       </fieldset>
       <fieldset>
           <legend>Reglas de Costos y Horas Extras</legend>
@@ -319,6 +324,29 @@ export default class DataEditor {
               <label>Multiplicador Pago Excedente (e.g., 3 = Triple)</label>
               <input type="number" name="overtime.excessPayMultiplier" value="${overtime.excessPayMultiplier}" min="1">
           </div>
+      </fieldset>
+    `;
+  }
+
+  renderProcessForm(container, data) {
+    const { simulationConfig, resourcePools } = data;
+    const poolsHtml = resourcePools.map((pool, index) => `
+      <div class="resource-pool-row">
+        <input type="text" name="resourcePools[${index}].name" value="${pool.name}" placeholder="Nombre del Pool">
+        <input type="number" name="resourcePools[${index}].quantity" value="${pool.quantity}" placeholder="Cantidad">
+        <button class="remove-pool" data-index="${index}">-</button>
+      </div>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="form-group">
+        <label>Instancias a Simular (runValue)</label>
+        <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
+      </div>
+      <fieldset>
+        <legend>Piscinas de Recursos (resourcePools)</legend>
+        <div id="resource-pools-container">${poolsHtml}</div>
+        <button id="add-pool" class="add-button">+</button>
       </fieldset>
     `;
 
@@ -384,22 +412,6 @@ export default class DataEditor {
         branchingProbability: parseFloat(body.querySelector('[name="branchingProbability"]').value)
       };
     } else if (is(this._selectedElement, 'bpmn:StartEvent')) {
-      newData = {
-        arrivalRate: {
-          value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value),
-          unit: body.querySelector('[name="arrivalRate.unit"]').value
-        }
-      };
-    } else if (is(this._selectedElement, 'bpmn:Process') || is(this._selectedElement, 'bpmn:Participant')) {
-      const resourcePools = [];
-      const poolRows = body.querySelectorAll('.resource-pool-row');
-      poolRows.forEach(row => {
-        const name = row.querySelector('input[name*="name"]').value;
-        const quantity = parseInt(row.querySelector('input[name*="quantity"]').value, 10);
-        if (name && quantity) {
-          resourcePools.push({ name, quantity });
-        }
-      });
       const workingDays = Array.from(body.querySelectorAll('[name="calendar.workingDays"]:checked'))
                                  .map(input => parseInt(input.value, 10));
       const workingHours = {
@@ -408,10 +420,11 @@ export default class DataEditor {
       };
 
       newData = {
-        simulationConfig: {
-          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
+        arrivalRate: {
+          value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value),
+          unit: body.querySelector('[name="arrivalRate.unit"]').value
         },
-        resourcePools,
+        isRoot: body.querySelector('[name="isRoot"]').checked,
         calendar: {
           workingDays,
           workingHours: {
@@ -434,6 +447,22 @@ export default class DataEditor {
           payMultiplier: parseFloat(body.querySelector('[name="overtime.payMultiplier"]').value),
           excessPayMultiplier: parseFloat(body.querySelector('[name="overtime.excessPayMultiplier"]').value)
         }
+      };
+    } else if (is(this._selectedElement, 'bpmn:Process') || is(this._selectedElement, 'bpmn:Participant')) {
+      const resourcePools = [];
+      const poolRows = body.querySelectorAll('.resource-pool-row');
+      poolRows.forEach(row => {
+        const name = row.querySelector('input[name*="name"]').value;
+        const quantity = parseInt(row.querySelector('input[name*="quantity"]').value, 10);
+        if (name && quantity) {
+          resourcePools.push({ name, quantity });
+        }
+      });
+      newData = {
+        simulationConfig: {
+          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
+        },
+        resourcePools
       };
     } else {
       return;

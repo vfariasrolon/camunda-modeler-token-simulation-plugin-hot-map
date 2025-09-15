@@ -63,7 +63,7 @@ export default class SimulationEngine {
     this.calendar = null; // Will be initialized on run
   }
 
-  initialize(options) {
+  initialize(rootConfig) {
     this.clock = 0;
     this.completedInstances = 0;
     this.eventQueue = new EventQueue();
@@ -71,7 +71,8 @@ export default class SimulationEngine {
     this.resourcePools = new Map();
     this.instanceStates = new Map();
     this.weeklyStats = new Map(); // For overtime tracking
-    this.calendar = new BusinessCalendar(options.calendar);
+    this.rootConfig = rootConfig;
+    this.calendar = new BusinessCalendar(rootConfig.calendar);
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
@@ -164,8 +165,7 @@ export default class SimulationEngine {
   scheduleTask(taskEvent) {
     const { element, time, instanceId, startTime } = taskEvent;
     const data = getSimulationData(element);
-    const processData = getSimulationData(this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant')));
-    const baseRatePerHour = processData.cost.baseRatePerHour || 0;
+    const baseRatePerHour = this.rootConfig.cost.baseRatePerHour || 0;
 
     let processingTime = 0;
     if (data.processingTime.distribution === 'fixed') {
@@ -199,7 +199,7 @@ export default class SimulationEngine {
     if (!instanceWeeklyStats.has(weekNumber)) instanceWeeklyStats.set(weekNumber, { overtime: 0 });
     const currentWeeklyOvertime = instanceWeeklyStats.get(weekNumber).overtime;
 
-    const overtimeRules = processData.overtime;
+    const overtimeRules = this.rootConfig.overtime;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
 
     const normalOvertime = Math.min(taskOvertimeDuration, Math.max(0, limitInMillis - currentWeeklyOvertime));
@@ -229,38 +229,69 @@ export default class SimulationEngine {
     }
   }
 
-  run(options = {}) {
-    this.initialize(options);
+  _findRootConfig() {
+    const startEvents = this._elementRegistry.filter(el => is(el, 'bpmn:StartEvent'));
+    const rootEvents = startEvents.filter(el => getSimulationData(el)?.isRoot);
+
+    if (rootEvents.length === 1) {
+      return getSimulationData(rootEvents[0]);
+    }
+
+    if (rootEvents.length > 1) {
+      console.warn('Multiple root start events found. Using default simulation configuration.');
+    } else {
+      console.warn('No root start event found. Using default simulation configuration.');
+    }
+
+    // Return a default configuration object
+    return {
+      isRoot: true,
+      calendar: { workingDays: [1, 2, 3, 4, 5], workingHours: { start: {hour:9, minute:0}, end: {hour:17, minute:0} } },
+      cost: { waitCostPerHour: 0, baseRatePerHour: 50 },
+      overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 }
+    };
+  }
+
+  run() {
+    const rootConfig = this._findRootConfig();
+    this.initialize(rootConfig);
+
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
-    const configData = getSimulationData(processRoot);
-    const { runValue } = configData ? configData.simulationConfig : { runValue: 100 };
-    if (configData && configData.resourcePools) {
-      configData.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
+    const processConfig = getSimulationData(processRoot);
+    const { runValue } = processConfig ? processConfig.simulationConfig : { runValue: 100 };
+    if (processConfig && processConfig.resourcePools) {
+      processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
-    const startEvent = this._elementRegistry.find(el => is(el, 'bpmn:StartEvent'));
-    if (!startEvent) return this.results;
 
-    const startEventData = getSimulationData(startEvent);
-    let arrivalInterval = 1000; // Default to 1 second if not specified
-    if (startEventData && startEventData.arrivalRate) {
-      const rate = startEventData.arrivalRate.value;
-      const unit = startEventData.arrivalRate.unit; // per second, minute, or hour
-      if (rate > 0) {
-        let intervalInSeconds;
-        if (unit === 'second') {
-          intervalInSeconds = 1 / rate;
-        } else if (unit === 'minute') {
-          intervalInSeconds = 60 / rate;
-        } else { // hour
-          intervalInSeconds = 3600 / rate;
-        }
-        arrivalInterval = intervalInSeconds * 1000;
+    const startEvents = this._elementRegistry.filter(el => is(el, 'bpmn:StartEvent'));
+    if (!startEvents.length) {
+      console.error("No start event found. Cannot run simulation.");
+      return this.results;
+    }
+
+    // This logic determines how new instances are created.
+    // It uses the arrival rate from the root config, but triggers an event for each actual start event in the diagram.
+    const arrivalRate = this.rootConfig.arrivalRate || { value: 1, unit: 'minute' };
+    let arrivalInterval = 60000; // Default to 1 per minute
+    if (arrivalRate.value > 0) {
+      let intervalInSeconds;
+      if (arrivalRate.unit === 'second') {
+        intervalInSeconds = 1 / arrivalRate.value;
+      } else if (arrivalRate.unit === 'hour') {
+        intervalInSeconds = 3600 / arrivalRate.value;
+      } else { // minute
+        intervalInSeconds = 60 / arrivalRate.value;
       }
+      arrivalInterval = intervalInSeconds * 1000;
     }
 
-    this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId: 1, startTime: 0 });
-    this.instanceStates.set(1, { gateways: {} });
-    let instanceCounter = 1;
+    startEvents.forEach((startEvent, index) => {
+      const instanceId = index + 1;
+      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId, startTime: 0 });
+      this.instanceStates.set(instanceId, { gateways: {} });
+    });
+
+    let instanceCounter = startEvents.length;
 
     while (!this.eventQueue.isEmpty()) {
       const event = this.eventQueue.next();
@@ -280,7 +311,7 @@ export default class SimulationEngine {
         if (event.waitStart) {
           const waitTime = this.calendar.calculateElapsedTime(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
-          const waitCostPerHour = getSimulationData(processRoot)?.cost?.waitCostPerHour || 0;
+          const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
           const currentWaitCost = (waitTime / 3600000) * waitCostPerHour;
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
@@ -294,7 +325,7 @@ export default class SimulationEngine {
             const nextTaskResults = this.results.get(nextTask.element.id);
             const waitTime = this.calendar.calculateElapsedTime(new Date(nextTask.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
-            const waitCostPerHour = getSimulationData(processRoot)?.cost?.waitCostPerHour || 0;
+            const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
             const currentWaitCost = (waitTime / 3600000) * waitCostPerHour;
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
@@ -309,13 +340,16 @@ export default class SimulationEngine {
         this.processEvent(event);
       }
 
-      if (this.completedInstances >= runValue) break;
+      // This logic assumes a single process instance generator based on the root's arrival rate.
+      // If multiple start events have different arrival rates, this would need to be more sophisticated.
       if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalInterval).getTime();
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
+        // We use the first start event to generate new instances.
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
+      if (this.completedInstances >= runValue) break;
     }
 
     console.log("--- Simulation Finished ---");
