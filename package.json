@@ -4,10 +4,11 @@
   "description": "BPMN Token Simulation for the Camunda Modeler",
   "main": "index.js",
   "scripts": {
-    "all": "run-s bundle",
-    "bundle": "webpack",
-    "bundle:watch": "webpack -w",
-    "prepare": "run-s bundle",
+    "all": "run-s build",
+    "build": "webpack --mode production",
+    "dev": "webpack --mode development",
+    "dev:watch": "webpack --mode development -w",
+    "prepare": "run-s build",
     "test": "echo 'no tests'"
   },
   "repository": {
