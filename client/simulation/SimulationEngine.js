@@ -131,6 +131,7 @@ export default class SimulationEngine {
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
+      console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
       elementResults.totalCycleTime += this.calendar.calculateElapsedTime(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);
       return;
@@ -264,7 +265,7 @@ export default class SimulationEngine {
 
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const processConfig = getSimulationData(processRoot);
-    const { runValue } = this.rootConfig.simulationConfig;
+    const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
@@ -303,9 +304,7 @@ export default class SimulationEngine {
     while (!this.eventQueue.isEmpty()) {
       iterationCounter++;
       if (iterationCounter > (runValue * 1000)) { // Safety break, increased limit
-        console.error("--- SAFETY BREAK ---");
-        console.error("Simulation exceeded maximum iterations. Likely an infinite loop.");
-        break;
+        throw new Error(`Simulation safety break triggered. Exceeded ${runValue * 1000} iterations. Likely an infinite loop.`);
       }
 
       const event = this.eventQueue.next();
@@ -365,6 +364,7 @@ export default class SimulationEngine {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
+      console.log(`Checking end condition: completed=${this.completedInstances}, target=${runValue}`);
       if (this.completedInstances >= runValue) {
         console.log(`Target of ${runValue} completed instances reached. Ending simulation.`);
         break;
