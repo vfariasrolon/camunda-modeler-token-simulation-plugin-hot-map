@@ -23,6 +23,7 @@ export default class ChartPanel {
       <div class="${PALETTE_CLS}">
         <div class="header">
           <select class="chart-select">
+            <option value="overallSummary">Resumen General</option>
             <option value="inputParams">Parámetros de Entrada (Tabla)</option>
             <option value="resultsTable">Resultados de Simulación (Tabla)</option>
             <option value="cost">Top 5 por Costo</option>
@@ -44,6 +45,7 @@ export default class ChartPanel {
         </div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
+          <p><strong>Resumen General:</strong> Muestra las métricas totales más importantes de toda la simulación, como la duración total en tiempo de calendario, el costo total de la operación y el número de instancias completadas.</p>
           <p><strong>Parámetros de Entrada (Tabla):</strong> Muestra una tabla con todos los datos de simulación configurados para cada elemento del diagrama (tiempos, costos, probabilidades, etc.). Útil para verificar la configuración antes de ejecutar la simulación.</p>
           <p><strong>Resultados de Simulación (Tabla):</strong> Presenta una tabla con las métricas de salida agregadas para cada elemento del diagrama después de ejecutar la simulación. Incluye conteos de ejecución, fallos, tiempos y costos totales.</p>
           <p><strong>Top 5 por Costo:</strong> Muestra las 5 tareas más caras de todo el proceso.</p>

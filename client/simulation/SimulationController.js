@@ -209,6 +209,17 @@ export default class SimulationController {
       return;
     }
 
+    if (metric === 'overallSummary') {
+      if (!this.simulationResults) {
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+        this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
+        return;
+      }
+      const summaryHtml = this.createOverallSummary(this.simulationResults);
+      this._chartPanel.showHtmlContent(summaryHtml);
+      return;
+    }
+
     if (metric === 'resultsTable') {
       if (!this.simulationResults) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
@@ -464,6 +475,57 @@ export default class SimulationController {
 
     tableHtml += '</tbody></table>';
     return tableHtml;
+  }
+
+  createOverallSummary(results) {
+    let totalCost = 0;
+    let totalOvertime = 0;
+    let totalFailures = 0;
+    let totalCompleted = 0;
+    let minStartTime = Infinity;
+    let maxEndTime = 0;
+
+    results.forEach(result => {
+      totalCost += result.totalCost;
+      totalOvertime += result.totalOvertime;
+      totalFailures += result.failureCount;
+
+      if (result.executionCount > 0) {
+        const element = this._elementRegistry.get(result.name); // Assuming name is id
+        if (is(element, 'bpmn:EndEvent')) {
+          totalCompleted += result.executionCount;
+        }
+      }
+    });
+
+    // This is a simplification. A more accurate way would be to get start/end times from the engine.
+    const simulationDuration = this._simulationEngine.clock;
+
+    return `
+      <div class="sim-summary-container">
+        <h2>Resumen General de la Simulación</h2>
+        <div class="sim-summary-item">
+          <span class="label">Duración Total (Calendario):</span>
+          <span class="value">${formatMilliseconds(simulationDuration)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Instancias Completadas:</span>
+          <span class="value">${this._simulationEngine.completedInstances}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo Total de Operación:</span>
+          <span class="value">$${totalCost.toFixed(2)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Tiempo Total de Horas Extras:</span>
+          <span class="value">${formatMilliseconds(totalOvertime)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Número Total de Fallos:</span>
+          <span class="value">${totalFailures}</span>
+        </div>
+      </div>
+    `;
   }
 
   createResultsTable(results) {
