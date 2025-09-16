@@ -7,6 +7,16 @@ const EditIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" wi
   <path fill="currentColor" d="M19.4,6.6l-3.9-3.9c-0.4-0.4-1-0.4-1.4,0l-11,11c-0.2,0.2-0.3,0.4-0.3,0.7v3.9c0,0.6,0.4,1,1,1h3.9c0.3,0,0.5-0.1,0.7-0.3l11-11C19.8,7.6,19.8,7,19.4,6.6z M7.5,17.5H5.1v-2.4l7.5-7.5l2.4,2.4L7.5,17.5z"/>
 </svg>`;
 
+const formatTime = (timeObj) => {
+  if (typeof timeObj === 'string') return timeObj;
+  if (typeof timeObj === 'object' && timeObj !== null) {
+    const hour = String(timeObj.hour).padStart(2, '0');
+    const minute = String(timeObj.minute).padStart(2, '0');
+    return `${hour}:${minute}`;
+  }
+  return '09:00'; // Fallback
+};
+
 export default class DataEditor {
   constructor(eventBus, modeling, bpmnFactory, elementRegistry, notifications, selection, canvas, overlays) {
     this._eventBus = eventBus;
@@ -164,7 +174,7 @@ export default class DataEditor {
       isRoot: false,
       calendar: {
         workingDays: [1, 2, 3, 4, 5],
-        workingHours: { start: '09:00', end: '17:00' }
+        workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }
       },
       cost: {
         waitCostPerHour: 0,
@@ -256,6 +266,9 @@ export default class DataEditor {
       </label>
     `).join('');
 
+    const startTimeValue = formatTime(calendar.workingHours.start);
+    const endTimeValue = formatTime(calendar.workingHours.end);
+
     container.innerHTML = `
       <div class="form-group">
         <label>Tasa de Llegada (arrivalRate)</label>
@@ -285,9 +298,9 @@ export default class DataEditor {
         </div>
         <div class="form-group">
           <label>Horario Laboral</label>
-          <input type="time" name="calendar.workingHours.start" value="${calendar.workingHours.start}">
+          <input type="time" name="calendar.workingHours.start" value="${startTimeValue}">
           <span>-</span>
-          <input type="time" name="calendar.workingHours.end" value="${calendar.workingHours.end}">
+          <input type="time" name="calendar.workingHours.end" value="${endTimeValue}">
         </div>
       </fieldset>
       <fieldset>

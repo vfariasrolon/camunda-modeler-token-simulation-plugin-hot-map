@@ -50,28 +50,54 @@ export default class BusinessCalendar {
    * @returns {Date} The resulting end date.
    */
   addWorkingTime(startDate, durationInMinutes) {
-    let remainingMinutes = durationInMinutes;
     let currentDate = new Date(startDate.getTime());
+    let remainingMinutes = durationInMinutes;
 
-    // First, move to the next available working time slot if not already in one
     if (!this.isWorkingTime(currentDate)) {
       currentDate = this._moveToNextWorkingDayStart(currentDate);
     }
 
-    while (remainingMinutes > 0) {
-      const { end } = this.config.workingHours;
-      const endOfDay = new Date(currentDate.getTime());
-      endOfDay.setHours(end.hour, end.minute, 0, 0);
+    const { start, end } = this.config.workingHours;
+    const minutesPerWorkDay = (end.hour - start.hour) * 60 + (end.minute - start.minute);
 
-      const minutesLeftInDay = (endOfDay.getTime() - currentDate.getTime()) / 60000;
+    if (minutesPerWorkDay <= 0) {
+      return currentDate; // Avoid infinite loops if work day has no duration
+    }
 
-      if (remainingMinutes <= minutesLeftInDay) {
-        currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
-        remainingMinutes = 0;
-      } else {
-        remainingMinutes -= minutesLeftInDay;
-        currentDate = this._moveToNextWorkingDayStart(currentDate);
+    const minutesLeftInFirstDay = (this.getWorkdayEnd(currentDate) - currentDate) / 60000;
+
+    if (remainingMinutes <= minutesLeftInFirstDay) {
+      currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
+      return currentDate;
+    }
+
+    remainingMinutes -= minutesLeftInFirstDay;
+    currentDate = this._moveToNextWorkingDayStart(currentDate);
+
+    const numWorkDays = this.config.workingDays.length;
+    if (numWorkDays > 0) {
+      const fullDaysToAdd = Math.floor(remainingMinutes / minutesPerWorkDay);
+      const weeks = Math.floor(fullDaysToAdd / numWorkDays);
+      const remainingWorkDays = fullDaysToAdd % numWorkDays;
+
+      let calendarDaysToAdd = weeks * 7;
+      let tempDate = new Date(currentDate.getTime());
+
+      for (let i = 0; i < remainingWorkDays; i++) {
+        calendarDaysToAdd++;
+        tempDate.setDate(tempDate.getDate() + 1);
+        while (!this.config.workingDays.includes(tempDate.getDay())) {
+          calendarDaysToAdd++;
+          tempDate.setDate(tempDate.getDate() + 1);
+        }
       }
+      currentDate.setDate(currentDate.getDate() + calendarDaysToAdd);
+
+      remainingMinutes %= minutesPerWorkDay;
+    }
+
+    if (remainingMinutes > 0) {
+      currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
     }
 
     return currentDate;
