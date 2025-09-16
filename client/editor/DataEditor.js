@@ -160,6 +160,7 @@ export default class DataEditor {
   _getStartEventDefaults(data = {}) {
     const defaults = {
       arrivalRate: { value: 60, unit: 'minute' },
+      simulationConfig: { runValue: 1000 },
       isRoot: false,
       calendar: {
         workingDays: [1, 2, 3, 4, 5],
@@ -179,6 +180,7 @@ export default class DataEditor {
       ...defaults,
       ...data,
       arrivalRate: { ...defaults.arrivalRate, ...(data.arrivalRate || {}) },
+      simulationConfig: { ...defaults.simulationConfig, ...(data.simulationConfig || {}) },
       calendar: { ...defaults.calendar, ...(data.calendar || {}) },
       cost: { ...defaults.cost, ...(data.cost || {}) },
       overtime: { ...defaults.overtime, ...(data.overtime || {}) }
@@ -187,29 +189,11 @@ export default class DataEditor {
 
   _getProcessDefaults(data = {}) {
     const defaults = {
-      simulationConfig: { runValue: 1000 },
-      resourcePools: [],
-      calendar: {
-        workingDays: [1, 2, 3, 4, 5], // Mon-Fri
-        workingHours: { start: '09:00', end: '17:00' }
-      },
-      cost: {
-        waitCostPerHour: 0,
-        baseRatePerHour: 50 // Default base salary
-      },
-      overtime: {
-        limitHours: 9,
-        payMultiplier: 2,
-        excessPayMultiplier: 3
-      }
+      resourcePools: []
     };
     return {
       ...defaults,
-      ...data,
-      simulationConfig: { ...defaults.simulationConfig, ...(data.simulationConfig || {}) },
-      calendar: { ...defaults.calendar, ...(data.calendar || {}) },
-      cost: { ...defaults.cost, ...(data.cost || {}) },
-      overtime: { ...defaults.overtime, ...(data.overtime || {}) }
+      ...data
     };
   }
 
@@ -262,7 +246,7 @@ export default class DataEditor {
   }
 
   renderStartEventForm(container, data) {
-    const { arrivalRate, isRoot, calendar, cost, overtime } = data;
+    const { arrivalRate, isRoot, calendar, cost, overtime, simulationConfig } = data;
 
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const workingDaysCheckboxes = days.map((day, index) => `
@@ -280,6 +264,10 @@ export default class DataEditor {
           <option value="minute" ${arrivalRate.unit === 'minute' ? 'selected' : ''}>por Minuto</option>
           <option value="hour" ${arrivalRate.unit === 'hour' ? 'selected' : ''}>por Hora</option>
         </select>
+      </div>
+      <div class="form-group">
+        <label>Instancias a Simular (runValue)</label>
+        <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
       </div>
       <hr/>
       <div class="form-group">
@@ -329,7 +317,7 @@ export default class DataEditor {
   }
 
   renderProcessForm(container, data) {
-    const { simulationConfig, resourcePools } = data;
+    const { resourcePools } = data;
     const poolsHtml = resourcePools.map((pool, index) => `
       <div class="resource-pool-row">
         <input type="text" name="resourcePools[${index}].name" value="${pool.name}" placeholder="Nombre del Pool">
@@ -339,10 +327,6 @@ export default class DataEditor {
     `).join('');
 
     container.innerHTML = `
-      <div class="form-group">
-        <label>Instancias a Simular (runValue)</label>
-        <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
-      </div>
       <fieldset>
         <legend>Piscinas de Recursos (resourcePools)</legend>
         <div id="resource-pools-container">${poolsHtml}</div>
@@ -424,6 +408,9 @@ export default class DataEditor {
           value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value),
           unit: body.querySelector('[name="arrivalRate.unit"]').value
         },
+        simulationConfig: {
+          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
+        },
         isRoot: body.querySelector('[name="isRoot"]').checked,
         calendar: {
           workingDays,
@@ -459,9 +446,6 @@ export default class DataEditor {
         }
       });
       newData = {
-        simulationConfig: {
-          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
-        },
         resourcePools
       };
     } else {

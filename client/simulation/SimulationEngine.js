@@ -61,6 +61,7 @@ export default class SimulationEngine {
     this.clock = 0;
     this.completedInstances = 0;
     this.calendar = null; // Will be initialized on run
+    this.rootConfig = {};
   }
 
   initialize(rootConfig) {
@@ -206,8 +207,8 @@ export default class SimulationEngine {
     const excessOvertime = Math.max(0, taskOvertimeDuration - normalOvertime);
 
     const overtimeCost =
-      ((normalOvertime / 3600000) * baseRatePerHour * overtimeRules.payMultiplier) +
-      ((excessOvertime / 3600000) * baseRatePerHour * overtimeRules.excessPayMultiplier);
+      ((normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1)) +
+      ((excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1));
 
     instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
 
@@ -245,10 +246,12 @@ export default class SimulationEngine {
 
     // Return a default configuration object
     return {
+      simulationConfig: { runValue: 1000 },
       isRoot: true,
       calendar: { workingDays: [1, 2, 3, 4, 5], workingHours: { start: {hour:9, minute:0}, end: {hour:17, minute:0} } },
       cost: { waitCostPerHour: 0, baseRatePerHour: 50 },
-      overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 }
+      overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 },
+      arrivalRate: { value: 60, unit: 'minute' }
     };
   }
 
@@ -261,7 +264,7 @@ export default class SimulationEngine {
 
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const processConfig = getSimulationData(processRoot);
-    const { runValue } = processConfig ? processConfig.simulationConfig : { runValue: 100 };
+    const { runValue } = this.rootConfig.simulationConfig;
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
@@ -272,8 +275,6 @@ export default class SimulationEngine {
       return this.results;
     }
 
-    // This logic determines how new instances are created.
-    // It uses the arrival rate from the root config, but triggers an event for each actual start event in the diagram.
     const arrivalRate = this.rootConfig.arrivalRate || { value: 1, unit: 'minute' };
     let arrivalInterval = 60000; // Default to 1 per minute
     if (arrivalRate.value > 0) {
@@ -301,7 +302,7 @@ export default class SimulationEngine {
 
     while (!this.eventQueue.isEmpty()) {
       iterationCounter++;
-      if (iterationCounter > (runValue * 100)) { // Safety break
+      if (iterationCounter > (runValue * 1000)) { // Safety break, increased limit
         console.error("--- SAFETY BREAK ---");
         console.error("Simulation exceeded maximum iterations. Likely an infinite loop.");
         break;
@@ -320,7 +321,7 @@ export default class SimulationEngine {
         results.totalReworkTime += event.reworkTime;
         results.totalOvertime += event.overtime;
 
-        const waitTimeCost = results.totalWaitTimeCost; // Preserve this as it's calculated on release
+        const waitTimeCost = results.totalWaitTimeCost;
         results.totalCost = (results.totalCost - waitTimeCost) + event.processingCost + event.reworkCost + event.overtimeCost + waitTimeCost;
         results.totalReworkCost += event.reworkCost;
         results.totalOvertimeCost += event.overtimeCost;
@@ -357,13 +358,10 @@ export default class SimulationEngine {
         this.processEvent(event);
       }
 
-      // This logic assumes a single process instance generator based on the root's arrival rate.
-      // If multiple start events have different arrival rates, this would need to be more sophisticated.
       if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalInterval).getTime();
         console.log(`Scheduling next instance (${instanceCounter}) to arrive at ${new Date(nextArrivalTime).toLocaleString()}`);
-        // We use the first start event to generate new instances.
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
