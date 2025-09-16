@@ -213,6 +213,8 @@ export default class SimulationEngine {
 
     instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
 
+    console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime - reworkTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${processingTime}ms`);
+
     const newTaskEvent = {
       type: 'TASK_COMPLETE', element, time: endTime, instanceId, startTime,
       processingTime, reworkTime, overtime: taskOvertimeDuration,
@@ -316,6 +318,9 @@ export default class SimulationEngine {
 
       if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
+
+        console.log(`[RESULTS] Task ${event.element.id} | Adding to totals: processTime=${event.processingTime}, reworkTime=${event.reworkTime}`);
+
         results.totalProcessingTime += event.processingTime;
         results.totalReworkTime += event.reworkTime;
         results.totalOvertime += event.overtime;
