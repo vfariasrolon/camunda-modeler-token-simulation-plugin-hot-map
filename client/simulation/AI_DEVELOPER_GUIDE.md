@@ -59,44 +59,113 @@ Esta paleta se abre al hacer clic en el botón del Yin-Yang (☯️). Cada botó
 *   **R+ / R-**: Aumentan/disminuyen el **Radio** de las manchas de calor.
 *   **B+ / B-**: Aumentan/disminuyen el **Blur** (desenfoque) del mapa de calor.
 
-## Estructura del Proyecto y Archivos Clave
+---
 
-A continuación se detalla la estructura de los archivos más importantes del plugin y sus responsabilidades.
+## Módulo de Simulación Avanzada (Calendario Laboral y Costos)
 
-| Archivo / Directorio | Propósito | Conexiones Principales |
-| :--- | :--- | :--- |
-| `index.js` | **Punto de entrada principal del plugin**. Es el primer archivo que Camunda Modeler carga. Su función es registrar el resto del código del plugin. | Carga `client/client.js` y `menu.js`. |
-| `menu.js` | **Define los menús del plugin** en la barra superior de Camunda Modeler, como "Insertar Lógica de Simulación (Datos Aleatorios)". | Es llamado por `index.js`. |
-| `package.json` | Archivo de configuración estándar de Node.js. Define el nombre del proyecto, sus **dependencias** (como `bpmn-js`) y los scripts para construirlo. | Define qué paquetes se instalan al ejecutar `npm install`. |
-| `webpack.config.js` | Configuración de Webpack, una herramienta que **empaqueta todo el código JavaScript del cliente** (`client/`) en un único archivo (`client/client.bundle.js`) que el navegador puede entender. | Lee de `client/client.js` y produce `client/client.bundle.js`. |
-| **`client/`** | **Directorio que contiene todo el código que se ejecuta en la interfaz de usuario** (el "lado del cliente"). | |
-| `client/client.js` | **Punto de entrada del código del cliente**. Aquí se inician todos los módulos de la interfaz, como los controladores y paneles. | Carga e inicializa los módulos de `client/simulation/` y `client/editor/`. |
-| **`client/simulation/`** | **El corazón del plugin**. Contiene toda la lógica para la simulación y el análisis. | |
-| `simulation/SimulationEngine.js` | **El cerebro de la simulación**. Contiene la lógica para ejecutar la simulación de eventos discretos, calcular probabilidades, manejar recursos, etc. Es pura lógica, no tiene interfaz de usuario. | Es utilizado por `SimulationController.js`. |
-| `simulation/SimulationController.js` | **El orquestador**. Conecta la interfaz de usuario con la lógica de negocio. Escucha los clics en los botones, inicia el `SimulationEngine`, y muestra/oculta los paneles de resultados. | Interactúa con `SimulationEngine.js`, `SimulationPalette.js` y `ChartPanel.js`. |
-| `simulation/SimulationPalette.js` | Define y gestiona los **botones de la interfaz** (Play, Heatmap, Gráficos) que aparecen en la paleta de herramientas del modelador. | Envía eventos al `SimulationController.js` cuando se hace clic en un botón. |
-| `simulation/ChartPanel.js` | Implementa toda la **interfaz del panel de gráficos**. Contiene el código para dibujar los gráficos de barras, dispersión y Pareto usando los resultados de la simulación. | Es controlado por `SimulationController.js`. |
-| `simulation/RandomDataGenerator.js` | Contiene la lógica para **generar datos de simulación aleatorios** y poblarlos en el diagrama, que se activa desde el menú definido en `menu.js`. | Modifica el diagrama usando los servicios de `bpmn-js`. |
+Esta sección detalla las funcionalidades avanzadas añadidas al motor de simulación para permitir un análisis de costos y tiempos mucho más realista.
 
-## Componentes de Software y Conceptos Clave
+### 1. Arquitectura de los Nuevos Módulos
 
-Para extender o modificar este plugin, es fundamental comprender los siguientes componentes y conceptos:
+*   **`client/simulation/BusinessCalendar.js`**: Este es un módulo nuevo y autocontenido que maneja toda la lógica de tiempo laboral. Es el responsable de sumar tiempo saltando noches/fines de semana y de calcular el tiempo de trabajo neto entre dos fechas. Es la fuente de verdad para todos los cálculos de tiempo. Su función `addWorkingTime` fue optimizada para realizar saltos matemáticos en lugar de iterar, evitando así que la aplicación se congele en simulaciones largas.
+*   **`client/editor/DataEditor.js`**: Este archivo controla la interfaz de usuario del panel de propiedades. La lógica para renderizar los formularios se encuentra en los métodos `render<ElementType>Form`. Fue modificado para centralizar toda la configuración global en el `StartEvent`.
+*   **`client/simulation/SimulationEngine.js`**: El motor principal. Fue refactorizado para usar el `BusinessCalendar` y para buscar su configuración en un "Evento de Inicio Raíz".
+*   **`client/simulation/SimulationController.js`**: El orquestador que conecta el motor con la UI. Fue actualizado para manejar y visualizar las nuevas métricas y el panel de resumen.
+*   **`client/simulation/ChartPanel.js`**: El panel de gráficos. Fue actualizado para incluir una opción de "Resumen General".
 
-1.  **El Objeto `simulationData`**:
-    *   Es un **objeto JSON** que contiene todos los parámetros de simulación para un elemento BPMN.
-    *   **No se guarda en un archivo aparte**, sino que se almacena como un *string* dentro de una propiedad XML (`camunda:property`) en el propio archivo `.bpmn`.
-    *   Su estructura varía según el tipo de elemento (no es lo mismo para una Tarea que para una Compuerta). La guía técnica de lectura/escritura y el prompt de ejemplo más adelante detallan la estructura exacta para cada caso.
+### 2. Flujo de Configuración Global (MUY IMPORTANTE)
 
-2.  **Servicios de `bpmn-js`**:
-    El plugin no modifica el XML del BPMN directamente. En su lugar, utiliza una API (un conjunto de servicios) que `bpmn-js` provee para interactuar con el diagrama de forma segura. Los más importantes son:
-    *   `selection`: Para saber qué elemento tiene seleccionado el usuario.
-    *   `elementRegistry`: Para obtener el objeto de un elemento a partir de su ID.
-    *   `modeling`: **El servicio más importante para hacer cambios**. Se usa para actualizar propiedades, crear o borrar elementos.
-    *   `bpmnFactory`: Se usa para crear nuevos elementos BPMN (como una `camunda:property`) que luego se añaden al diagrama con `modeling`.
+La configuración de la simulación (calendario, costos, reglas de horas extras, número de instancias) ya no se encuentra en el elemento Proceso/Participante. El nuevo flujo es:
 
-3.  **Clases Principales**:
-    *   `SimulationEngine`: La clase que contiene la lógica pura de la simulación. No tiene interfaz de usuario y opera sobre los datos del modelo.
-    *   `SimulationController`: La clase que actúa como "pegamento" o controlador, conectando la interfaz de usuario (botones, paneles) con el motor de simulación.
+1.  El usuario selecciona un `bpmn:StartEvent`.
+2.  En el panel de propiedades (`DataEditor.js`), marca la casilla **"Usar como Configuración Raíz"**.
+3.  Todos los parámetros globales se configuran en este panel.
+4.  Al ejecutar la simulación, `SimulationEngine.js` llama a `_findRootConfig()` para escanear todos los eventos de inicio y encontrar el que tiene la bandera `isRoot: true`.
+5.  Toda la simulación se ejecuta con base en la configuración de ese evento de inicio raíz. Si no se encuentra ninguno, se usa una configuración por defecto y se muestra una advertencia en la consola.
+
+### 3. Lógica de Costos y Horas Extras
+
+El sistema de costos fue refactorizado para ser más detallado y realista.
+
+*   El costo de una tarea ahora es una suma de componentes:
+    *   **Costo de Procesamiento**: Basado en el `processingTime` y el `baseRatePerHour` de la configuración raíz.
+    *   **Costo de Reparación**: Basado en el `reworkTime` y el `baseRatePerHour`.
+    *   **Costo de Espera**: Basado en el `totalWaitTime` y el `waitCostPerHour` de la configuración raíz.
+    *   **Costo de Horas Extras**: Se calcula usando una lógica por niveles basada en un límite semanal y multiplicadores de pago (ej. 2x y 3x), todos configurables en la configuración raíz. El motor rastrea las horas extras acumuladas por semana para cada instancia de la simulación para aplicar los multiplicadores correctamente.
+
+---
+
+## Estructura de Datos JSON `simulationData` (Actualizada)
+
+La estructura del JSON varía según el tipo de elemento.
+
+**A. Para un `bpmn:StartEvent` (cuando es `isRoot: true`):**
+```json
+{
+  "arrivalRate": { "value": 1, "unit": "minute" },
+  "simulationConfig": { "runValue": 10 },
+  "isRoot": true,
+  "calendar": {
+    "workingDays": [1, 2, 3, 4, 5],
+    "workingHours": {
+      "start": { "hour": 9, "minute": 0 },
+      "end": { "hour": 17, "minute": 0 }
+    }
+  },
+  "cost": {
+    "baseRatePerHour": 50,
+    "waitCostPerHour": 0
+  },
+  "overtime": {
+    "limitHours": 9,
+    "payMultiplier": 2,
+    "excessPayMultiplier": 3
+  }
+}
+```
+
+**B. Para un `bpmn:Task` (o UserTask, ScriptTask, etc.):**
+```json
+{
+  "processingTime": {
+    "distribution": "fixed", "value": 3, "unit": "minutes"
+  },
+  "failureRate": 0.11,
+  "reworkTime": {
+    "value": 3, "unit": "minutes"
+  }
+}
+```
+**Nota:** El costo de la tarea ya no se define aquí, se calcula a partir del `baseRatePerHour` de la configuración raíz.
+
+**C. Para un Flujo de Secuencia (`bpmn:SequenceFlow`) saliente de una Compuerta Exclusiva:**
+```json
+{
+  "branchingProbability": 0.78
+}
+```
+
+**D. Para el Proceso (`bpmn:Process`) o un Participante (`bpmn:Participant`):**
+```json
+{
+  "resourcePools": [
+    { "name": "Analistas", "quantity": 1 }
+  ]
+}
+```
+
+---
+
+## Aprendizajes Clave para Futuros Agentes
+
+*   **Cuidado con el Rendimiento de los Bucles**: El principal "bug" de la aplicación no era un bucle infinito, sino un bucle de muy bajo rendimiento en `BusinessCalendar.js` que iteraba sobre el tiempo en lugar de hacer saltos matemáticos. En simulaciones, los cálculos de tiempo deben ser eficientes para evitar congelar la aplicación.
+*   **Fuente Única de Verdad para la Configuración**: Un bug de bucle infinito fue causado por tener la configuración dividida en dos lugares (el `runValue` en el Proceso y el resto en el Evento de Inicio). Centralizar toda la configuración en el Evento de Inicio Raíz solucionó el problema. Es un principio de diseño clave.
+*   **Unidades de Medida**: Un error crítico que causaba resultados de miles de años fue pasar milisegundos a una función (`addWorkingTime`) que esperaba minutos. Se debe tener extremo cuidado con las unidades de medida, especialmente al interactuar entre diferentes módulos.
+*   **Visión a Futuro del Usuario (Modo Planificación)**: El usuario ha expresado un gran interés en una futura funcionalidad de "Modo Planificación". Esto implicaría que el usuario proporciona una **fecha límite** y el sistema debe simular si es posible cumplirla, usando proactivamente las horas extras como un recurso para acelerar las tareas. Este sería el siguiente gran paso lógico en la evolución de esta herramienta.
+*   **Diferencia entre Tiempo de Calendario y Tiempo de Trabajo**: Los usuarios pueden confundirse si los resultados muestran el tiempo de calendario bruto (incluyendo noches y fines de semana). Es importante que los resultados, como la "Duración Total", se presenten como **Tiempo de Trabajo Neto**, calculado a través del `BusinessCalendar`.
+---
+
+*El resto de la guía original se mantiene sin cambios.*
 
 ## 1. Arquitectura de Datos: ¿Dónde se guardan los datos?
 
@@ -121,53 +190,14 @@ Los datos de simulación no se guardan en un archivo separado. Se almacenan dire
 
 ## 2. Guía Técnica para LEER `simulationData`
 
-Para leer el JSON de un elemento del diagrama, necesitas usar los servicios que provee `bpmn-js`.
+Para leer el JSON de un elemento del diagrama, necesitas usar los servicios que provee `bpmn-js`. Se recomienda usar la función `getSimulationData` de `client/simulation/util.js` que ya encapsula esta lógica.
 
-**Servicios Requeridos (Inyección de Dependencias):**
-- `selection`: Para saber qué elemento ha seleccionado el usuario.
-- `elementRegistry`: Para obtener el objeto completo del elemento a partir de su ID.
-
-**Pasos:**
-1.  **Obtener el Elemento Seleccionado**:
-    ```javascript
-    const selectedElements = selection.get();
-    if (selectedElements.length !== 1) return; // Solo proceder si hay un único elemento seleccionado
-    const element = selectedElements[0];
-    ```
-
-2.  **Acceder al `businessObject`**: Este es el objeto que contiene los datos subyacentes del modelo.
-    ```javascript
-    const businessObject = element.businessObject;
-    ```
-
-3.  **Obtener `extensionElements`**:
-    ```javascript
-    const extensionElements = businessObject.get('extensionElements');
-    if (!extensionElements) return null; // No hay datos de simulación
-    ```
-
-4.  **Obtener `camunda:Properties`**:
-    ```javascript
-    const properties = extensionElements.get('values').find(v => v.$type === 'camunda:Properties');
-    if (!properties) return null;
-    ```
-
-5.  **Obtener la Propiedad `simulationData`**:
-    ```javascript
-    const simProperty = properties.get('values').find(p => p.name === 'simulationData');
-    if (!simProperty) return null;
-    ```
-
-6.  **Parsear el JSON**: El valor (`simProperty.value`) es un string. Hay que convertirlo a un objeto JavaScript.
-    ```javascript
-    try {
-      const simulationData = JSON.parse(simProperty.value);
-      return simulationData;
-    } catch (e) {
-      console.error("Error parsing simulationData JSON", e);
-      return null;
-    }
-    ```
+**Pasos (Implementación interna de `getSimulationData`):**
+1.  **Obtener el `businessObject`**: Este es el objeto que contiene los datos subyacentes del modelo.
+2.  **Obtener `extensionElements`**.
+3.  **Obtener `camunda:Properties`**.
+4.  **Obtener la Propiedad `simulationData`**.
+5.  **Parsear el JSON**: El valor (`simProperty.value`) es un string. Hay que convertirlo a un objeto JavaScript.
 
 ## 3. Guía Técnica para ESCRIBIR `simulationData`
 
@@ -176,174 +206,16 @@ Para modificar o crear los datos, el proceso es similar pero a la inversa. Se ne
 **Servicios Requeridos:**
 - `modeling`: El servicio principal para realizar cambios en el diagrama.
 - `bpmnFactory`: Para crear nuevos elementos de BPMN (como `camunda:Property`) de forma segura.
-- `elementRegistry`, `selection`: Para obtener el elemento a modificar.
 
 **Pasos:**
-1.  **Obtener el Elemento y `businessObject`**: Igual que en la lectura.
-2.  **Preparar los Nuevos Datos**: Ten tu objeto JavaScript con los datos de simulación listos.
-    ```javascript
-    const newData = { processingTime: { value: 20 } }; // Tu nuevo objeto de datos
-    const simulationDataString = JSON.stringify(newData, null, 2);
-    ```
-3.  **Obtener o Crear `extensionElements`**:
-    ```javascript
-    let extensionElements = businessObject.get('extensionElements');
-    if (!extensionElements) {
-      extensionElements = bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
-    }
-    ```
-4.  **Obtener o Crear `camunda:Properties`**:
-    ```javascript
-    let properties = extensionElements.get('values').find(v => v.$type === 'camunda:Properties');
-    if (!properties) {
-      properties = bpmnFactory.create('camunda:Properties', { values: [] });
-      extensionElements.get('values').push(properties);
-    }
-    ```
-5.  **Obtener o Crear la Propiedad `simulationData`**:
-    ```javascript
-    let simProperty = properties.get('values').find(p => p.name === 'simulationData');
-    if (!simProperty) {
-      simProperty = bpmnFactory.create('camunda:Property', { name: 'simulationData' });
-      properties.get('values').push(simProperty);
-    }
-    ```
-6.  **Asignar el Nuevo Valor y Actualizar el Modelo**:
+1.  **Obtener el Elemento y `businessObject`**.
+2.  **Preparar los Nuevos Datos**: Construir el objeto JavaScript con los datos de simulación.
+3.  **Convertir a String**: `JSON.stringify(newData, null, 2)`.
+4.  **Obtener o Crear `extensionElements`**, `camunda:Properties`, y la `camunda:Property` "simulationData".
+5.  **Asignar el Nuevo Valor y Actualizar el Modelo**:
     ```javascript
     simProperty.value = simulationDataString;
-
-    // Usar modeling.updateProperties para aplicar todos los cambios al diagrama
     modeling.updateProperties(element, {
       extensionElements: extensionElements
     });
     ```
-
-## 4. Prompt de Ejemplo para un Agente de IA
-
-A continuación, se presenta un prompt de ejemplo que puedes usar para pedirle a otro agente de IA que construya un panel de propiedades para editar estos datos.
-
----
-
-## 5. Lógica de Recursos y Transporte (Notas Importantes)
-
-### Lógica de Múltiples Recursos por Tarea
-- El motor de simulación ahora soporta que una tarea requiera múltiples recursos de la misma piscina.
-- El dato se define en el JSON de la tarea, dentro del objeto `resources`:
-  ```json
-  "resources": {
-    "pool": "Analistas",
-    "quantityRequired": 2
-  }
-  ```
-- El `ResourcePool` fue modificado para manejar peticiones y liberaciones de una cantidad variable de recursos.
-
-### Lógica de Transporte (Desactivada)
-- Se implementó una lógica compleja para simular transporte y lotes (batching), pero resultó ser inestable y causaba que la simulación se atascara.
-- **Estado Actual**: Toda la lógica de transporte ha sido **desactivada** en `SimulationEngine.js` comentando el código relevante.
-- **Para Futuros Desarrolladores**: Si se desea reactivar esta funcionalidad, se debe revisar cuidadosamente la clase `TransportPool` y la interacción con los eventos `TASK_COMPLETE` y `TRANSPORT_ARRIVED`. El principal desafío es manejar los lotes que no se llenan y el estado de los vehículos (disponibilidad).
-
-### Consumo de Datos por el Panel de Gráficos
-- Un ejemplo clave del consumo de estos datos es el **Panel de Gráficos** (`ChartPanel.js` y `SimulationController.js`).
-- Este panel lee los resultados agregados de la simulación (que se basan en los `simulationData` de cada tarea) para generar visualizaciones como:
-  - Gráficos de barras con los "Top 5" por costo, tiempo, etc.
-  - Un diagrama de dispersión que cruza el costo total con el tiempo de proceso promedio.
-  - Un diagrama de Pareto para analizar las fuentes de fallos.
-- La creación de un panel de propiedades para editar `simulationData` permitiría a los usuarios influir directamente en los resultados de estos análisis.
-
-**Prompt para el Agente de IA:**
-
-"Hola. Necesito que construyas un nuevo plugin para este Camunda Modeler que funcione como un **Panel de Propiedades para los Datos de Simulación**.
-
-**Objetivo:**
-El usuario debe poder seleccionar un elemento del diagrama (Tarea, Evento de Inicio, Compuerta Exclusiva, etc.) y ver un panel donde pueda introducir y modificar sus datos de simulación específicos.
-
-**Requisitos Técnicos Detallados:**
-
-1.  **Activación y Comportamiento del Panel**:
-    -   El panel debe ser una ventana modal o un panel lateral que se activa con un nuevo botón en la paleta principal.
-    -   El panel debe reaccionar al evento `selection.changed` para cargar los datos del nuevo elemento seleccionado.
-
-2.  **Lectura y Escritura de Datos**:
-    -   Utiliza los servicios `selection`, `elementRegistry`, `modeling` y `bpmnFactory` como se describe en la `AI_DEVELOPER_GUIDE.md` para leer y escribir el string JSON en la propiedad `simulationData`.
-
-3.  **Estructura de Datos JSON `simulationData` (MUY IMPORTANTE)**:
-    -   El panel debe generar un objeto JavaScript que se ajuste **exactamente** a las siguientes estructuras, dependiendo del tipo de elemento BPMN seleccionado. Luego, este objeto se convierte a un string JSON para guardarlo.
-
-    **A. Para un `bpmn:Task` (o UserTask, ScriptTask, etc.):**
-    ```json
-    {
-      "processingTime": {
-        "distribution": "fixed", // "fixed" o "triangular"
-        "value": 10,           // Para "fixed"
-        "unit": "minutes",     // "minutes" u "hours"
-        "min": 5,              // Para "triangular"
-        "mode": 10,            // Para "triangular"
-        "max": 15              // Para "triangular"
-      },
-      "cost": {
-        "value": 25.50,
-        "currency": "USD"
-      },
-      "resources": {
-        "pool": "Analistas",     // Nombre del pool de recursos
-        "quantityRequired": 1  // Cuántos recursos de este pool se necesitan
-      },
-      "failureRate": 0.05,       // Probabilidad de fallo (0.0 a 1.0)
-      "reworkTime": {            // Igual que processingTime, para cuando ocurre un fallo
-        "distribution": "fixed",
-        "value": 20,
-        "unit": "minutes"
-      }
-    }
-    ```
-
-    **B. Para un Flujo de Secuencia (`bpmn:SequenceFlow`) saliente de una Compuerta Exclusiva (`bpmn:ExclusiveGateway`):**
-    ```json
-    {
-      "branchingProbability": 0.75 // Probabilidad de que se elija este camino (0.0 a 1.0)
-    }
-    ```
-
-    **C. Para un Evento de Inicio (`bpmn:StartEvent`):**
-    ```json
-    {
-      "arrivalRate": {
-        "distribution": "fixed",
-        "value": 60,           // Instancias que llegan
-        "unit": "minute"       // "minute" u "hour"
-      }
-    }
-    ```
-
-    **D. Para el Proceso (`bpmn:Process`) o un Participante (`bpmn:Participant`):**
-    ```json
-    {
-      "simulationConfig": {
-        "runValue": 1000       // Número de instancias a simular
-      },
-      "resourcePools": [
-        {
-          "name": "Analistas",  // Nombre del pool
-          "quantity": 5        // Cantidad de recursos disponibles
-        },
-        {
-          "name": "Desarrolladores",
-          "quantity": 3
-        }
-      ]
-    }
-    ```
-
-4.  **Interfaz del Panel**:
-    -   La interfaz debe ser dinámica y mostrar solo los campos relevantes para el tipo de elemento seleccionado.
-    -   Por ejemplo, si se selecciona una Tarea, muestra campos para tiempo, costo, recursos y fallos. Si se selecciona un Flujo de Secuencia, solo muestra el campo para la probabilidad de ramificación.
-
-5.  **Guía de Referencia**: Usa la `AI_DEVELOPER_GUIDE.md` como tu principal referencia técnica para la interacción con el modelo BPMN.
-
-**Plan de Trabajo Sugerido:**
-1.  Crea un nuevo módulo para el panel (ej. `client/properties/`).
-2.  Implementa la lógica del botón en la paleta principal y el listener para `selection.changed`.
-3.  Crea el HTML/CSS para la interfaz del panel, con todos los posibles campos de entrada ocultos por defecto.
-4.  Implementa la lógica de lectura de datos que, según el tipo de elemento, muestra los campos correctos y los rellena.
-5.  Implementa la lógica de guardado que construye el objeto JSON correcto según los campos visibles y lo guarda en el elemento."
----

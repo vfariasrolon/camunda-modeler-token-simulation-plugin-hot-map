@@ -14,7 +14,6 @@ export default class BusinessCalendar {
         start: { hour: 9, minute: 0 },
         end: { hour: 17, minute: 0 }
       },
-      // TODO: Add holidays
       holidays: [],
       ...config
     };
@@ -41,68 +40,6 @@ export default class BusinessCalendar {
     return currentTime >= startTime && currentTime < endTime;
   }
 
-  /**
-   * Adds a duration of working time to a given start date.
-   * This method skips over non-working days and hours.
-   *
-   * @param {Date} startDate The date to start from.
-   * @param {number} durationInMinutes The duration to add in minutes.
-   * @returns {Date} The resulting end date.
-   */
-  addWorkingTime(startDate, durationInMinutes) {
-    let currentDate = new Date(startDate.getTime());
-    let remainingMinutes = durationInMinutes;
-
-    if (!this.isWorkingTime(currentDate)) {
-      currentDate = this._moveToNextWorkingDayStart(currentDate);
-    }
-
-    const { start, end } = this.config.workingHours;
-    const minutesPerWorkDay = (end.hour - start.hour) * 60 + (end.minute - start.minute);
-
-    if (minutesPerWorkDay <= 0) {
-      return currentDate; // Avoid infinite loops if work day has no duration
-    }
-
-    const minutesLeftInFirstDay = (this.getWorkdayEnd(currentDate) - currentDate) / 60000;
-
-    if (remainingMinutes <= minutesLeftInFirstDay) {
-      currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
-      return currentDate;
-    }
-
-    remainingMinutes -= minutesLeftInFirstDay;
-    currentDate = this._moveToNextWorkingDayStart(currentDate);
-
-    const numWorkDays = this.config.workingDays.length;
-    if (numWorkDays > 0) {
-      const fullDaysToAdd = Math.floor(remainingMinutes / minutesPerWorkDay);
-      const weeks = Math.floor(fullDaysToAdd / numWorkDays);
-      const remainingWorkDays = fullDaysToAdd % numWorkDays;
-
-      let calendarDaysToAdd = weeks * 7;
-      let tempDate = new Date(currentDate.getTime());
-
-      for (let i = 0; i < remainingWorkDays; i++) {
-        calendarDaysToAdd++;
-        tempDate.setDate(tempDate.getDate() + 1);
-        while (!this.config.workingDays.includes(tempDate.getDay())) {
-          calendarDaysToAdd++;
-          tempDate.setDate(tempDate.getDate() + 1);
-        }
-      }
-      currentDate.setDate(currentDate.getDate() + calendarDaysToAdd);
-
-      remainingMinutes %= minutesPerWorkDay;
-    }
-
-    if (remainingMinutes > 0) {
-      currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
-    }
-
-    return currentDate;
-  }
-
   _moveToNextWorkingDayStart(date) {
     const newDate = new Date(date.getTime());
     const { start } = this.config.workingHours;
@@ -121,29 +58,109 @@ export default class BusinessCalendar {
     return newDate;
   }
 
-  /**
-   * Calculates the working time between two dates.
-   *
-   * @param {Date} startDate
-   * @param {Date} endDate
-   * @returns {number} The duration in minutes.
-   */
+  addWorkingTime(startDate, durationInMinutes) {
+    let currentDate = new Date(startDate.getTime());
+    let remainingMinutes = durationInMinutes;
+
+    if (!this.isWorkingTime(currentDate)) {
+      currentDate.setSeconds(0, 0);
+      const day = currentDate.getDay();
+      const { start, end } = this.config.workingHours;
+      const startTime = start.hour * 60 + start.minute;
+      const currentTime = currentDate.getHours() * 60 + currentDate.getMinutes();
+
+      if (!this.config.workingDays.includes(day) || currentTime >= (end.hour * 60 + end.minute)) {
+        currentDate = this._moveToNextWorkingDayStart(currentDate);
+      } else if (currentTime < startTime) {
+        currentDate.setHours(start.hour, start.minute);
+      }
+    }
+
+    const { start, end } = this.config.workingHours;
+    const minutesPerWorkDay = (end.hour - start.hour) * 60 + (end.minute - start.minute);
+
+    if (minutesPerWorkDay <= 0) return currentDate;
+
+    const minutesLeftInDay = ((end.hour * 60 + end.minute) - (currentDate.getHours() * 60 + currentDate.getMinutes()));
+
+    if (remainingMinutes <= minutesLeftInDay) {
+      currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
+      return currentDate;
+    }
+
+    remainingMinutes -= minutesLeftInDay;
+    currentDate = this._moveToNextWorkingDayStart(currentDate);
+
+    const numWorkDaysInWeek = this.config.workingDays.length;
+    if (numWorkDaysInWeek > 0) {
+        const fullDays = Math.floor(remainingMinutes / minutesPerWorkDay);
+        if (fullDays > 0) {
+            let calendarDays = 0;
+            let workDaysCounted = 0;
+            let tempDate = new Date(currentDate.getTime());
+            while(workDaysCounted < fullDays) {
+                if(this.config.workingDays.includes(tempDate.getDay())) {
+                    workDaysCounted++;
+                }
+                calendarDays++;
+                tempDate.setDate(tempDate.getDate() + 1);
+            }
+            currentDate.setDate(currentDate.getDate() + calendarDays -1);
+            remainingMinutes -= fullDays * minutesPerWorkDay;
+        }
+    }
+
+    currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
+
+    return currentDate;
+  }
+
   calculateElapsedTime(startDate, endDate) {
+    if (endDate < startDate) return 0;
+
     let totalMinutes = 0;
     let cursor = new Date(startDate.getTime());
 
-    while (cursor < endDate) {
-      if (this.isWorkingTime(cursor)) {
-        const { end } = this.config.workingHours;
-        const endOfDay = new Date(cursor.getTime());
-        endOfDay.setHours(end.hour, end.minute, 0, 0);
+    const { start, end } = this.config.workingHours;
+    const startTotalMinutes = start.hour * 60 + start.minute;
+    const endTotalMinutes = end.hour * 60 + end.minute;
+    const minutesPerWorkDay = endTotalMinutes - startTotalMinutes;
 
-        const endOfPeriod = endDate < endOfDay ? endDate : endOfDay;
-        totalMinutes += (endOfPeriod.getTime() - cursor.getTime()) / 60000;
-      }
+    if (minutesPerWorkDay <= 0) return 0;
 
-      // Move cursor to the start of the next working day
-      cursor = this._moveToNextWorkingDayStart(cursor);
+    // Align cursor to the beginning of its working day if it's not in working time
+    if (!this.isWorkingTime(cursor)) {
+        const cursorTime = cursor.getHours() * 60 + cursor.getMinutes();
+        if(cursorTime >= endTotalMinutes || !this.config.workingDays.includes(cursor.getDay())){
+            cursor = this._moveToNextWorkingDayStart(cursor);
+        } else if (cursorTime < startTotalMinutes) {
+            cursor.setHours(start.hour, start.minute, 0, 0);
+        }
+    }
+
+    while(cursor < endDate) {
+        const day = cursor.getDay();
+        if (this.config.workingDays.includes(day)) {
+            const cursorTime = cursor.getHours() * 60 + cursor.getMinutes();
+
+            const startOfPeriod = Math.max(startTotalMinutes, cursorTime);
+
+            const endOfDay = new Date(cursor);
+            endOfDay.setHours(23, 59, 59, 999);
+
+            let endOfPeriod;
+            if(endDate < endOfDay) { // If endDate is on the same day
+                const endTime = endDate.getHours() * 60 + endDate.getMinutes();
+                endOfPeriod = Math.min(endTotalMinutes, endTime);
+            } else {
+                endOfPeriod = endTotalMinutes;
+            }
+
+            if (endOfPeriod > startOfPeriod) {
+                totalMinutes += (endOfPeriod - startOfPeriod);
+            }
+        }
+        cursor = this._moveToNextWorkingDayStart(cursor);
     }
 
     return totalMinutes;
@@ -156,11 +173,6 @@ export default class BusinessCalendar {
     return endOfDay;
   }
 
-  /**
-   * Gets the week number for a given date.
-   * @param {Date} date The date to check.
-   * @returns {number} The week number.
-   */
   getWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;
