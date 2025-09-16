@@ -256,6 +256,9 @@ export default class SimulationEngine {
     const rootConfig = this._findRootConfig();
     this.initialize(rootConfig);
 
+    console.log("--- Simulation Starting ---");
+    console.log("Root Config Found:", rootConfig);
+
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const processConfig = getSimulationData(processRoot);
     const { runValue } = processConfig ? processConfig.simulationConfig : { runValue: 100 };
@@ -292,10 +295,24 @@ export default class SimulationEngine {
     });
 
     let instanceCounter = startEvents.length;
+    let iterationCounter = 0;
+
+    console.log(`Starting simulation with ${runValue} instances to complete.`);
 
     while (!this.eventQueue.isEmpty()) {
+      iterationCounter++;
+      if (iterationCounter > (runValue * 100)) { // Safety break
+        console.error("--- SAFETY BREAK ---");
+        console.error("Simulation exceeded maximum iterations. Likely an infinite loop.");
+        break;
+      }
+
       const event = this.eventQueue.next();
       this.clock = event.time;
+
+      console.log(`[${iterationCounter}] Processing event: ${event.type} for element ${event.element.id} at time ${new Date(this.clock).toLocaleString()}`);
+      console.log(`Queue size: ${this.eventQueue.items.length}, Completed instances: ${this.completedInstances}`);
+
 
       if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
@@ -345,11 +362,15 @@ export default class SimulationEngine {
       if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalInterval).getTime();
+        console.log(`Scheduling next instance (${instanceCounter}) to arrive at ${new Date(nextArrivalTime).toLocaleString()}`);
         // We use the first start event to generate new instances.
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
-      if (this.completedInstances >= runValue) break;
+      if (this.completedInstances >= runValue) {
+        console.log(`Target of ${runValue} completed instances reached. Ending simulation.`);
+        break;
+      }
     }
 
     console.log("--- Simulation Finished ---");
