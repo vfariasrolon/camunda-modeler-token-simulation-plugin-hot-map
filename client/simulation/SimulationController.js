@@ -52,7 +52,8 @@ export default class SimulationController {
     this._chart = null;
     this._radius = 20;
     this._blur = 10;
-    this.simulationResults = null;
+    this.simulationResults = null; // Points to the latest simulation results Map
+    this.simulationReports = [];   // Holds the last two full simulation reports
     this.lastMetric = null;
 
     this._eventBus.on('canvas.init', () => {
@@ -80,13 +81,93 @@ export default class SimulationController {
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
+    this._eventBus.on('simulation.schedule.requested', () => this.showSchedule());
+  }
+
+  showSchedule() {
+    const calendar = this._simulationEngine.calendar;
+    const html = this.createScheduleHtml(calendar);
+    this._eventBus.fire('simulation.schedule.show', { html });
+  }
+
+  createScheduleHtml(calendar) {
+    const formatTime = (minutes) => {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+
+    let workweekHtml = '';
+    for (const day of calendar.workweek) {
+      workweekHtml += `
+        <tr>
+          <td>${day.day}</td>
+          <td>${formatTime(day.start)}</td>
+          <td>${formatTime(day.end)}</td>
+        </tr>
+      `;
+    }
+
+    let holidaysHtml = '';
+    if (calendar.holidays.length > 0) {
+      holidaysHtml = '<ul>';
+      for (const holiday of calendar.holidays) {
+        holidaysHtml += `<li>${holiday}</li>`;
+      }
+      holidaysHtml += '</ul>';
+    } else {
+      holidaysHtml = '<p>No hay días festivos definidos.</p>';
+    }
+
+    return `
+      <h4>Horario de Trabajo Semanal</h4>
+      <table class="sim-results-table">
+        <thead>
+          <tr>
+            <th>Día</th>
+            <th>Inicio</th>
+            <th>Fin</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${workweekHtml}
+        </tbody>
+      </table>
+      <h4 style="margin-top: 20px;">Días Festivos</h4>
+      ${holidaysHtml}
+    `;
   }
 
   runSimulation() {
-    this.clear();
-    // Engine now finds its own configuration by looking for the root start event
-    this.simulationResults = this._simulationEngine.run();
+    // Clear UI elements
+    this.lastMetric = null;
+    this.clearOverlaysAndHeatmap();
+    if (this._chart) {
+      this._chart.destroy();
+      this._chart = null;
+    }
+
+    // Run new simulation
+    const results = this._simulationEngine.run();
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
+
+    // Create and store report
+    const report = {
+        results: results,
+        completedInstances: this._simulationEngine.completedInstances,
+        duration: this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock)) * 60000,
+        createdAt: new Date()
+    };
+    this.simulationReports.unshift(report);
+    this.simulationReports = this.simulationReports.slice(0, 2);
+
+    // Update simulationResults for other functions that rely on it
+    this.simulationResults = report.results;
+
+    // Refresh any open chart
+    if (this._chartPanel.isOpen()) {
+        this.showChart();
+    }
   }
 
   adjustHeatmap(type, amount) {
@@ -210,12 +291,12 @@ export default class SimulationController {
     }
 
     if (metric === 'overallSummary') {
-      if (!this.simulationResults) {
+      if (this.simulationReports.length === 0) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
         return;
       }
-      const summaryHtml = this.createOverallSummary(this.simulationResults);
+      const summaryHtml = this.createOverallSummary(this.simulationReports[0]);
       this._chartPanel.showHtmlContent(summaryHtml);
       return;
     }
@@ -388,11 +469,36 @@ export default class SimulationController {
         };
     }
 
+    if (metric === 'comparison') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        let label = context.dataset.label || '';
+                        if (label) {
+                            label += ': ';
+                        }
+                        const value = context.parsed.y;
+                        // Check which metric it is by looking at the label
+                        if (context.label.includes('Costo') || context.label.includes('Reparación')) {
+                            label += '$' + value.toFixed(2);
+                        } else if (context.label.includes('Duración') || context.label.includes('Tiempo')) {
+                            label += formatMilliseconds(value * 1000); // Convert seconds to formatted string
+                        } else {
+                            label += value;
+                        }
+                        return label;
+                    }
+                }
+            }
+        }
+    }
+
     return {
       type: chartType,
       data: {
         labels: chartData.labels,
-        datasets: datasets
+        datasets: chartData.datasets
       },
       options: options
     };
@@ -477,53 +583,67 @@ export default class SimulationController {
     return tableHtml;
   }
 
-  createOverallSummary(results) {
+  createOverallSummary(report) {
     let totalCost = 0;
     let totalOvertime = 0;
     let totalFailures = 0;
-    let totalCompleted = 0;
-    let minStartTime = Infinity;
-    let maxEndTime = 0;
+    let totalReworkCost = 0;
+    let totalWaitTimeCost = 0;
+    let totalInefficientDispatch = 0;
 
-    results.forEach(result => {
-      totalCost += result.totalCost;
-      totalOvertime += result.totalOvertime;
-      totalFailures += result.failureCount;
-
-      if (result.executionCount > 0) {
-        const element = this._elementRegistry.get(result.name); // Assuming name is id
-        if (is(element, 'bpmn:EndEvent')) {
-          totalCompleted += result.executionCount;
-        }
-      }
+    report.results.forEach(result => {
+      totalCost += result.totalCost || 0;
+      totalOvertime += result.totalOvertime || 0;
+      totalFailures += result.failureCount || 0;
+      totalReworkCost += result.totalReworkCost || 0;
+      totalWaitTimeCost += result.totalWaitTimeCost || 0;
+      totalInefficientDispatch += result.inefficientDispatchCount || 0;
     });
 
-    // Calculate elapsed working time from the start of the simulation (time 0) to the final clock time.
-    const simulationDurationInMinutes = this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock));
-    const simulationDurationInMillis = simulationDurationInMinutes * 60000;
+    // The engine calculates totalCost as: (resource cost) + totalReworkCost + totalWaitTimeCost.
+    // We calculate operationalCost by subtracting the other costs to avoid double counting.
+    const operationalCost = totalCost - totalReworkCost - totalWaitTimeCost;
 
     return `
       <div class="sim-summary-container">
         <h2>Resumen General de la Simulación</h2>
-        <div class="sim-summary-item">
-          <span class="label">Duración Total (Tiempo de Trabajo Neto):</span>
-          <span class="value">${formatMilliseconds(simulationDurationInMillis)}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Instancias Completadas:</span>
-          <span class="value">${this._simulationEngine.completedInstances}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Costo Total de Operación:</span>
-          <span class="value">$${totalCost.toFixed(2)}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Tiempo Total de Horas Extras:</span>
-          <span class="value">${formatMilliseconds(totalOvertime)}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Número Total de Fallos:</span>
-          <span class="value">${totalFailures}</span>
+        <div class="sim-summary-grid">
+          <div class="sim-summary-item">
+            <span class="label">Instancias Completadas:</span>
+            <span class="value">${report.completedInstances}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Duración Neta:</span>
+            <span class="value">${formatMilliseconds(report.duration)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Total Fallos:</span>
+            <span class="value">${totalFailures}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Despachos Ineficientes:</span>
+            <span class="value">${totalInefficientDispatch}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo de Operación:</span>
+            <span class="value">$${operationalCost.toFixed(2)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo de Espera:</span>
+            <span class="value">$${totalWaitTimeCost.toFixed(2)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo de Reparación:</span>
+            <span class="value">$${totalReworkCost.toFixed(2)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo Total:</span>
+            <span class="value">$${totalCost.toFixed(2)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Tiempo Extra Total:</span>
+            <span class="value">${formatMilliseconds(totalOvertime)}</span>
+          </div>
         </div>
       </div>
     `;
@@ -570,6 +690,64 @@ export default class SimulationController {
   }
 
   getChartData(metric) {
+    if (metric === 'comparison') {
+        if (this.simulationReports.length < 2) {
+          this._notifications.showNotification({ text: 'Por favor, ejecute al menos dos simulaciones para comparar', type: 'warning', duration: 4000 });
+          // Return empty data to prevent chart error
+          return { labels: [], datasets: [] };
+        }
+
+        const currentReport = this.simulationReports[0];
+        const previousReport = this.simulationReports[1];
+
+        const getMetrics = (report) => {
+            let totalCost = 0, totalOvertime = 0, totalFailures = 0, totalReworkCost = 0, totalWaitTimeCost = 0;
+            report.results.forEach(r => {
+                totalCost += r.totalCost || 0;
+                totalOvertime += r.totalOvertime || 0;
+                totalFailures += r.failureCount || 0;
+                totalReworkCost += r.totalReworkCost || 0;
+                totalWaitTimeCost += r.totalWaitTimeCost || 0;
+            });
+            return {
+                'Costo Total': totalCost,
+                'Costo Reparación': totalReworkCost,
+                'Costo Espera': totalWaitTimeCost,
+                'Duración Neta (s)': report.duration / 1000,
+                'Instancias Completadas': report.completedInstances,
+                'Total Fallos': totalFailures,
+                'Tiempo Extra Total (s)': totalOvertime / 1000
+            };
+        };
+
+        const currentMetrics = getMetrics(currentReport);
+        const previousMetrics = getMetrics(previousReport);
+
+        const labels = Object.keys(currentMetrics);
+        const currentData = Object.values(currentMetrics);
+        const previousData = Object.values(previousMetrics);
+
+        return {
+            labels,
+            datasets: [
+                {
+                    label: `Sim. Anterior (${previousReport.createdAt.toLocaleTimeString()})`,
+                    data: previousData,
+                    backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 1
+                },
+                {
+                    label: `Sim. Actual (${currentReport.createdAt.toLocaleTimeString()})`,
+                    data: currentData,
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }
+            ]
+        };
+    }
+
     const tasks = [];
 
     if (metric === 'resourceQuantity') {
@@ -739,6 +917,7 @@ export default class SimulationController {
   clear() {
     this.lastMetric = null;
     this.simulationResults = null;
+    this.simulationReports = [];
     this.clearOverlaysAndHeatmap();
     if (this._chart) {
       this._chart.destroy();

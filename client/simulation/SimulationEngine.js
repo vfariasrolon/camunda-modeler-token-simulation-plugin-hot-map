@@ -391,6 +391,124 @@ export default class SimulationEngine {
     console.table(Object.fromEntries(this.results));
     return this.results;
   }
+
+  // ############# NEW PLANNING MODE LOGIC #############
+
+  calculateWorkPlan() {
+    // Step 1: Run the existing simulation to get a realistic total workload.
+    const simulationResults = this.run();
+    let totalWorkloadMs = 0;
+    simulationResults.forEach(res => {
+      totalWorkloadMs += res.totalProcessingTime + res.totalReworkTime;
+    });
+
+    if (totalWorkloadMs <= 0) {
+      return {
+        normalPlan: { duration: 0, cost: 0, schedule: [] },
+        minimumTimePlan: { duration: 0, cost: 0, schedule: [] }
+      };
+    }
+
+    const startDate = new Date(this.clock);
+
+    // Step 2: Calculate the two plans based on the total workload.
+    const normalPlan = this._calculateNormalTimePlan(totalWorkloadMs, startDate);
+    const minimumTimePlan = this._calculateMinimumTimePlan(totalWorkloadMs, startDate);
+
+    return { normalPlan, minimumTimePlan };
+  }
+
+  _calculateNormalTimePlan(workloadMs, startDate) {
+    const { baseRatePerHour = 0 } = this.rootConfig.cost;
+    const cost = (workloadMs / 3600000) * baseRatePerHour;
+
+    const endDate = this.calendar.addWorkingTime(startDate, workloadMs / 60000);
+    const duration = workloadMs / 60000; // Duration is simply the workload in minutes
+
+    // Generate daily schedule
+    const schedule = [];
+    let remainingMs = workloadMs;
+    const minutesPerDay = (this.calendar.config.workingHours.end.hour - this.calendar.config.workingHours.start.hour) * 60 +
+                           (this.calendar.config.workingHours.end.minute - this.calendar.config.workingHours.start.minute);
+    const msPerDay = minutesPerDay * 60000;
+
+    let dayCounter = 1;
+    while (remainingMs > 0) {
+      const workDoneThisDay = Math.min(remainingMs, msPerDay);
+      schedule.push({ day: `Día ${dayCounter}`, hours: workDoneThisDay / 3600000 });
+      remainingMs -= workDoneThisDay;
+      dayCounter++;
+    }
+
+    return { duration, cost, schedule };
+  }
+
+  _calculateMinimumTimePlan(workloadMs, startDate) {
+    const { baseRatePerHour = 0 } = this.rootConfig.cost;
+    const overtimeRules = this.rootConfig.overtime || { payMultiplier: 1.5 };
+    const payMultiplier = overtimeRules.payMultiplier || 1.5;
+
+    const DAILY_OVERTIME_LIMIT_MS = 3 * 3600000;
+    const WEEKLY_OVERTIME_OCCURRENCES_LIMIT = 3;
+
+    let remainingMs = workloadMs;
+    let cursorDate = new Date(startDate.getTime());
+    if (!this.calendar.isWorkingTime(cursorDate)) {
+      cursorDate = this.calendar._moveToNextWorkingDayStart(cursorDate);
+    }
+
+    const effectiveStartDate = new Date(cursorDate.getTime());
+    let totalCost = 0;
+    const schedule = [];
+    let weeklyOvertimeOccurrences = 0;
+    let lastWeekNumber = this.calendar.getWeekNumber(cursorDate);
+    let dayCounter = 1;
+
+    while (remainingMs > 0) {
+      const currentWeekNumber = this.calendar.getWeekNumber(cursorDate);
+      if (currentWeekNumber !== lastWeekNumber) {
+        weeklyOvertimeOccurrences = 0;
+        lastWeekNumber = currentWeekNumber;
+      }
+
+      let hoursToday = 0;
+      // Calculate normal work for the day
+      const endOfWorkDay = this.calendar.getWorkdayEnd(cursorDate);
+      const remainingInNormalDayMs = Math.max(0, endOfWorkDay.getTime() - cursorDate.getTime());
+      const normalWorkDoneMs = Math.min(remainingMs, remainingInNormalDayMs);
+
+      if (normalWorkDoneMs > 0) {
+          totalCost += (normalWorkDoneMs / 3600000) * baseRatePerHour;
+          remainingMs -= normalWorkDoneMs;
+          hoursToday += normalWorkDoneMs / 3600000;
+          cursorDate.setMilliseconds(cursorDate.getMilliseconds() + normalWorkDoneMs);
+      }
+
+      // Calculate overtime for the day
+      if (remainingMs > 0 && weeklyOvertimeOccurrences < WEEKLY_OVERTIME_OCCURRENCES_LIMIT) {
+        const availableOvertimeMs = Math.min(remainingMs, DAILY_OVERTIME_LIMIT_MS);
+        if (availableOvertimeMs > 0) {
+          totalCost += (availableOvertimeMs / 3600000) * baseRatePerHour * payMultiplier;
+          remainingMs -= availableOvertimeMs;
+          hoursToday += availableOvertimeMs / 3600000;
+          cursorDate.setMilliseconds(cursorDate.getMilliseconds() + availableOvertimeMs);
+          weeklyOvertimeOccurrences++;
+        }
+      }
+
+      if (hoursToday > 0) {
+        schedule.push({ day: `Día ${dayCounter}`, hours: hoursToday });
+      }
+
+      // Move cursor to the start of the next working day
+      cursorDate = this.calendar._moveToNextWorkingDayStart(cursorDate);
+      dayCounter++;
+    }
+
+    const duration = this.calendar.calculateElapsedTime(effectiveStartDate, cursorDate);
+
+    return { duration, cost: totalCost, schedule };
+  }
 }
 
 SimulationEngine.$inject = ['elementRegistry'];

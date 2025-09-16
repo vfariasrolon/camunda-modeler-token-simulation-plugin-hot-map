@@ -9,6 +9,8 @@ const PALETTE_OPEN_CLS = 'open';
 const HELP_OPEN_CLS = 'help-open';
 
 const HelpIcon = '<path d="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zm1,15h-2v-2h2v2zm0,-4h-2V7h2v6z"/>';
+const ScheduleIcon = '<path d="M19,4H18V2H16V4H8V2H6V4H5C3.89,4 3.01,4.89 3.01,6L3,20c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2V6C21,4.89 20.1,4 19,4zM19,20H5V10h14V20zM19,8H5V6h14V8z"/>';
+
 
 export default class ChartPanel {
   constructor(canvas, eventBus) {
@@ -35,9 +37,13 @@ export default class ChartPanel {
             <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
             <option value="paretoCost">Diagrama de Pareto (Costos)</option>
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
+            <option value="comparison">Gráfico Comparativo (Últimas 2)</option>
           </select>
-          <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
-          <button class="close" title="Cerrar">×</button>
+          <div class="header-buttons">
+            <button class="schedule-button" title="Ver Cronograma"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ScheduleIcon}</svg></button>
+            <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
+            <button class="close" title="Cerrar">×</button>
+          </div>
         </div>
         <div class="content">
           <div class="html-content"></div>
@@ -58,6 +64,17 @@ export default class ChartPanel {
           <p><strong>Diagrama de Pareto (Costos):</strong> Aplica el principio de Pareto a los costos. Ayuda a identificar las tareas que son responsables de la mayor parte del costo total del proceso. Las barras son el costo total por tarea, y la línea es el porcentaje acumulado.</p>
           <p><strong>Tiempos de Espera por Tarea (Completo):</strong> Muestra el tiempo total de espera acumulado para cada tarea del proceso, ordenado de mayor a menor. A diferencia de los gráficos "Top 5", esta vista incluye todas las tareas para un análisis exhaustivo de los "tiempos muertos" y cuellos de botella de recursos.</p>
         </div>
+        <div class="schedule-modal-overlay hidden">
+            <div class="schedule-modal">
+                <div class="schedule-modal-header">
+                    <h3>Cronograma de Trabajo</h3>
+                    <button class="close-modal" title="Cerrar">×</button>
+                </div>
+                <div class="schedule-modal-content">
+                    <!-- Content will be injected here -->
+                </div>
+            </div>
+        </div>
       </div>
     `);
 
@@ -65,18 +82,33 @@ export default class ChartPanel {
 
     this.closeButton = this._container.querySelector('button.close');
     this.helpButton = this._container.querySelector('button.help-button');
+    this.scheduleButton = this._container.querySelector('button.schedule-button');
     this.helpContent = this._container.querySelector('.help-content');
     this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
     this.canvas = this._container.querySelector('#simulationChartCanvas');
+    this.scheduleModalOverlay = this._container.querySelector('.schedule-modal-overlay');
+    this.scheduleModalClose = this._container.querySelector('.schedule-modal .close-modal');
+
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
     domEvent.bind(this.helpButton, 'click', () => this.toggleHelp());
+    domEvent.bind(this.scheduleButton, 'click', () => this._eventBus.fire('simulation.schedule.requested'));
+    domEvent.bind(this.scheduleModalClose, 'click', () => this.showScheduleModal(false));
+    domEvent.bind(this.scheduleModalOverlay, 'click', (event) => {
+        if (event.target === this.scheduleModalOverlay) {
+            this.showScheduleModal(false);
+        }
+    });
+
     domEvent.bind(this.chartSelect, 'change', (e) => {
         this._eventBus.fire('simulation.charts.opened');
     });
 
     this._eventBus.on('diagram.destroy', () => this.hide());
+    this._eventBus.on('simulation.schedule.show', (event) => {
+      this.showScheduleModal(true, event.html);
+    });
   }
 
   getChartType() {
@@ -99,6 +131,16 @@ export default class ChartPanel {
     htmlContent.innerHTML = ''; // Clear it
     domClasses(this.canvas).remove('hidden');
     domClasses(htmlContent).add('hidden');
+  }
+
+  showScheduleModal(show, html) {
+      if (show) {
+          const content = this.scheduleModalOverlay.querySelector('.schedule-modal-content');
+          content.innerHTML = html;
+          domClasses(this.scheduleModalOverlay).remove('hidden');
+      } else {
+          domClasses(this.scheduleModalOverlay).add('hidden');
+      }
   }
 
   isOpen() {

@@ -179,3 +179,126 @@
 .simulation-chart-panel canvas.hidden {
     display: none;
 }
+
+/* Styles for the new Overall Summary View */
+.sim-summary-container {
+    padding: 15px;
+}
+
+.sim-summary-container h2 {
+    text-align: center;
+    margin-bottom: 25px;
+    font-size: 1.5em;
+    color: #333;
+}
+
+.sim-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 20px;
+}
+
+.sim-summary-item {
+    background-color: #f9f9f9;
+    padding: 20px;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sim-summary-item:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.sim-summary-item .label {
+    font-weight: 600;
+    color: #555;
+    margin-bottom: 10px;
+    font-size: 0.95em;
+}
+
+.sim-summary-item .value {
+    font-weight: 700;
+    color: #0056b3;
+    font-size: 1.4em;
+    align-self: flex-end;
+}
+
+/* Schedule Modal Styles */
+.schedule-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1002; /* Above chart panel */
+}
+
+.schedule-modal-overlay.hidden {
+    display: none;
+}
+
+.schedule-modal {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    width: 90%;
+    max-width: 500px;
+}
+
+.schedule-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.schedule-modal-header h3 {
+    margin: 0;
+    font-size: 1.2em;
+}
+
+.schedule-modal-header .close-modal {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0 5px;
+}
+
+.schedule-modal-content h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.schedule-modal-content ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.schedule-modal-content li {
+    background: #f4f4f4;
+    padding: 8px;
+    border-radius: 4px;
+    margin-bottom: 5px;
+}
+
+.header-buttons {
+    display: flex;
+    align-items: center;
+}
+
+.header-buttons button {
+    margin-left: 5px;
+}
