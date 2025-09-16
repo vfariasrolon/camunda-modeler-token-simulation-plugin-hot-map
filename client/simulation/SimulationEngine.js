@@ -359,7 +359,8 @@ export default class SimulationEngine {
 
       if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
-        const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalInterval).getTime();
+        const arrivalIntervalInMinutes = arrivalInterval / 60000;
+        const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
         console.log(`Scheduling next instance (${instanceCounter}) to arrive at ${new Date(nextArrivalTime).toLocaleString()}`);
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
