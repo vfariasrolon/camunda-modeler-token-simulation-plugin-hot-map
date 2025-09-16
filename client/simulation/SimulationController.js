@@ -54,6 +54,7 @@ export default class SimulationController {
     this._blur = 10;
     this.simulationResults = null;
     this.lastMetric = null;
+    this.comparativeResults = null;
 
     this._eventBus.on('canvas.init', () => {
       this.init();
@@ -84,9 +85,28 @@ export default class SimulationController {
 
   runSimulation() {
     this.clear();
-    // Engine now finds its own configuration by looking for the root start event
-    this.simulationResults = this._simulationEngine.run();
-    this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
+    const rootConfig = this._simulationEngine._findRootConfig();
+
+    if (rootConfig.simulationType === 'batch') {
+        this._notifications.showNotification({ text: 'Ejecutando escenario SIN horas extras...', type: 'info', duration: 2000 });
+        const resultsWithoutOvertime = this._simulationEngine.run(false);
+
+        this._notifications.showNotification({ text: 'Ejecutando escenario CON horas extras...', type: 'info', duration: 2000 });
+        const resultsWithOvertime = this._simulationEngine.run(true);
+
+        this.comparativeResults = {
+            withoutOvertime: this._extractSummaryMetrics(resultsWithoutOvertime, false),
+            withOvertime: this._extractSummaryMetrics(resultsWithOvertime, true)
+        };
+        this.simulationResults = resultsWithoutOvertime; // Default to showing this heatmap
+        this._notifications.showNotification({ text: 'Simulación comparativa completada', type: 'info', duration: 3000 });
+        this._chartPanel.setChartType('comparativeSummary');
+        this.showChart();
+
+    } else { // Continuous
+        this.simulationResults = this._simulationEngine.run(true); // Always allow overtime in continuous
+        this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
+    }
   }
 
   adjustHeatmap(type, amount) {
@@ -209,13 +229,24 @@ export default class SimulationController {
       return;
     }
 
+    if (metric === 'comparativeSummary') {
+        if (!this.comparativeResults) {
+          this._notifications.showNotification({ text: 'Por favor, ejecute una simulación de lote primero', type: 'warning', duration: 4000 });
+          this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados comparativos disponibles.</p>');
+          return;
+        }
+        const summaryHtml = this.createComparativeSummary(this.comparativeResults);
+        this._chartPanel.showHtmlContent(summaryHtml);
+        return;
+    }
+
     if (metric === 'overallSummary') {
       if (!this.simulationResults) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
         return;
       }
-      const summaryHtml = this.createOverallSummary(this.simulationResults);
+      const summaryHtml = this.createOverallSummary(this._extractSummaryMetrics(this.simulationResults));
       this._chartPanel.showHtmlContent(summaryHtml);
       return;
     }
@@ -477,30 +508,90 @@ export default class SimulationController {
     return tableHtml;
   }
 
-  createOverallSummary(results) {
+  _extractSummaryMetrics(results, useOvertime) {
     let totalCost = 0;
     let totalOvertime = 0;
     let totalFailures = 0;
-    let totalCompleted = 0;
-    let minStartTime = Infinity;
-    let maxEndTime = 0;
+    let finalClock = 0;
 
     results.forEach(result => {
-      totalCost += result.totalCost;
-      totalOvertime += result.totalOvertime;
-      totalFailures += result.failureCount;
-
-      if (result.executionCount > 0) {
-        const element = this._elementRegistry.get(result.name); // Assuming name is id
-        if (is(element, 'bpmn:EndEvent')) {
-          totalCompleted += result.executionCount;
-        }
-      }
+        totalCost += result.totalCost;
+        totalOvertime += result.totalOvertime;
+        totalFailures += result.failureCount;
     });
 
-    // Calculate elapsed working time from the start of the simulation (time 0) to the final clock time.
-    const simulationDurationInMinutes = this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock));
-    const simulationDurationInMillis = simulationDurationInMinutes * 60000;
+    // This is a bit of a hack to get the final clock time from the engine
+    // after a specific run.
+    const engine = useOvertime ? this._simulationEngine._withOvertimeEngine : this._simulationEngine;
+    finalClock = engine.clock;
+
+    const simulationDurationInMinutes = engine.calendar.calculateElapsedTime(new Date(0), new Date(finalClock));
+
+    return {
+        totalCost,
+        totalOvertime,
+        totalFailures,
+        completedInstances: engine.completedInstances,
+        durationInMinutes: simulationDurationInMinutes
+    };
+  }
+
+  createComparativeSummary(comparativeResults) {
+    const { withoutOvertime, withOvertime } = comparativeResults;
+
+    const timeSaved = withoutOvertime.durationInMinutes - withOvertime.durationInMinutes;
+    const costAdded = withOvertime.totalCost - withoutOvertime.totalCost;
+
+    return `
+      <div class="sim-summary-container">
+        <h2>Análisis de Escenarios</h2>
+        <table class="sim-comparison-table">
+            <thead>
+                <tr>
+                    <th>Métrica</th>
+                    <th>Escenario Normal</th>
+                    <th>Escenario con Horas Extras</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Duración Total (Tiempo Neto)</td>
+                    <td>${formatMilliseconds(withoutOvertime.durationInMinutes * 60000)}</td>
+                    <td>${formatMilliseconds(withOvertime.durationInMinutes * 60000)}</td>
+                </tr>
+                <tr>
+                    <td>Costo Total de Operación</td>
+                    <td>$${withoutOvertime.totalCost.toFixed(2)}</td>
+                    <td>$${withOvertime.totalCost.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Costo Total de Horas Extras</td>
+                    <td>$${withoutOvertime.totalOvertimeCost.toFixed(2)}</td>
+                    <td>$${withOvertime.totalOvertimeCost.toFixed(2)}</td>
+                </tr>
+                <tr>
+                    <td>Número Total de Fallos</td>
+                    <td>${withoutOvertime.totalFailures}</td>
+                    <td>${withOvertime.totalFailures}</td>
+                </tr>
+            </tbody>
+        </table>
+        <h3>Conclusión</h3>
+        <div class="sim-summary-item">
+          <span class="label">Ahorro de Tiempo:</span>
+          <span class="value">${formatMilliseconds(timeSaved * 60000)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo Adicional por Ahorro:</span>
+          <span class="value">$${costAdded.toFixed(2)}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  createOverallSummary(results) {
+    const summaryMetrics = this._extractSummaryMetrics(results, true); // Assume overtime for continuous
+    const simulationDurationInMillis = summaryMetrics.durationInMinutes * 60000;
 
     return `
       <div class="sim-summary-container">
@@ -511,19 +602,19 @@ export default class SimulationController {
         </div>
         <div class="sim-summary-item">
           <span class="label">Instancias Completadas:</span>
-          <span class="value">${this._simulationEngine.completedInstances}</span>
+          <span class="value">${summaryMetrics.completedInstances}</span>
         </div>
         <div class="sim-summary-item">
           <span class="label">Costo Total de Operación:</span>
-          <span class="value">$${totalCost.toFixed(2)}</span>
+          <span class="value">$${summaryMetrics.totalCost.toFixed(2)}</span>
         </div>
         <div class="sim-summary-item">
           <span class="label">Tiempo Total de Horas Extras:</span>
-          <span class="value">${formatMilliseconds(totalOvertime)}</span>
+          <span class="value">${formatMilliseconds(summaryMetrics.totalOvertime)}</span>
         </div>
         <div class="sim-summary-item">
           <span class="label">Número Total de Fallos:</span>
-          <span class="value">${totalFailures}</span>
+          <span class="value">${summaryMetrics.totalFailures}</span>
         </div>
       </div>
     `;
@@ -739,6 +830,7 @@ export default class SimulationController {
   clear() {
     this.lastMetric = null;
     this.simulationResults = null;
+    this.comparativeResults = null;
     this.clearOverlaysAndHeatmap();
     if (this._chart) {
       this._chart.destroy();

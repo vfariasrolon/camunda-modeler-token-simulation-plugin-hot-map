@@ -277,7 +277,6 @@ export default class SimulationEngine {
 
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const processConfig = getSimulationData(processRoot);
-    const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
@@ -288,35 +287,44 @@ export default class SimulationEngine {
       return this.results;
     }
 
-    const arrivalRate = this.rootConfig.arrivalRate || { value: 1, unit: 'minute' };
-    let arrivalInterval = 60000; // Default to 1 per minute
-    if (arrivalRate.value > 0) {
-      let intervalInSeconds;
-      if (arrivalRate.unit === 'second') {
-        intervalInSeconds = 1 / arrivalRate.value;
-      } else if (arrivalRate.unit === 'hour') {
-        intervalInSeconds = 3600 / arrivalRate.value;
-      } else { // minute
-        intervalInSeconds = 60 / arrivalRate.value;
+    let runValue;
+    let instanceCounter = 0;
+
+    if (this.rootConfig.simulationType === 'batch') {
+      runValue = this.rootConfig.batchSize || 1;
+      console.log(`Starting BATCH simulation with ${runValue} instances.`);
+      for (let i = 0; i < runValue; i++) {
+        const instanceId = i + 1;
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: 0, instanceId, startTime: 0 });
+        this.instanceStates.set(instanceId, { gateways: {} });
       }
-      arrivalInterval = intervalInSeconds * 1000;
+      instanceCounter = runValue;
+    } else { // Continuous
+      runValue = this.rootConfig.simulationConfig.runValue || 100;
+      const arrivalRate = this.rootConfig.arrivalRate || { value: 1, unit: 'minute' };
+      let arrivalInterval = 60000;
+      if (arrivalRate.value > 0) {
+        let intervalInSeconds = 60 / arrivalRate.value; // Default to per minute
+        if (arrivalRate.unit === 'second') intervalInSeconds = 1 / arrivalRate.value;
+        if (arrivalRate.unit === 'hour') intervalInSeconds = 3600 / arrivalRate.value;
+        arrivalInterval = intervalInSeconds * 1000;
+      }
+
+      startEvents.forEach((startEvent, index) => {
+        const instanceId = index + 1;
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId, startTime: 0 });
+        this.instanceStates.set(instanceId, { gateways: {} });
+      });
+      instanceCounter = startEvents.length;
     }
 
-    startEvents.forEach((startEvent, index) => {
-      const instanceId = index + 1;
-      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId, startTime: 0 });
-      this.instanceStates.set(instanceId, { gateways: {} });
-    });
-
-    let instanceCounter = startEvents.length;
     let iterationCounter = 0;
-
-    console.log(`Starting simulation with ${runValue} instances to complete.`);
+    console.log(`Starting simulation. Target instances to complete: ${runValue}`);
 
     while (!this.eventQueue.isEmpty()) {
       iterationCounter++;
-      if (iterationCounter > (runValue * 1000)) { // Safety break, increased limit
-        throw new Error(`Simulation safety break triggered. Exceeded ${runValue * 1000} iterations. Likely an infinite loop.`);
+      if (iterationCounter > (runValue * 1000)) { // Safety break
+        throw new Error(`Simulation safety break triggered. Exceeded iterations.`);
       }
 
       const event = this.eventQueue.next();
@@ -325,16 +333,12 @@ export default class SimulationEngine {
       console.log(`[${iterationCounter}] Processing event: ${event.type} for element ${event.element.id} at time ${new Date(this.clock).toLocaleString()}`);
       console.log(`Queue size: ${this.eventQueue.items.length}, Completed instances: ${this.completedInstances}`);
 
-
       if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
-
         console.log(`[RESULTS] Task ${event.element.id} | Adding to totals: processTime=${event.processingTime}, reworkTime=${event.reworkTime}`);
-
         results.totalProcessingTime += event.processingTime;
         results.totalReworkTime += event.reworkTime;
         results.totalOvertime += event.overtime;
-
         const waitTimeCost = results.totalWaitTimeCost;
         results.totalCost = (results.totalCost - waitTimeCost) + event.processingCost + event.reworkCost + event.overtimeCost + waitTimeCost;
         results.totalReworkCost += event.reworkCost;
@@ -344,7 +348,7 @@ export default class SimulationEngine {
           const waitTime = this.calendar.calculateElapsedTime(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
           const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
-          const currentWaitCost = (waitTime / 60) * waitCostPerHour; // waitTime is in minutes
+          const currentWaitCost = (waitTime / 60) * waitCostPerHour;
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
         }
@@ -361,7 +365,6 @@ export default class SimulationEngine {
             const currentWaitCost = (waitTime / 60) * waitCostPerHour;
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
-
             nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.processingTime / 60000).getTime();
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
@@ -372,7 +375,7 @@ export default class SimulationEngine {
         this.processEvent(event);
       }
 
-      if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
+      if (this.rootConfig.simulationType === 'continuous' && is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
@@ -380,6 +383,7 @@ export default class SimulationEngine {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
+
       console.log(`Checking end condition: completed=${this.completedInstances}, target=${runValue}`);
       if (this.completedInstances >= runValue) {
         console.log(`Target of ${runValue} completed instances reached. Ending simulation.`);

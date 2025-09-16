@@ -74,7 +74,6 @@ export default class DataEditor {
     const saveButton = this._modal.querySelector('button.save');
     domEvent.bind(saveButton, 'click', () => this.save());
 
-    // Close modal on background click
     domEvent.bind(this._modal, 'click', (e) => {
       if (e.target === this._modal) {
         this.closeModal();
@@ -101,10 +100,7 @@ export default class DataEditor {
     });
 
     this._currentOverlayId = this._overlays.add(element, 'sim-data-editor', {
-      position: {
-        top: -12,
-        left: -12
-      },
+      position: { top: -12, left: -12 },
       html: overlayHtml
     });
   }
@@ -165,8 +161,9 @@ export default class DataEditor {
 
   _getStartEventDefaults(data = {}) {
     const defaults = {
-      arrivalRate: { value: 60, unit: 'minute' },
-      simulationConfig: { runValue: 1000 },
+      simulationType: 'continuous', // 'continuous' or 'batch'
+      batchSize: 1000,
+      arrivalRate: { value: 1, unit: 'minute' },
       isRoot: false,
       calendar: {
         workingDays: [1, 2, 3, 4, 5],
@@ -186,7 +183,6 @@ export default class DataEditor {
       ...defaults,
       ...data,
       arrivalRate: { ...defaults.arrivalRate, ...(data.arrivalRate || {}) },
-      simulationConfig: { ...defaults.simulationConfig, ...(data.simulationConfig || {}) },
       calendar: { ...defaults.calendar, ...(data.calendar || {}) },
       cost: { ...defaults.cost, ...(data.cost || {}) },
       overtime: { ...defaults.overtime, ...(data.overtime || {}) }
@@ -242,7 +238,7 @@ export default class DataEditor {
   }
 
   renderStartEventForm(container, data) {
-    const { arrivalRate, isRoot, calendar, cost, overtime, simulationConfig } = data;
+    const { arrivalRate, isRoot, calendar, cost, overtime, simulationType, batchSize } = data;
 
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const workingDaysCheckboxes = days.map((day, index) => `
@@ -256,26 +252,35 @@ export default class DataEditor {
     const endTimeValue = formatTime(calendar.workingHours.end);
 
     container.innerHTML = `
-      <div class="form-group">
-        <label>Tasa de Llegada (arrivalRate)</label>
-        <input type="number" name="arrivalRate.value" value="${arrivalRate.value}">
-        <select name="arrivalRate.unit">
-          <option value="minute" ${arrivalRate.unit === 'minute' ? 'selected' : ''}>por Minuto</option>
-          <option value="hour" ${arrivalRate.unit === 'hour' ? 'selected' : ''}>por Hora</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Instancias a Simular (runValue)</label>
-        <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
-      </div>
-      <hr/>
-      <div class="form-group">
-        <label class="is-root-label">
-            <input type="checkbox" name="isRoot" ${isRoot ? 'checked' : ''}>
-            Usar como Configuración Raíz (init_root)
-        </label>
-      </div>
-      <p class="helper-text">Marque esta casilla para que las reglas de calendario y costos de este evento de inicio se apliquen a toda la simulación.</p>
+      <fieldset>
+        <legend>Configuración General</legend>
+        <div class="form-group">
+            <label class="is-root-label">
+                <input type="checkbox" name="isRoot" ${isRoot ? 'checked' : ''}>
+                Usar como Configuración Raíz (init_root)
+            </label>
+        </div>
+        <p class="helper-text">Marque esta casilla para que las reglas de este evento se apliquen a toda la simulación.</p>
+        <div class="form-group">
+          <label>Tipo de Simulación</label>
+          <select name="simulationType">
+            <option value="continuous" ${simulationType === 'continuous' ? 'selected' : ''}>Proceso Continuo (por tasa de llegada)</option>
+            <option value="batch" ${simulationType === 'batch' ? 'selected' : ''}>Lote de Trabajo Fijo (por cantidad)</option>
+          </select>
+        </div>
+        <div class="form-group" id="arrivalRate-group" style="display: ${simulationType === 'continuous' ? 'flex' : 'none'};">
+          <label>Tasa de Llegada</label>
+          <input type="number" name="arrivalRate.value" value="${arrivalRate.value}">
+          <select name="arrivalRate.unit">
+            <option value="minute" ${arrivalRate.unit === 'minute' ? 'selected' : ''}>por Minuto</option>
+            <option value="hour" ${arrivalRate.unit === 'hour' ? 'selected' : ''}>por Hora</option>
+          </select>
+        </div>
+        <div class="form-group" id="batchSize-group" style="display: ${simulationType === 'batch' ? 'flex' : 'none'};">
+          <label>Tamaño del Lote</label>
+          <input type="number" name="batchSize" value="${batchSize}">
+        </div>
+      </fieldset>
       <fieldset>
         <legend>Calendario Laboral</legend>
         <div class="form-group">
@@ -313,6 +318,13 @@ export default class DataEditor {
           </div>
       </fieldset>
     `;
+
+    const simulationTypeSelect = container.querySelector('[name="simulationType"]');
+    domEvent.bind(simulationTypeSelect, 'change', (e) => {
+        const isBatch = e.target.value === 'batch';
+        container.querySelector('#arrivalRate-group').style.display = isBatch ? 'none' : 'flex';
+        container.querySelector('#batchSize-group').style.display = isBatch ? 'flex' : 'none';
+    });
   }
 
   renderProcessForm(container, data) {
@@ -397,12 +409,11 @@ export default class DataEditor {
       };
 
       newData = {
+        simulationType: body.querySelector('[name="simulationType"]').value,
+        batchSize: parseInt(body.querySelector('[name="batchSize"]').value, 10),
         arrivalRate: {
           value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value),
           unit: body.querySelector('[name="arrivalRate.unit"]').value
-        },
-        simulationConfig: {
-          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
         },
         isRoot: body.querySelector('[name="isRoot"]').checked,
         calendar: {
