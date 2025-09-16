@@ -31,6 +31,7 @@ export default class ChartPanel {
             <option value="cost">Top 5 por Costo</option>
             <option value="processTime">Top 5 por Tiempo de Proceso</option>
             <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
+            <option value="overtime">Top 5 por Tiempo Extra</option>
             <option value="resourceQuantity">Recursos Asignados por Tarea</option>
             <option value="scatter">Diagrama de Dispersión (Tiempo vs. Costo)</option>
             <option value="pareto">Diagrama de Pareto (Fallos)</option>

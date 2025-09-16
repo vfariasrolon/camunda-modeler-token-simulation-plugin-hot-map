@@ -91,27 +91,44 @@ export default class SimulationController {
   }
 
   createScheduleHtml(calendar) {
-    const formatTime = (minutes) => {
-      const h = Math.floor(minutes / 60);
-      const m = minutes % 60;
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    // Check if a calendar and its config are defined.
+    if (!calendar || !calendar.config) {
+        return '<p>No se ha definido un cronograma de trabajo.</p>';
+    }
+
+    const { workingDays, workingHours, holidays } = calendar.config;
+
+    // Check for the existence of the properties to be safe.
+    if (!workingDays || !workingHours) {
+        return '<p>La configuración del cronograma es incompleta o no es válida.</p>';
+    }
+
+    const formatTime = (timeObj) => {
+      if (!timeObj || typeof timeObj.hour === 'undefined' || typeof timeObj.minute === 'undefined') return 'N/A';
+      const h = String(timeObj.hour).padStart(2, '0');
+      const m = String(timeObj.minute).padStart(2, '0');
+      return `${h}:${m}`;
     };
 
+    const dayNames = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
     let workweekHtml = '';
-    for (const day of calendar.workweek) {
-      workweekHtml += `
-        <tr>
-          <td>${day.day}</td>
-          <td>${formatTime(day.start)}</td>
-          <td>${formatTime(day.end)}</td>
-        </tr>
-      `;
+
+    // Create a row for each day of the week and show if it's working or not.
+    for (let i = 0; i < 7; i++) {
+        const isWorking = workingDays.includes(i);
+        workweekHtml += `
+            <tr>
+              <td>${dayNames[i]}</td>
+              <td>${isWorking ? formatTime(workingHours.start) : 'No Laborable'}</td>
+              <td>${isWorking ? formatTime(workingHours.end) : 'No Laborable'}</td>
+            </tr>
+        `;
     }
 
     let holidaysHtml = '';
-    if (calendar.holidays.length > 0) {
+    if (holidays && holidays.length > 0) {
       holidaysHtml = '<ul>';
-      for (const holiday of calendar.holidays) {
+      for (const holiday of holidays) {
         holidaysHtml += `<li>${holiday}</li>`;
       }
       holidaysHtml += '</ul>';
@@ -156,6 +173,7 @@ export default class SimulationController {
         results: results,
         completedInstances: this._simulationEngine.completedInstances,
         duration: this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock)) * 60000,
+        calendarDuration: this._simulationEngine.clock,
         createdAt: new Date()
     };
     this.simulationReports.unshift(report);
@@ -643,6 +661,10 @@ export default class SimulationController {
           <div class="sim-summary-item">
             <span class="label">Tiempo Extra Total:</span>
             <span class="value">${formatMilliseconds(totalOvertime)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Duración Total (Días Naturales):</span>
+            <span class="value">${(report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2)} días</span>
           </div>
         </div>
       </div>
