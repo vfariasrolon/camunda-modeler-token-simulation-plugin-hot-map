@@ -498,15 +498,16 @@ export default class SimulationController {
       }
     });
 
-    // This is a simplification. A more accurate way would be to get start/end times from the engine.
-    const simulationDuration = this._simulationEngine.clock;
+    // Calculate elapsed working time from the start of the simulation (time 0) to the final clock time.
+    const simulationDurationInMinutes = this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock));
+    const simulationDurationInMillis = simulationDurationInMinutes * 60000;
 
     return `
       <div class="sim-summary-container">
         <h2>Resumen General de la Simulación</h2>
         <div class="sim-summary-item">
-          <span class="label">Duración Total (Calendario):</span>
-          <span class="value">${formatMilliseconds(simulationDuration)}</span>
+          <span class="label">Duración Total (Tiempo de Trabajo Neto):</span>
+          <span class="value">${formatMilliseconds(simulationDurationInMillis)}</span>
         </div>
         <div class="sim-summary-item">
           <span class="label">Instancias Completadas:</span>
