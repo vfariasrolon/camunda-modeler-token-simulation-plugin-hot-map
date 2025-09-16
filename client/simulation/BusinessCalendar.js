@@ -31,7 +31,7 @@ export default class BusinessCalendar {
     const newDate = new Date(date.getTime());
     const { start } = this.config.workingHours;
     newDate.setHours(start.hour, start.minute, 0, 0);
-    if (date > newDate) { // if it's already past start time today
+    if (date >= newDate) {
         newDate.setDate(newDate.getDate() + 1);
     }
     while (!this.config.workingDays.includes(newDate.getDay())) {
@@ -52,6 +52,7 @@ export default class BusinessCalendar {
 
     const { start, end } = this.config.workingHours;
     const minutesPerWorkDay = (end.hour - start.hour) * 60 + (end.minute - start.minute);
+
     if (minutesPerWorkDay <= 0) return currentDate;
 
     const minutesLeftInDay = ((end.hour * 60 + end.minute) - (currentDate.getHours() * 60 + currentDate.getMinutes()));
@@ -64,88 +65,46 @@ export default class BusinessCalendar {
     remainingMinutes -= minutesLeftInDay;
     currentDate = this._moveToNextWorkingDayStart(currentDate);
 
-    const numWorkDays = this.config.workingDays.length;
-    if (numWorkDays > 0) {
-      const fullDays = Math.floor(remainingMinutes / minutesPerWorkDay);
-      if (fullDays > 0) {
-        let calendarDays = 0;
-        let workDaysCounted = 0;
-        let tempDate = new Date(currentDate.getTime());
-        while (workDaysCounted < fullDays) {
-          if (this.config.workingDays.includes(tempDate.getDay())) {
-            workDaysCounted++;
-          }
-          if (workDaysCounted < fullDays) {
-            tempDate.setDate(tempDate.getDate() + 1);
-            calendarDays++;
-          }
+    const numWorkDaysInWeek = this.config.workingDays.length;
+    if (numWorkDaysInWeek > 0) {
+        const fullDays = Math.floor(remainingMinutes / minutesPerWorkDay);
+        if (fullDays > 0) {
+            let calendarDays = 0;
+            let workDaysCounted = 0;
+            let tempDate = new Date(currentDate.getTime());
+            while(workDaysCounted < fullDays) {
+                if(this.config.workingDays.includes(tempDate.getDay())) {
+                    workDaysCounted++;
+                }
+                if (workDaysCounted < fullDays) {
+                  tempDate.setDate(tempDate.getDate() + 1);
+                  calendarDays++;
+                }
+            }
+            currentDate.setDate(currentDate.getDate() + calendarDays);
+            remainingMinutes -= fullDays * minutesPerWorkDay;
         }
-        currentDate.setDate(currentDate.getDate() + calendarDays);
-        remainingMinutes -= fullDays * minutesPerWorkDay;
-      }
     }
 
     currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
+
     return currentDate;
   }
 
   calculateElapsedTime(startDate, endDate) {
     if (endDate <= startDate) return 0;
 
-    let start = new Date(startDate.getTime());
-    let end = new Date(endDate.getTime());
+    let totalMinutes = 0;
+    let cursor = new Date(startDate.getTime());
 
-    const { start: startHours, end: endHours } = this.config.workingHours;
-    const startTotalMinutes = startHours.hour * 60 + startHours.minute;
-    const endTotalMinutes = endHours.hour * 60 + endHours.minute;
-    const minutesPerDay = endTotalMinutes - startTotalMinutes;
-
-    if (minutesPerDay <= 0) return 0;
-
-    let elapsedMinutes = 0;
-
-    // Align start and end to be within working hours for calculation
-    if (!this.isWorkingTime(start)) start = this._moveToNextWorkingDayStart(start);
-    if (start >= end) return 0;
-
-    const startDay = new Date(start.getTime());
-    startDay.setHours(0,0,0,0);
-    const endDay = new Date(end.getTime());
-    endDay.setHours(0,0,0,0);
-
-    // Same day calculation
-    if (startDay.getTime() === endDay.getTime()) {
-      const startMinutes = start.getHours() * 60 + start.getMinutes();
-      const endMinutes = end.getHours() * 60 + end.getMinutes();
-      return Math.max(0, endMinutes - startMinutes);
-    }
-
-    // First day partial
-    const firstDayEndMinutes = endTotalMinutes;
-    const firstDayStartMinutes = start.getHours() * 60 + start.getMinutes();
-    elapsedMinutes += firstDayEndMinutes - firstDayStartMinutes;
-
-    // Last day partial
-    const lastDayStartMinutes = startTotalMinutes;
-    const lastDayEndMinutes = end.getHours() * 60 + end.getMinutes();
-    if(this.config.workingDays.includes(end.getDay()) && lastDayEndMinutes > lastDayStartMinutes) {
-        elapsedMinutes += lastDayEndMinutes - lastDayStartMinutes;
-    }
-
-    // Full days in between
-    let fullDaysCount = 0;
-    let cursor = new Date(start.getTime());
-    cursor.setDate(cursor.getDate() + 1);
-    while (cursor < endDay) {
-        if (this.config.workingDays.includes(cursor.getDay())) {
-            fullDaysCount++;
+    while(cursor < endDate) {
+        if(this.isWorkingTime(cursor)) {
+            totalMinutes++;
         }
-        cursor.setDate(cursor.getDate() + 1);
+        cursor.setMinutes(cursor.getMinutes() + 1);
     }
 
-    elapsedMinutes += fullDaysCount * minutesPerDay;
-
-    return elapsedMinutes;
+    return totalMinutes;
   }
 
   getWorkdayEnd(date) {
