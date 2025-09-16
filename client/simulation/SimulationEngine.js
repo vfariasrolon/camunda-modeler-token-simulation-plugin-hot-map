@@ -170,26 +170,37 @@ export default class SimulationEngine {
     const baseRatePerHour = this.rootConfig.cost.baseRatePerHour || 0;
 
     let processingTime = 0;
-    if (data.processingTime.distribution === 'fixed') {
-      processingTime = timeToMilliseconds(data.processingTime.value, data.processingTime.unit);
-    } else if (data.processingTime.distribution === 'triangular') {
-      const randomValue = triangular(data.processingTime.min, data.processingTime.mode, data.processingTime.max);
-      processingTime = timeToMilliseconds(randomValue, data.processingTime.unit);
+    const pt = data.processingTime;
+    if (pt) {
+      if (pt.distribution === 'triangular') {
+        const randomValue = triangular(pt.min, pt.mode, pt.max);
+        processingTime = timeToMilliseconds(randomValue, pt.unit);
+      } else { // Default to fixed distribution
+        processingTime = timeToMilliseconds(pt.value, pt.unit);
+      }
     }
 
     let reworkTime = 0;
     let reworkCost = 0;
     if (data.failureRate && Math.random() < data.failureRate) {
-      reworkTime = data.reworkTime ? timeToMilliseconds(data.reworkTime.value, data.reworkTime.unit) : 0;
-      processingTime += reworkTime;
+      const rt = data.reworkTime;
+      if (rt) {
+        if (rt.distribution === 'triangular') {
+          const randomValue = triangular(rt.min, rt.mode, rt.max);
+          reworkTime = timeToMilliseconds(randomValue, rt.unit);
+        } else {
+          reworkTime = timeToMilliseconds(rt.value, rt.unit);
+        }
+      }
       this.results.get(element.id).failureCount++;
       reworkCost = (reworkTime / 3600000) * baseRatePerHour;
     }
 
-    const processingCost = (processingTime / 3600000) * baseRatePerHour;
+    const totalProcessingTimeForTask = processingTime + reworkTime;
+    const processingCost = (totalProcessingTimeForTask / 3600000) * baseRatePerHour;
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
-    const endTime = this.calendar.addWorkingTime(new Date(time), processingTime).getTime();
+    const endTime = this.calendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000).getTime();
 
     const taskOvertimeDuration = endTime > this.calendar.getWorkdayEnd(new Date(endTime)).getTime()
       ? (endTime - this.calendar.getWorkdayEnd(new Date(endTime)).getTime())
@@ -213,11 +224,11 @@ export default class SimulationEngine {
 
     instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
 
-    console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime - reworkTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${processingTime}ms`);
+    console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalProcessingTimeForTask}ms`);
 
     const newTaskEvent = {
       type: 'TASK_COMPLETE', element, time: endTime, instanceId, startTime,
-      processingTime, reworkTime, overtime: taskOvertimeDuration,
+      processingTime: totalProcessingTimeForTask, reworkTime, overtime: taskOvertimeDuration,
       processingCost, reworkCost, overtimeCost, quantityRequired
     };
 
@@ -247,7 +258,6 @@ export default class SimulationEngine {
       console.warn('No root start event found. Using default simulation configuration.');
     }
 
-    // Return a default configuration object
     return {
       simulationConfig: { runValue: 1000 },
       isRoot: true,
@@ -334,7 +344,7 @@ export default class SimulationEngine {
           const waitTime = this.calendar.calculateElapsedTime(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
           const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
-          const currentWaitCost = (waitTime / 3600000) * waitCostPerHour;
+          const currentWaitCost = (waitTime / 60) * waitCostPerHour; // waitTime is in minutes
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
         }
@@ -348,11 +358,11 @@ export default class SimulationEngine {
             const waitTime = this.calendar.calculateElapsedTime(new Date(nextTask.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
             const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
-            const currentWaitCost = (waitTime / 3600000) * waitCostPerHour;
+            const currentWaitCost = (waitTime / 60) * waitCostPerHour;
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
 
-            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.processingTime).getTime();
+            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.processingTime / 60000).getTime();
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
           });

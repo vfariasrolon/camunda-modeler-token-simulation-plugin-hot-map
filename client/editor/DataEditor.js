@@ -147,8 +147,6 @@ export default class DataEditor {
   _getTaskDefaults(data = {}) {
     const defaults = {
       processingTime: { distribution: 'fixed', value: 10, unit: 'minutes' },
-      cost: { value: 10, currency: 'USD' },
-      resources: { pool: '', quantityRequired: 1 },
       failureRate: 0.0,
       reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' }
     };
@@ -156,8 +154,6 @@ export default class DataEditor {
       ...defaults,
       ...data,
       processingTime: { ...defaults.processingTime, ...(data.processingTime || {}) },
-      cost: { ...defaults.cost, ...(data.cost || {}) },
-      resources: { ...defaults.resources, ...(data.resources || {}) },
       reworkTime: { ...defaults.reworkTime, ...(data.reworkTime || {}) },
     };
   }
@@ -208,7 +204,7 @@ export default class DataEditor {
   }
 
   renderTaskForm(container, data) {
-    const { processingTime, cost, resources, failureRate, reworkTime } = data;
+    const { processingTime, failureRate, reworkTime } = data;
     container.innerHTML = `
       <div class="form-group">
         <label>Tiempo de Proceso (processingTime)</label>
@@ -218,16 +214,6 @@ export default class DataEditor {
           <option value="hours" ${processingTime.unit === 'hours' ? 'selected' : ''}>Horas</option>
           <option value="seconds" ${processingTime.unit === 'seconds' ? 'selected' : ''}>Segundos</option>
         </select>
-      </div>
-      <div class="form-group">
-        <label>Costo (cost)</label>
-        <input type="number" name="cost.value" value="${cost.value}">
-        <input type="text" name="cost.currency" value="${cost.currency}" placeholder="Moneda">
-      </div>
-      <div class="form-group">
-        <label>Recursos (resources)</label>
-        <input type="text" name="resources.pool" value="${resources.pool}" placeholder="Pool de Recursos">
-        <input type="number" name="resources.quantityRequired" value="${resources.quantityRequired}" min="1">
       </div>
       <div class="form-group">
         <label>Tasa de Fallo (failureRate)</label>
@@ -387,19 +373,13 @@ export default class DataEditor {
     if (is(this._selectedElement, 'bpmn:Task')) {
       newData = {
         processingTime: {
+          distribution: 'fixed',
           value: parseFloat(body.querySelector('[name="processingTime.value"]').value),
           unit: body.querySelector('[name="processingTime.unit"]').value
         },
-        cost: {
-          value: parseFloat(body.querySelector('[name="cost.value"]').value),
-          currency: body.querySelector('[name="cost.currency"]').value
-        },
-        resources: {
-          pool: body.querySelector('[name="resources.pool"]').value,
-          quantityRequired: parseInt(body.querySelector('[name="resources.quantityRequired"]').value, 10)
-        },
         failureRate: parseFloat(body.querySelector('[name="failureRate"]').value),
         reworkTime: {
+          distribution: 'fixed',
           value: parseFloat(body.querySelector('[name="reworkTime.value"]').value),
           unit: body.querySelector('[name="reworkTime.unit"]').value
         }
