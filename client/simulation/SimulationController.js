@@ -164,16 +164,6 @@ export default class SimulationController {
   runSimulation() {
     this.clear();
 
-    const rootConfig = this._simulationEngine._findRootConfig();
-    if (!rootConfig || !rootConfig.isRoot) {
-      this._notifications.showNotification({
-        text: 'Por favor, defina un Evento de Inicio como raíz (isRoot) en la configuración de simulación para empezar.',
-        type: 'warning',
-        duration: 8000
-      });
-      return;
-    }
-
     this.lastMetric = null;
     this.clearOverlaysAndHeatmap();
     if (this._chart) {
@@ -182,13 +172,18 @@ export default class SimulationController {
     }
 
     const results = this._simulationEngine.run();
+
+    if (!results) {
+      return;
+    }
+
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
 
     const report = {
         results: results,
         completedInstances: this._simulationEngine.completedInstances,
-        duration: this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock)) * 60000,
-        calendarDuration: this._simulationEngine.clock,
+        duration: this._simulationEngine.calendar.calculateElapsedTime(new Date(this._simulationEngine.simulationStartTime), new Date(this._simulationEngine.clock)) * 60000,
+        calendarDuration: this._simulationEngine.clock - this._simulationEngine.simulationStartTime,
         dailyCompletions: this._simulationEngine.dailyCompletions,
         createdAt: new Date()
     };

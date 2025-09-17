@@ -52,13 +52,15 @@ class ResourcePool {
 }
 
 export default class SimulationEngine {
-  constructor(elementRegistry) {
+  constructor(elementRegistry, notifications) {
     this._elementRegistry = elementRegistry;
+    this._notifications = notifications;
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
     this.instanceStates = new Map();
     this.clock = 0;
+    this.simulationStartTime = 0;
     this.completedInstances = 0;
     this.calendar = null; // Will be initialized on run
     this.rootConfig = {};
@@ -68,6 +70,8 @@ export default class SimulationEngine {
     const startDate = rootConfig.simulationStartDate ? new Date(rootConfig.simulationStartDate) : new Date();
     startDate.setHours(0, 0, 0, 0); // Start at the beginning of the day
     this.clock = startDate.getTime();
+    this.simulationStartTime = this.clock;
+
     this.completedInstances = 0;
     this.eventQueue = new EventQueue();
     this.results = new Map();
@@ -80,7 +84,7 @@ export default class SimulationEngine {
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
-        totalProcessingTime: 0, totalCost: 0, baseCost: 0, totalCycleTime: 0,
+        totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
         totalOvertime: 0, totalReworkTime: 0, totalReworkCost: 0, totalWaitTimeCost: 0, totalOvertimeCost: 0,
         name: element.businessObject.name || element.id
       });
@@ -206,7 +210,7 @@ export default class SimulationEngine {
     }
 
     const totalProcessingTimeForTask = processingTime + reworkTime;
-    const processingCost = (processingTime / 3600000) * baseRatePerHour;
+    const processingCost = (totalProcessingTimeForTask / 3600000) * baseRatePerHour;
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
     const endTime = this.calendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000).getTime();
@@ -279,6 +283,16 @@ export default class SimulationEngine {
 
   run() {
     const rootConfig = this._findRootConfig();
+
+    if (!rootConfig || !rootConfig.isRoot) {
+      this._notifications.showNotification({
+        text: 'Por favor, defina un Evento de Inicio como raíz (isRoot) en la configuración de simulación para empezar.',
+        type: 'warning',
+        duration: 8000
+      });
+      return null;
+    }
+
     this.initialize(rootConfig);
 
     console.log("--- Simulation Starting ---");
@@ -344,12 +358,8 @@ export default class SimulationEngine {
         results.totalReworkTime += event.reworkTime;
         results.totalOvertime += event.overtime;
 
-        const taskBaseCost = event.processingCost + event.reworkCost;
-        results.baseCost += taskBaseCost;
-
         const waitTimeCost = results.totalWaitTimeCost;
-        results.totalCost = (results.totalCost - waitTimeCost) + taskBaseCost + event.overtimeCost + waitTimeCost;
-
+        results.totalCost = (results.totalCost - waitTimeCost) + event.processingCost + event.reworkCost + event.overtimeCost + waitTimeCost;
         results.totalReworkCost += event.reworkCost;
         results.totalOvertimeCost += event.overtimeCost;
 
@@ -406,4 +416,4 @@ export default class SimulationEngine {
   }
 }
 
-SimulationEngine.$inject = ['elementRegistry'];
+SimulationEngine.$inject = ['elementRegistry', 'notifications'];

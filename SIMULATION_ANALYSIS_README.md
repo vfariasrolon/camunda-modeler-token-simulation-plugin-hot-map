@@ -90,3 +90,30 @@ El motor usa una **Simulación de Eventos Discretos**.
 
 Para extender esta funcionalidad o construir nuevas herramientas que interactúen con los datos de simulación, consulta la guía técnica detallada:
 [**Guía para Desarrolladores de IA: Lectura y Escritura de Datos de Simulación](./client/simulation/AI_DEVELOPER_GUIDE.md)**
+
+## IV. Diagrama de Flujo de la Simulación
+
+El siguiente diagrama de flujo ilustra el funcionamiento interno del motor de simulación a alto nivel.
+
+```mermaid
+graph TD
+    A[Inicio: Usuario hace clic en "Ejecutar Simulación"] --> B{SimulationController.runSimulation()};
+    B --> C{Encontrar Configuración Raíz};
+    C --> D[Inicializar Motor de Simulación];
+    D --> E[Poblar Cola de Eventos con Evento de Inicio];
+    E --> F{Bucle de Eventos (mientras la cola no esté vacía)};
+    F --> G{Procesar Siguiente Evento};
+    G --> H{Tipo de Evento?};
+    H -- Tarea Iniciada --> I[Agendar Tarea (Calcular tiempo, costo, etc.)];
+    I --> F;
+    H -- Tarea Completada --> J[Actualizar Resultados y Liberar Recursos];
+    J --> F;
+    H -- Compuerta --> K[Encontrar Siguiente(s) Elemento(s)];
+    K --> F;
+    H -- Instancia Completada --> L[Actualizar Métricas Finales];
+    L --> M{Se alcanzó el número de instancias objetivo?};
+    M -- No --> F;
+    M -- Sí --> N[Finalizar Simulación];
+    N --> O[Devolver Resultados al Controlador];
+    O --> P[Resultados disponibles para Gráficos y Overlays];
+```

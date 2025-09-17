@@ -21,6 +21,31 @@ El flujo de trabajo general es el siguiente:
 
 En resumen, este plugin transforma Camunda Modeler de una herramienta de modelado a una plataforma de **inteligencia de procesos**, permitiendo la toma de decisiones basada en datos cuantitativos.
 
+### Diagrama de Flujo de la Simulación
+
+```mermaid
+graph TD
+    A[Inicio: Usuario hace clic en "Ejecutar Simulación"] --> B{SimulationController.runSimulation()};
+    B --> C{Encontrar Configuración Raíz};
+    C --> D[Inicializar Motor de Simulación];
+    D --> E[Poblar Cola de Eventos con Evento de Inicio];
+    E --> F{Bucle de Eventos (mientras la cola no esté vacía)};
+    F --> G{Procesar Siguiente Evento};
+    G --> H{Tipo de Evento?};
+    H -- Tarea Iniciada --> I[Agendar Tarea (Calcular tiempo, costo, etc.)];
+    I --> F;
+    H -- Tarea Completada --> J[Actualizar Resultados y Liberar Recursos];
+    J --> F;
+    H -- Compuerta --> K[Encontrar Siguiente(s) Elemento(s)];
+    K --> F;
+    H -- Instancia Completada --> L[Actualizar Métricas Finales];
+    L --> M{Se alcanzó el número de instancias objetivo?};
+    M -- No --> F;
+    M -- Sí --> N[Finalizar Simulación];
+    N --> O[Devolver Resultados al Controlador];
+    O --> P[Resultados disponibles para Gráficos y Overlays];
+```
+
 ## Guía de la Interfaz de Usuario
 
 El plugin añade varios controles a la interfaz de Camunda Modeler para ejecutar la simulación y visualizar los resultados.
