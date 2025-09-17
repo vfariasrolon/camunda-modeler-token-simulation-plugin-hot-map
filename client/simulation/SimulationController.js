@@ -85,46 +85,64 @@ export default class SimulationController {
   }
 
   showSchedule() {
-    let timetableJson = null;
-    const allElements = this._elementRegistry.getAll();
-
-    for (const element of allElements) {
-        const rawTimetable = getExtensionProperty(element, 'Timetable');
-        if (rawTimetable) {
-            timetableJson = rawTimetable;
-            break;
-        }
+    if (!this._simulationEngine.calendar) {
+      this._notifications.showNotification({
+        text: 'Por favor, ejecute una simulación primero para ver el cronograma utilizado.',
+        type: 'info',
+        duration: 5000
+      });
+      return;
     }
-
-    let timetable = null;
-    if (timetableJson) {
-        try {
-            timetable = JSON.parse(timetableJson);
-        } catch (e) {
-            console.error('Error parsing Timetable JSON', e);
-            timetable = null;
-        }
-    }
-
-    const html = this.createScheduleHtml(timetable);
+    const calendar = this._simulationEngine.calendar;
+    const html = this.createScheduleHtml(calendar);
     this._eventBus.fire('simulation.schedule.show', { html });
   }
 
-  createScheduleHtml(timetable) {
-    if (!timetable || !Array.isArray(timetable) || timetable.length === 0) {
-      return '<p style="text-align: center; margin-top: 20px;">No se ha definido un cronograma de trabajo detallado.</p>';
+  createScheduleHtml(calendar) {
+    if (!calendar || !calendar.config) {
+        return '<p>No se ha definido un cronograma de trabajo.</p>';
     }
 
-    let timetableHtml = timetable.map(entry => `
-      <tr>
-        <td>${entry.day || 'N/A'}</td>
-        <td>${entry.start || 'N/A'}</td>
-        <td>${entry.end || 'N/A'}</td>
-      </tr>
-    `).join('');
+    const { workingDays, workingHours, holidays } = calendar.config;
+
+    if (!workingDays || !workingHours) {
+        return '<p>La configuración del cronograma es incompleta o no es válida.</p>';
+    }
+
+    const formatTime = (timeObj) => {
+      if (!timeObj || typeof timeObj.hour === 'undefined' || typeof timeObj.minute === 'undefined') return 'N/A';
+      const h = String(timeObj.hour).padStart(2, '0');
+      const m = String(timeObj.minute).padStart(2, '0');
+      return `${h}:${m}`;
+    };
+
+    const dayNames = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+    let workweekHtml = '';
+
+    for (let i = 0; i < 7; i++) {
+        const isWorking = workingDays.includes(i);
+        workweekHtml += `
+            <tr>
+              <td>${dayNames[i]}</td>
+              <td>${isWorking ? formatTime(workingHours.start) : 'No Laborable'}</td>
+              <td>${isWorking ? formatTime(workingHours.end) : 'No Laborable'}</td>
+            </tr>
+        `;
+    }
+
+    let holidaysHtml = '';
+    if (holidays && holidays.length > 0) {
+      holidaysHtml = '<ul>';
+      for (const holiday of holidays) {
+        holidaysHtml += `<li>${holiday}</li>`;
+      }
+      holidaysHtml += '</ul>';
+    } else {
+      holidaysHtml = '<p>No hay días festivos definidos.</p>';
+    }
 
     return `
-      <h4>Cronograma de Trabajo Configurado</h4>
+      <h4>Horario de Trabajo Utilizado en la Simulación</h4>
       <table class="sim-results-table">
         <thead>
           <tr>
@@ -134,13 +152,27 @@ export default class SimulationController {
           </tr>
         </thead>
         <tbody>
-          ${timetableHtml}
+          ${workweekHtml}
         </tbody>
       </table>
+      <h4 style="margin-top: 20px;">Días Festivos</h4>
+      ${holidaysHtml}
     `;
   }
 
   runSimulation() {
+    this.clear();
+
+    const rootConfig = this._simulationEngine._findRootConfig();
+    if (!rootConfig || !rootConfig.isRoot) {
+      this._notifications.showNotification({
+        text: 'Por favor, defina un Evento de Inicio como raíz (isRoot) en la configuración de simulación para empezar.',
+        type: 'warning',
+        duration: 8000
+      });
+      return;
+    }
+
     this.lastMetric = null;
     this.clearOverlaysAndHeatmap();
     if (this._chart) {
@@ -367,7 +399,7 @@ export default class SimulationController {
         metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         metric === 'dailyProduction' ? 'Piezas Completadas' :
-        metric === 'workPlan' ? 'Valor' :
+        metric === 'workPlan' ? 'Horas Trabajadas por Día' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -463,7 +495,7 @@ export default class SimulationController {
 
     return {
       type: chartType,
-      data: { labels: chartData.labels, datasets: datasets },
+      data: { labels: chartData.labels, datasets: chartData.datasets, detailHtml: chartData.detailHtml },
       options: options
     };
   }
@@ -657,9 +689,6 @@ export default class SimulationController {
     const msPerDay = minutesPerDay * 60000;
 
     // 1. Normal Plan Calculation
-    const normalCost = (workloadMs / 3600000) * baseRatePerHour;
-    const normalEndDate = calendar.addWorkingTime(new Date(0), workloadMs / 60000);
-    const normalCalendarDays = (normalEndDate.getTime() / (1000 * 60 * 60 * 24));
     const normalSchedule = [];
     let remainingNormalMs = workloadMs;
     let normalDayCounter = 1;
@@ -671,32 +700,29 @@ export default class SimulationController {
     }
 
     // 2. Overtime Plan Calculation
-    let overtimeCost = 0;
     let remainingOvertimeMs = workloadMs;
-    let overtimeCalendarDays = 0;
+    let overtimeDayCounter = 1;
     const overtimeMsPerDay = OVERTIME_HOURS_PER_DAY * 3600000;
     const overtimeSchedule = [];
 
     while (remainingOvertimeMs > 0) {
-        overtimeCalendarDays++;
         let hoursToday = 0;
         const normalWorkThisDay = Math.min(remainingOvertimeMs, msPerDay);
-        overtimeCost += (normalWorkThisDay / 3600000) * baseRatePerHour;
         remainingOvertimeMs -= normalWorkThisDay;
         hoursToday += normalWorkThisDay / 3600000;
 
         if (remainingOvertimeMs > 0) {
             const overtimeWorkThisDay = Math.min(remainingOvertimeMs, overtimeMsPerDay);
-            overtimeCost += (overtimeWorkThisDay / 3600000) * baseRatePerHour * overtimeMultiplier;
             remainingOvertimeMs -= overtimeWorkThisDay;
             hoursToday += overtimeWorkThisDay / 3600000;
         }
-        overtimeSchedule.push({ day: `Día ${overtimeCalendarDays}`, hours: hoursToday });
+        overtimeSchedule.push({ day: `Día ${overtimeDayCounter}`, hours: hoursToday });
+        overtimeDayCounter++;
     }
 
     return {
-      normalPlan: { cost: normalCost, duration: normalCalendarDays, schedule: normalSchedule },
-      overtimePlan: { cost: overtimeCost, duration: overtimeCalendarDays, schedule: overtimeSchedule }
+      normalPlan: { schedule: normalSchedule },
+      overtimePlan: { schedule: overtimeSchedule }
     };
   }
 
@@ -746,31 +772,34 @@ export default class SimulationController {
       }
 
       const plans = this._calculateWorkPlans(totalWorkloadMs, this._simulationEngine.calendar, this._simulationEngine.rootConfig);
-      const detailHtml = this._createWorkPlanDetailHtml(plans);
 
-      const labels = ['Costo Total ($)', 'Duración Total (Días Naturales)'];
-      const normalData = [plans.normalPlan.cost, plans.normalPlan.duration];
-      const extraData = [plans.overtimePlan.cost, plans.overtimePlan.duration];
+      const maxDays = Math.max(plans.normalPlan.schedule.length, plans.overtimePlan.schedule.length);
+      const labels = Array.from({ length: maxDays }, (_, i) => `Día ${i + 1}`);
+
+      const normalData = Array(maxDays).fill(0);
+      plans.normalPlan.schedule.forEach((d, i) => normalData[i] = d.hours);
+
+      const extraData = Array(maxDays).fill(0);
+      plans.overtimePlan.schedule.forEach((d, i) => extraData[i] = d.hours);
 
       return {
         labels,
         datasets: [
           {
-            label: 'Plan de Trabajo Normal',
+            label: 'Plan de Trabajo Normal (Horas)',
             data: normalData,
             backgroundColor: 'rgba(54, 162, 235, 0.5)',
             borderColor: 'rgba(54, 162, 235, 1)',
             borderWidth: 1
           },
           {
-            label: 'Plan de Trabajo con Horas Extras',
+            label: 'Plan de Trabajo con Horas Extras (Horas)',
             data: extraData,
             backgroundColor: 'rgba(255, 159, 64, 0.5)',
             borderColor: 'rgba(255, 159, 64, 1)',
             borderWidth: 1
           }
-        ],
-        detailHtml
+        ]
       };
     }
 
