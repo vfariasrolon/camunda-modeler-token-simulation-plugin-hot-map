@@ -34,3 +34,10 @@ export const formatMilliseconds = (ms) => {
   const hours = minutes / 60;
   return `${hours.toFixed(1)}h`;
 };
+
+export const formatCurrency = (amount, currency = 'MXN') => {
+  return new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency: currency,
+  }).format(amount);
+};

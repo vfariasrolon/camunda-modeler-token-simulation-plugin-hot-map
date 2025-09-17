@@ -114,14 +114,16 @@
 }
 
 .simulation-chart-panel .header .close,
-.simulation-chart-panel .header .help-button {
+.simulation-chart-panel .header .help-button,
+.simulation-chart-panel .header .schedule-button {
   background: none;
   border: none;
   cursor: pointer;
   padding: 0 5px;
 }
 
-.simulation-chart-panel .header .help-button svg {
+.simulation-chart-panel .header .help-button svg,
+.simulation-chart-panel .header .schedule-button svg {
     width: 18px;
     height: 18px;
 }
@@ -180,15 +182,113 @@
     display: none;
 }
 
+/* Summary Panel */
+.sim-summary-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.sim-summary-item:last-child {
+    border-bottom: none;
+}
+
+/* Schedule Modal */
+.schedule-modal-overlay,
+.plan-breakdown-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1002; /* Above chart panel */
+}
+
+.schedule-modal-overlay.hidden,
+.plan-breakdown-modal-overlay.hidden {
+    display: none;
+}
+
+.schedule-modal {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    width: 90%;
+    max-width: 600px;
+}
+
+.schedule-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.schedule-modal-header h3 {
+    margin: 0;
+    font-size: 1.2em;
+}
+
+.schedule-modal-header .close-modal {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0 5px;
+}
+
+.schedule-modal-content h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.schedule-modal-content ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.schedule-modal-content li {
+    background: #f4f4f4;
+    padding: 8px;
+    border-radius: 4px;
+    margin-bottom: 5px;
+}
+
+.header-buttons {
+    display: flex;
+    align-items: center;
+}
+
+.header-buttons button {
+    margin-left: 5px;
+}
+
 .plan-breakdown-button {
     background: #e0e0e0;
     border: 1px solid #ccc;
     border-radius: 4px;
     padding: 2px 8px;
     cursor: pointer;
-    margin-left: 10px;
 }
 
 .plan-breakdown-button.hidden {
     display: none;
+}
+
+.work-plan-details {
+    display: flex;
+    justify-content: space-around;
+    gap: 20px;
+}
+
+.work-plan-table {
+    flex: 1;
 }

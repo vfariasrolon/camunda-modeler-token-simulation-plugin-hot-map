@@ -269,7 +269,7 @@ export default class SimulationEngine {
       simulationConfig: { runValue: 1000 },
       isRoot: true,
       calendar: { workingDays: [1, 2, 3, 4, 5], workingHours: { start: {hour:9, minute:0}, end: {hour:17, minute:0} } },
-      cost: { waitCostPerHour: 0, baseRatePerHour: 50 },
+      cost: { waitCostPerHour: 0, baseRatePerHour: 50, currency: 'MXN' },
       overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 },
       arrivalRate: { value: 60, unit: 'minute' }
     };

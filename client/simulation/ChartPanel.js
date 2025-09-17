@@ -26,7 +26,6 @@ export default class ChartPanel {
         <div class="header">
           <select class="chart-select">
             <option value="overallSummary">Resumen General</option>
-            <option value="workPlan">Plan de Trabajo (Diario)</option>
             <option value="dailyProduction">Producción Diaria</option>
             <option value="inputParams">Parámetros de Entrada (Tabla)</option>
             <option value="resultsTable">Resultados de Simulación (Tabla)</option>
@@ -42,7 +41,6 @@ export default class ChartPanel {
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
           </select>
           <div class="header-buttons">
-            <button class="plan-breakdown-button hidden" title="Ver Resumen del Plan">Ver Resumen de Costo/Duración</button>
             <button class="schedule-button" title="Ver Cronograma"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ClockIcon}</svg></button>
             <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
             <button class="close" title="Cerrar">×</button>
@@ -55,21 +53,11 @@ export default class ChartPanel {
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
           <p><strong>Resumen General:</strong> Muestra las métricas totales más importantes de toda la simulación.</p>
-          <p><strong>Plan de Trabajo (Diario):</strong> Muestra un desglose de las horas de trabajo estimadas por día para completar la carga de trabajo de la simulación, comparando un plan con solo horas normales contra un plan que incluye horas extras.</p>
         </div>
         <div class="schedule-modal-overlay hidden">
             <div class="schedule-modal">
                 <div class="schedule-modal-header">
                     <h3>Cronograma de Trabajo</h3>
-                    <button class="close-modal" title="Cerrar">×</button>
-                </div>
-                <div class="schedule-modal-content"></div>
-            </div>
-        </div>
-        <div class="plan-breakdown-modal-overlay hidden">
-            <div class="schedule-modal">
-                <div class="schedule-modal-header">
-                    <h3>Resumen de Planes de Trabajo</h3>
                     <button class="close-modal" title="Cerrar">×</button>
                 </div>
                 <div class="schedule-modal-content"></div>
@@ -83,43 +71,28 @@ export default class ChartPanel {
     this.closeButton = this._container.querySelector('button.close');
     this.helpButton = this._container.querySelector('button.help-button');
     this.scheduleButton = this._container.querySelector('button.schedule-button');
-    this.planBreakdownButton = this._container.querySelector('button.plan-breakdown-button');
     this.helpContent = this._container.querySelector('.help-content');
     this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
     this.canvas = this._container.querySelector('#simulationChartCanvas');
     this.scheduleModalOverlay = this._container.querySelector('.schedule-modal-overlay');
     this.scheduleModalClose = this._container.querySelector('.schedule-modal .close-modal');
-    this.planBreakdownModalOverlay = this._container.querySelector('.plan-breakdown-modal-overlay');
-    this.planBreakdownModalClose = this._container.querySelector('.plan-breakdown-modal-overlay .close-modal');
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
     domEvent.bind(this.helpButton, 'click', () => this.toggleHelp());
     domEvent.bind(this.scheduleButton, 'click', () => this._eventBus.fire('simulation.schedule.requested'));
-    domEvent.bind(this.planBreakdownButton, 'click', () => this._eventBus.fire('simulation.plan_summary.requested'));
 
     domEvent.bind(this.scheduleModalClose, 'click', () => this.showScheduleModal(false));
     domEvent.bind(this.scheduleModalOverlay, 'click', (event) => {
         if (event.target === this.scheduleModalOverlay) this.showScheduleModal(false);
     });
 
-    domEvent.bind(this.planBreakdownModalClose, 'click', () => this.showPlanBreakdownModal(false));
-    domEvent.bind(this.planBreakdownModalOverlay, 'click', (event) => {
-        if (event.target === this.planBreakdownModalOverlay) this.showPlanBreakdownModal(false);
-    });
-
     domEvent.bind(this.chartSelect, 'change', (e) => {
         this._eventBus.fire('simulation.charts.opened');
-        this.togglePlanBreakdownButton(e.target.value === 'workPlan');
     });
 
     this._eventBus.on('diagram.destroy', () => this.hide());
     this._eventBus.on('simulation.schedule.show', (event) => this.showScheduleModal(true, event.html));
-    this._eventBus.on('simulation.plan_summary.show', (event) => this.showPlanBreakdownModal(true, event.html));
-  }
-
-  togglePlanBreakdownButton(show) {
-      domClasses(this.planBreakdownButton).toggle('hidden', !show);
   }
 
   getChartType() {
@@ -154,16 +127,6 @@ export default class ChartPanel {
       }
   }
 
-  showPlanBreakdownModal(show, html) {
-      if (show) {
-          const content = this.planBreakdownModalOverlay.querySelector('.schedule-modal-content');
-          content.innerHTML = html;
-          domClasses(this.planBreakdownModalOverlay).remove('hidden');
-      } else {
-          domClasses(this.planBreakdownModalOverlay).add('hidden');
-      }
-  }
-
   isOpen() {
     return domClasses(this._container).has(PALETTE_OPEN_CLS);
   }
@@ -174,7 +137,6 @@ export default class ChartPanel {
     if (shouldOpen) {
       domClasses(this._container).add(PALETTE_OPEN_CLS);
       this._eventBus.fire('simulation.charts.opened');
-      this.togglePlanBreakdownButton(this.getChartType() === 'workPlan');
     } else {
       domClasses(this._container).remove(PALETTE_OPEN_CLS);
       this._eventBus.fire('simulation.charts.closed');
