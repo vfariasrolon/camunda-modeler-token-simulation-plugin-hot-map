@@ -180,18 +180,15 @@
     display: none;
 }
 
-.chart-details {
-    padding: 10px;
-    border-top: 1px solid #eee;
-    margin-top: 10px;
+.plan-breakdown-button {
+    background: #e0e0e0;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    margin-left: 10px;
 }
 
-.work-plan-details {
-    display: flex;
-    justify-content: space-around;
-    gap: 20px;
-}
-
-.work-plan-table {
-    flex: 1;
+.plan-breakdown-button.hidden {
+    display: none;
 }

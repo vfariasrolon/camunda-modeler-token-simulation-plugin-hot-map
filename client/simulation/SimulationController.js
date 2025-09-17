@@ -82,6 +82,7 @@ export default class SimulationController {
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
     this._eventBus.on('simulation.schedule.requested', () => this.showSchedule());
+    this._eventBus.on('simulation.plan_summary.requested', () => this.showPlanBreakdown());
   }
 
   showSchedule() {
@@ -360,8 +361,28 @@ export default class SimulationController {
     this._chart = new Chart(ctx, chartConfig);
 
     if (chartConfig.data.detailHtml) {
-      this._chartPanel.showChartWithDetails(chartConfig.data.detailHtml);
+      this._chartPanel.showPlanBreakdownModal(true, chartConfig.data.detailHtml);
     }
+  }
+
+  showPlanBreakdown() {
+    if (this.simulationReports.length === 0) {
+      this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero para calcular el plan de trabajo.', type: 'warning', duration: 4000 });
+      return;
+    }
+    const report = this.simulationReports[0];
+    let totalWorkloadMs = 0;
+    report.results.forEach(res => {
+      totalWorkloadMs += (res.totalProcessingTime || 0) + (res.totalReworkTime || 0);
+    });
+
+    if (totalWorkloadMs <= 0) {
+      this._notifications.showNotification({ text: 'No hay trabajo procesado en la simulación para generar un plan.', type: 'info', duration: 3000 });
+      return;
+    }
+    const plans = this._calculateWorkPlans(totalWorkloadMs, this._simulationEngine.calendar, this._simulationEngine.rootConfig);
+    const html = this._createWorkPlanDetailHtml(plans);
+    this._eventBus.fire('simulation.plan_summary.show', { html });
   }
 
   getChartConfig(metric) {
@@ -399,7 +420,7 @@ export default class SimulationController {
         metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         metric === 'dailyProduction' ? 'Piezas Completadas' :
-        metric === 'workPlan' ? 'Horas Trabajadas por Día' :
+        metric === 'workPlan' ? 'Valor' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
