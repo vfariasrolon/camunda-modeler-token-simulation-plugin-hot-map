@@ -39,6 +39,7 @@ export default class ChartPanel {
             <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
             <option value="paretoCost">Diagrama de Pareto (Costos)</option>
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
+            <option value="workPlan">Plan de Trabajo (Horas vs. Días)</option>
           </select>
           <div class="header-buttons">
             <button class="schedule-button" title="Ver Cronograma"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ClockIcon}</svg></button>
@@ -77,6 +78,7 @@ export default class ChartPanel {
     this.canvas = this._container.querySelector('#simulationChartCanvas');
     this.scheduleModalOverlay = this._container.querySelector('.schedule-modal-overlay');
     this.scheduleModalClose = this._container.querySelector('.schedule-modal .close-modal');
+    this.planSummaryButton = null; // Will be created dynamically
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
     domEvent.bind(this.helpButton, 'click', () => this.toggleHelp());
@@ -88,6 +90,7 @@ export default class ChartPanel {
     });
 
     domEvent.bind(this.chartSelect, 'change', (e) => {
+        this.updateDynamicButtons();
         this._eventBus.fire('simulation.charts.opened');
     });
 
@@ -131,11 +134,30 @@ export default class ChartPanel {
     return domClasses(this._container).has(PALETTE_OPEN_CLS);
   }
 
+  updateDynamicButtons() {
+    const chartType = this.getChartType();
+    const headerButtons = this._container.querySelector('.header-buttons');
+
+    if (this.planSummaryButton) {
+        this.planSummaryButton.remove();
+        this.planSummaryButton = null;
+    }
+
+    if (chartType === 'workPlan') {
+        this.planSummaryButton = domify('<button class="plan-summary-button" title="Ver Resumen de Costos">Resumen</button>');
+        headerButtons.insertBefore(this.planSummaryButton, this.scheduleButton);
+        domEvent.bind(this.planSummaryButton, 'click', () => {
+            this._eventBus.fire('simulation.plan_summary.requested');
+        });
+    }
+  }
+
   toggle(open) {
     const shouldOpen = (open !== undefined) ? open : !this.isOpen();
 
     if (shouldOpen) {
       domClasses(this._container).add(PALETTE_OPEN_CLS);
+      this.updateDynamicButtons();
       this._eventBus.fire('simulation.charts.opened');
     } else {
       domClasses(this._container).remove(PALETTE_OPEN_CLS);

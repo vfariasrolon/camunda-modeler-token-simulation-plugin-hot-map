@@ -396,6 +396,7 @@ export default class SimulationController {
         metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         metric === 'dailyProduction' ? 'Piezas Completadas' :
+        metric === 'workPlan' ? 'Horas de Trabajo' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -575,63 +576,48 @@ export default class SimulationController {
   }
 
   createOverallSummary(report) {
-    let totalCost = 0, totalOvertimeTime = 0, totalFailures = 0,
-        totalReworkCost = 0, totalWaitTimeCost = 0, inefficientDispatchCount = 0, totalOvertimeCost = 0;
+    let totalCost = 0, totalReworkCost = 0, totalWaitTimeCost = 0,
+        inefficientDispatchCount = 0, totalOvertimeCost = 0;
 
     report.results.forEach(result => {
       totalCost += result.totalCost || 0;
-      totalOvertimeTime += result.totalOvertime || 0;
-      totalFailures += result.failureCount || 0;
       totalReworkCost += result.totalReworkCost || 0;
       totalWaitTimeCost += result.totalWaitTimeCost || 0;
       inefficientDispatchCount += result.inefficientDispatchCount || 0;
       totalOvertimeCost += result.totalOvertimeCost || 0;
     });
 
-    const operationalCost = totalCost - totalReworkCost - totalWaitTimeCost - totalOvertimeCost;
-
+    // The user wants to see the total cost, not the operational one, so we use totalCost directly.
     return `
       <div class="sim-summary-container">
-        <h2>Resumen General de la Simulación</h2>
+        <h2>Resumen General</h2>
         <div class="sim-summary-item">
-          <span class="label">Instancias Completadas:</span>
-          <span class="value">${report.completedInstances}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Duración Total (Tiempo de Trabajo Neto):</span>
-          <span class="value">${formatMilliseconds(report.duration)}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Duración Total (Días Naturales):</span>
-          <span class="value">${(report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2)} días</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Número Total de Fallos:</span>
-          <span class="value">${totalFailures}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Despachos Ineficientes:</span>
-          <span class="value">${inefficientDispatchCount}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Costo de Operación:</span>
-          <span class="value">${formatCurrency(operationalCost, 'MXN')}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Costo de Espera:</span>
-          <span class="value">${formatCurrency(totalWaitTimeCost, 'MXN')}</span>
+          <span class="label">Costo Total de Simulación:</span>
+          <span class="value">${formatCurrency(totalCost, 'MXN')}</span>
         </div>
         <div class="sim-summary-item">
           <span class="label">Costo de Reparación:</span>
           <span class="value">${formatCurrency(totalReworkCost, 'MXN')}</span>
         </div>
         <div class="sim-summary-item">
-          <span class="label">Costo de Horas Extras:</span>
-          <span class="value">${formatCurrency(totalOvertimeCost, 'MXN')}</span>
+          <span class="label">Costo de Espera:</span>
+          <span class="value">${formatCurrency(totalWaitTimeCost, 'MXN')}</span>
         </div>
         <div class="sim-summary-item">
-          <span class="label">Costo Total de Operación:</span>
-          <span class="value">${formatCurrency(totalCost, 'MXN')}</span>
+          <span class="label">Despachos Ineficientes:</span>
+          <span class="value">${inefficientDispatchCount}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Duración Total (Días Naturales):</span>
+          <span class="value">${(report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2)} días</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Piezas producidas:</span>
+          <span class="value">${report.completedInstances}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo de Horas Extras:</span>
+          <span class="value">${formatCurrency(totalOvertimeCost, 'MXN')}</span>
         </div>
       </div>
     `;
@@ -701,6 +687,83 @@ export default class SimulationController {
           borderColor: 'rgba(153, 102, 255, 1)',
           borderWidth: 1
         }]
+      };
+    }
+
+    if (metric === 'workPlan') {
+      const rootElement = this._simulationEngine._findRootConfig()?.element;
+      if (!rootElement) {
+        this._notifications.showNotification({ text: 'No se encontró un evento de inicio raíz para el plan de trabajo.', type: 'warning', duration: 4000 });
+        return { labels: [], datasets: [] };
+      }
+
+      const simData = getSimulationData(rootElement);
+      const planStartDate = simData.planStartDate ? new Date(simData.planStartDate) : new Date();
+      planStartDate.setHours(0, 0, 0, 0);
+
+      const totalWorkHours = simData.workPlanHours || 0;
+      const dailyOvertimeHours = simData.dailyOvertime || 0;
+
+      if (totalWorkHours === 0) {
+        this._notifications.showNotification({ text: 'El total de horas del plan (workPlanHours) no está definido en el evento raíz.', type: 'info', duration: 5000 });
+        return { labels: [], datasets: [] };
+      }
+
+      const calendar = this._simulationEngine.calendar;
+      if (!calendar || !calendar.config) {
+        this._notifications.showNotification({ text: 'El calendario de trabajo no está disponible.', type: 'error', duration: 4000 });
+        return { labels: [], datasets: [] };
+      }
+
+      const { workingDays, workingHours } = calendar.config;
+      const dailyWorkSeconds = (workingHours.end.hour * 3600 + workingHours.end.minute * 60) - (workingHours.start.hour * 3600 + workingHours.start.minute * 60);
+      const dailyWorkHours = dailyWorkSeconds / 3600;
+
+      const calculatePlan = (useOvertime) => {
+        const plan = [];
+        let hoursRemaining = totalWorkHours;
+        const currentDate = new Date(planStartDate.getTime());
+
+        while (hoursRemaining > 0) {
+          const dayOfWeek = currentDate.getDay();
+          if (workingDays.includes(dayOfWeek)) {
+            const dailyHours = useOvertime ? Math.min(hoursRemaining, dailyWorkHours + dailyOvertimeHours) : Math.min(hoursRemaining, dailyWorkHours);
+            plan.push({ date: new Date(currentDate.getTime()), hours: dailyHours });
+            hoursRemaining -= dailyHours;
+          }
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+        return plan;
+      };
+
+      const normalPlan = calculatePlan(false);
+      const overtimePlan = calculatePlan(true);
+
+      const allDates = [...new Set([...normalPlan.map(p => p.date.toISOString().split('T')[0]), ...overtimePlan.map(p => p.date.toISOString().split('T')[0])])];
+      allDates.sort();
+
+      const labels = allDates;
+      const normalData = allDates.map(date => normalPlan.find(p => p.date.toISOString().split('T')[0] === date)?.hours || 0);
+      const overtimeData = allDates.map(date => overtimePlan.find(p => p.date.toISOString().split('T')[0] === date)?.hours || 0);
+
+      return {
+        labels,
+        datasets: [
+          {
+            label: 'Plan Normal (Horas)',
+            data: normalData,
+            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 1
+          },
+          {
+            label: 'Plan con Horas Extras (Horas)',
+            data: overtimeData,
+            backgroundColor: 'rgba(255, 159, 64, 0.5)',
+            borderColor: 'rgba(255, 159, 64, 1)',
+            borderWidth: 1
+          }
+        ]
       };
     }
 
@@ -894,6 +957,82 @@ export default class SimulationController {
     if (this._heatmap) return;
     this._heatmap = new SimpleHeatSVG(this._canvas);
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
+  }
+
+  showPlanBreakdown() {
+    const rootElement = this._simulationEngine._findRootConfig()?.element;
+    if (!rootElement) {
+        this._notifications.showNotification({ text: 'No se encontró un evento de inicio raíz.', type: 'error', duration: 4000 });
+        return;
+    }
+
+    const simData = getSimulationData(rootElement);
+    const totalWorkHours = simData.workPlanHours || 0;
+    const dailyOvertimeHours = simData.dailyOvertime || 0;
+    const resourceCost = simData.resources?.costPerHour || 0;
+    const overtimeMultiplier = simData.resources?.overtimeCostMultiplier || 1.5;
+
+    const calendar = this._simulationEngine.calendar;
+    const { workingDays, workingHours } = calendar.config;
+    const dailyWorkSeconds = (workingHours.end.hour * 3600 + workingHours.end.minute * 60) - (workingHours.start.hour * 3600 + workingHours.start.minute * 60);
+    const dailyWorkHours = dailyWorkSeconds / 3600;
+
+    const calculatePlanDetails = (useOvertime) => {
+        let hoursRemaining = totalWorkHours;
+        let totalDays = 0;
+        let totalCost = 0;
+        let currentDate = new Date(simData.planStartDate ? simData.planStartDate : Date.now());
+        currentDate.setHours(0,0,0,0);
+
+        while (hoursRemaining > 0) {
+            const dayOfWeek = currentDate.getDay();
+            if (workingDays.includes(dayOfWeek)) {
+                const normalHoursToday = Math.min(hoursRemaining, dailyWorkHours);
+                totalCost += normalHoursToday * resourceCost;
+                hoursRemaining -= normalHoursToday;
+
+                if (useOvertime && hoursRemaining > 0) {
+                    const overtimeToday = Math.min(hoursRemaining, dailyOvertimeHours);
+                    totalCost += overtimeToday * resourceCost * overtimeMultiplier;
+                    hoursRemaining -= overtimeToday;
+                }
+            }
+            currentDate.setDate(currentDate.getDate() + 1);
+            totalDays++;
+        }
+        return { totalDays, totalCost };
+    };
+
+    const normalPlan = calculatePlanDetails(false);
+    const overtimePlan = calculatePlanDetails(true);
+
+    const html = `
+        <div class="sim-summary-container">
+            <h2>Comparativo de Planes</h2>
+            <hr>
+            <h4>Plan Normal</h4>
+            <div class="sim-summary-item">
+                <span class="label">Duración Total (Días Naturales):</span>
+                <span class="value">${normalPlan.totalDays}</span>
+            </div>
+            <div class="sim-summary-item">
+                <span class="label">Costo Total Estimado:</span>
+                <span class="value">${formatCurrency(normalPlan.totalCost, 'MXN')}</span>
+            </div>
+            <hr>
+            <h4>Plan con Horas Extras</h4>
+            <div class="sim-summary-item">
+                <span class="label">Duración Total (Días Naturales):</span>
+                <span class="value">${overtimePlan.totalDays}</span>
+            </div>
+            <div class="sim-summary-item">
+                <span class="label">Costo Total Estimado:</span>
+                <span class="value">${formatCurrency(overtimePlan.totalCost, 'MXN')}</span>
+            </div>
+        </div>
+    `;
+
+    this._eventBus.fire('simulation.schedule.show', { html }); // Re-using the schedule modal
   }
 }
 
