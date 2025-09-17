@@ -72,7 +72,6 @@ export default class SimulationEngine {
     this.resourcePools = new Map();
     this.instanceStates = new Map();
     this.weeklyStats = new Map(); // For overtime tracking
-    this.dailyCompletions = new Map(); // For daily production tracking
     this.rootConfig = rootConfig;
     this.calendar = new BusinessCalendar(rootConfig.calendar);
     this._elementRegistry.getAll().forEach(element => {
@@ -132,12 +131,6 @@ export default class SimulationEngine {
 
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
-
-      const completionDate = new Date(this.clock);
-      const dayKey = `${completionDate.getFullYear()}-${String(completionDate.getMonth() + 1).padStart(2, '0')}-${String(completionDate.getDate()).padStart(2, '0')}`;
-      const currentCount = this.dailyCompletions.get(dayKey) || 0;
-      this.dailyCompletions.set(dayKey, currentCount + 1);
-
       console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
       elementResults.totalCycleTime += this.calendar.calculateElapsedTime(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);

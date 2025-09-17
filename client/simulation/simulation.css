@@ -179,3 +179,19 @@
 .simulation-chart-panel canvas.hidden {
     display: none;
 }
+
+.chart-details {
+    padding: 10px;
+    border-top: 1px solid #eee;
+    margin-top: 10px;
+}
+
+.work-plan-details {
+    display: flex;
+    justify-content: space-around;
+    gap: 20px;
+}
+
+.work-plan-table {
+    flex: 1;
+}

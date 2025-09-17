@@ -31,15 +31,12 @@ export default class ChartPanel {
             <option value="cost">Top 5 por Costo</option>
             <option value="processTime">Top 5 por Tiempo de Proceso</option>
             <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
-            <option value="overtime">Top 5 por Tiempo Extra</option>
             <option value="resourceQuantity">Recursos Asignados por Tarea</option>
             <option value="scatter">Diagrama de Dispersión (Tiempo vs. Costo)</option>
             <option value="pareto">Diagrama de Pareto (Fallos)</option>
             <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
             <option value="paretoCost">Diagrama de Pareto (Costos)</option>
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
-            <option value="dailyProduction">Producción Diaria</option>
-            <option value="workPlan">Plan de Trabajo (Normal vs. Extra)</option>
           </select>
           <div class="header-buttons">
             <button class="schedule-button" title="Ver Cronograma"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ScheduleIcon}</svg></button>
@@ -50,6 +47,7 @@ export default class ChartPanel {
         <div class="content">
           <div class="html-content"></div>
           <canvas id="simulationChartCanvas"></canvas>
+          <div class="chart-details"></div>
         </div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
@@ -123,16 +121,25 @@ export default class ChartPanel {
 
   showHtmlContent(html) {
     const htmlContent = this._container.querySelector('.html-content');
+    const detailContent = this._container.querySelector('.chart-details');
     htmlContent.innerHTML = html;
+    detailContent.innerHTML = ''; // Clear details
     domClasses(this.canvas).add('hidden');
     domClasses(htmlContent).remove('hidden');
   }
 
   showCanvas() {
     const htmlContent = this._container.querySelector('.html-content');
+    const detailContent = this._container.querySelector('.chart-details');
     htmlContent.innerHTML = ''; // Clear it
+    detailContent.innerHTML = ''; // Clear details
     domClasses(this.canvas).remove('hidden');
     domClasses(htmlContent).add('hidden');
+  }
+
+  showChartWithDetails(detailHtml) {
+    const detailContent = this._container.querySelector('.chart-details');
+    detailContent.innerHTML = detailHtml;
   }
 
   showScheduleModal(show, html) {
