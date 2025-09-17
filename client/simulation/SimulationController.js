@@ -832,6 +832,34 @@ export default class SimulationController {
         };
     }
 
+    if (metric === 'cost') {
+        tasks.sort((a, b) => b.totalCost - a.totalCost);
+        const chartTasks = tasks.filter(t => t.totalCost > 0).slice(0, 5);
+        const labels = chartTasks.map(t => t.name);
+        const baseCostData = chartTasks.map(t => t.baseCost);
+        const totalCostData = chartTasks.map(t => t.totalCost);
+
+        return {
+            labels,
+            datasets: [
+                {
+                    label: 'Costo Base (Sin Extras)',
+                    data: baseCostData,
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                },
+                {
+                    label: 'Costo Total (Con Extras)',
+                    data: totalCostData,
+                    backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 1
+                }
+            ]
+        };
+    }
+
     if (metric === 'paretoCost') {
         const costTasks = tasks.filter(t => t.totalCost > 0);
         costTasks.sort((a, b) => b.totalCost - a.totalCost);
@@ -909,8 +937,7 @@ export default class SimulationController {
     }
 
     let dataProperty, label;
-    if (metric === 'cost') { dataProperty = 'totalCost'; label = 'Costo Total por Tarea'; }
-    else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
+    if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
     else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'allWaitTimes') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }

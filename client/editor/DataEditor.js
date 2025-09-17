@@ -164,10 +164,14 @@ export default class DataEditor {
   }
 
   _getStartEventDefaults(data = {}) {
+    const today = new Date();
+    const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
     const defaults = {
       arrivalRate: { value: 60, unit: 'minute' },
       simulationConfig: { runValue: 1000 },
       isRoot: false,
+      simulationStartDate: todayString,
       calendar: {
         workingDays: [1, 2, 3, 4, 5],
         workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }
@@ -290,6 +294,13 @@ export default class DataEditor {
         </div>
       </fieldset>
       <fieldset>
+        <legend>Fecha de Inicio de Simulación</legend>
+        <div class="form-group">
+            <label>Fecha de Inicio</label>
+            <input type="date" name="simulationStartDate" value="${data.simulationStartDate}">
+        </div>
+      </fieldset>
+      <fieldset>
           <legend>Reglas de Costos y Horas Extras</legend>
           <div class="form-group">
               <label>Costo Base por Hora ($)</label>
@@ -405,6 +416,7 @@ export default class DataEditor {
           runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
         },
         isRoot: body.querySelector('[name="isRoot"]').checked,
+        simulationStartDate: body.querySelector('[name="simulationStartDate"]').value,
         calendar: {
           workingDays,
           workingHours: {
