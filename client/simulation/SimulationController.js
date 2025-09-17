@@ -85,64 +85,29 @@ export default class SimulationController {
   }
 
   showSchedule() {
-    // This check is important because a simulation must be run first to initialize the engine's calendar
-    if (!this._simulationEngine.calendar) {
-      this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero para ver el cronograma.', type: 'warning', duration: 4000 });
-      return;
-    }
-    const calendar = this._simulationEngine.calendar;
-    const html = this.createScheduleHtml(calendar);
+    const rootElement = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
+    const simulationData = getSimulationData(rootElement);
+    const timetable = simulationData ? simulationData.timetable : null;
+
+    const html = this.createScheduleHtml(timetable);
     this._eventBus.fire('simulation.schedule.show', { html });
   }
 
-  createScheduleHtml(calendar) {
-    // Check if a calendar and its config are defined.
-    if (!calendar || !calendar.config) {
-        return '<p>No se ha definido un cronograma de trabajo.</p>';
+  createScheduleHtml(timetable) {
+    if (!timetable || !Array.isArray(timetable) || timetable.length === 0) {
+      return '<p style="text-align: center; margin-top: 20px;">No se ha definido un cronograma de trabajo detallado.</p>';
     }
 
-    const { workingDays, workingHours, holidays } = calendar.config;
-
-    // Check for the existence of the properties to be safe.
-    if (!workingDays || !workingHours) {
-        return '<p>La configuración del cronograma es incompleta o no es válida.</p>';
-    }
-
-    const formatTime = (timeObj) => {
-      if (!timeObj || typeof timeObj.hour === 'undefined' || typeof timeObj.minute === 'undefined') return 'N/A';
-      const h = String(timeObj.hour).padStart(2, '0');
-      const m = String(timeObj.minute).padStart(2, '0');
-      return `${h}:${m}`;
-    };
-
-    const dayNames = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
-    let workweekHtml = '';
-
-    // Create a row for each day of the week and show if it's working or not.
-    for (let i = 0; i < 7; i++) {
-        const isWorking = workingDays.includes(i);
-        workweekHtml += `
-            <tr>
-              <td>${dayNames[i]}</td>
-              <td>${isWorking ? formatTime(workingHours.start) : 'No Laborable'}</td>
-              <td>${isWorking ? formatTime(workingHours.end) : 'No Laborable'}</td>
-            </tr>
-        `;
-    }
-
-    let holidaysHtml = '';
-    if (holidays && holidays.length > 0) {
-      holidaysHtml = '<ul>';
-      for (const holiday of holidays) {
-        holidaysHtml += `<li>${holiday}</li>`;
-      }
-      holidaysHtml += '</ul>';
-    } else {
-      holidaysHtml = '<p>No hay días festivos definidos.</p>';
-    }
+    let timetableHtml = timetable.map(entry => `
+      <tr>
+        <td>${entry.day || 'N/A'}</td>
+        <td>${entry.start || 'N/A'}</td>
+        <td>${entry.end || 'N/A'}</td>
+      </tr>
+    `).join('');
 
     return `
-      <h4>Horario de Trabajo Semanal</h4>
+      <h4>Cronograma de Trabajo Configurado</h4>
       <table class="sim-results-table">
         <thead>
           <tr>
@@ -152,11 +117,9 @@ export default class SimulationController {
           </tr>
         </thead>
         <tbody>
-          ${workweekHtml}
+          ${timetableHtml}
         </tbody>
       </table>
-      <h4 style="margin-top: 20px;">Días Festivos</h4>
-      ${holidaysHtml}
     `;
   }
 
@@ -388,7 +351,7 @@ export default class SimulationController {
         metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         metric === 'dailyProduction' ? 'Piezas Completadas' :
-        metric === 'workPlan' ? 'Valor (Costo en $, Duración en minutos)' :
+        metric === 'workPlan' ? 'Valor' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -687,17 +650,68 @@ export default class SimulationController {
     return tableHtml;
   }
 
+  _calculateWorkPlans(workloadMs, calendar, config) {
+    const baseRatePerHour = config.cost.baseRatePerHour || 0;
+    const overtimeRules = config.overtime || { payMultiplier: 1.5 };
+    const overtimeMultiplier = overtimeRules.payMultiplier || 1.5;
+    const OVERTIME_HOURS_PER_DAY = 3; // Assumption for the overtime plan
+
+    // 1. Normal Plan Calculation
+    const normalCost = (workloadMs / 3600000) * baseRatePerHour;
+    const normalDurationMinutes = workloadMs / 60000;
+    const normalEndDate = calendar.addWorkingTime(new Date(0), normalDurationMinutes);
+    const normalCalendarDays = (normalEndDate.getTime() / (1000 * 60 * 60 * 24));
+
+    // 2. Overtime Plan Calculation
+    let overtimeCost = 0;
+    let remainingWorkloadMs = workloadMs;
+    let overtimeCalendarDays = 0;
+    const minutesPerDay = (calendar.config.workingHours.end.hour - calendar.config.workingHours.start.hour) * 60;
+    const msPerDay = minutesPerDay * 60000;
+    const overtimeMsPerDay = OVERTIME_HOURS_PER_DAY * 3600000;
+
+    while (remainingWorkloadMs > 0) {
+        overtimeCalendarDays++;
+        const normalWorkThisDay = Math.min(remainingWorkloadMs, msPerDay);
+        overtimeCost += (normalWorkThisDay / 3600000) * baseRatePerHour;
+        remainingWorkloadMs -= normalWorkThisDay;
+
+        if (remainingWorkloadMs > 0) {
+            const overtimeWorkThisDay = Math.min(remainingWorkloadMs, overtimeMsPerDay);
+            overtimeCost += (overtimeWorkThisDay / 3600000) * baseRatePerHour * overtimeMultiplier;
+            remainingWorkloadMs -= overtimeWorkThisDay;
+        }
+    }
+
+    return {
+      normalPlan: { cost: normalCost, duration: normalCalendarDays },
+      overtimePlan: { cost: overtimeCost, duration: overtimeCalendarDays }
+    };
+  }
+
   getChartData(metric) {
     if (metric === 'workPlan') {
       if (this.simulationReports.length === 0) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero para calcular el plan de trabajo.', type: 'warning', duration: 4000 });
         return { labels: [], datasets: [] };
       }
-      const { normalPlan, minimumTimePlan } = this._simulationEngine.calculateWorkPlan();
 
-      const labels = ['Costo Total ($)', 'Duración Total (minutos)'];
-      const normalData = [normalPlan.cost, normalPlan.duration];
-      const extraData = [minimumTimePlan.cost, minimumTimePlan.duration];
+      const report = this.simulationReports[0];
+      let totalWorkloadMs = 0;
+      report.results.forEach(res => {
+        totalWorkloadMs += (res.totalProcessingTime || 0) + (res.totalReworkTime || 0);
+      });
+
+      if (totalWorkloadMs <= 0) {
+        this._notifications.showNotification({ text: 'No hay trabajo procesado en la simulación para generar un plan.', type: 'info', duration: 3000 });
+        return { labels: [], datasets: [] };
+      }
+
+      const plans = this._calculateWorkPlans(totalWorkloadMs, this._simulationEngine.calendar, this._simulationEngine.rootConfig);
+
+      const labels = ['Costo Total ($)', 'Duración Total (Días Naturales)'];
+      const normalData = [plans.normalPlan.cost, plans.normalPlan.duration];
+      const extraData = [plans.overtimePlan.cost, plans.overtimePlan.duration];
 
       return {
         labels,

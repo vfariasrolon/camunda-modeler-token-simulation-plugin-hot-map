@@ -135,6 +135,16 @@ export default class ChartPanel {
     domClasses(htmlContent).add('hidden');
   }
 
+  showScheduleModal(show, html) {
+      if (show) {
+          const content = this.scheduleModalOverlay.querySelector('.schedule-modal-content');
+          content.innerHTML = html;
+          domClasses(this.scheduleModalOverlay).remove('hidden');
+      } else {
+          domClasses(this.scheduleModalOverlay).add('hidden');
+      }
+  }
+
   isOpen() {
     return domClasses(this._container).has(PALETTE_OPEN_CLS);
   }
