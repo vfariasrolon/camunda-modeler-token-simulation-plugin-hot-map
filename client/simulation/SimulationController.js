@@ -6,7 +6,7 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
-import { getSimulationData, formatMilliseconds } from './util';
+import { getSimulationData, getExtensionProperty, formatMilliseconds } from './util';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -85,16 +85,24 @@ export default class SimulationController {
   }
 
   showSchedule() {
-    let timetable = null;
+    let timetableJson = null;
     const allElements = this._elementRegistry.getAll();
 
-    // Iterate over all elements to find the one with timetable data.
-    // This is more robust than assuming it's on a specific root element.
     for (const element of allElements) {
-        const simData = getSimulationData(element);
-        if (simData && simData.timetable) {
-            timetable = simData.timetable;
-            break; // Found it, no need to search further.
+        const rawTimetable = getExtensionProperty(element, 'Timetable');
+        if (rawTimetable) {
+            timetableJson = rawTimetable;
+            break;
+        }
+    }
+
+    let timetable = null;
+    if (timetableJson) {
+        try {
+            timetable = JSON.parse(timetableJson);
+        } catch (e) {
+            console.error('Error parsing Timetable JSON', e);
+            timetable = null;
         }
     }
 
@@ -133,7 +141,6 @@ export default class SimulationController {
   }
 
   runSimulation() {
-    // Clear UI elements
     this.lastMetric = null;
     this.clearOverlaysAndHeatmap();
     if (this._chart) {
@@ -141,11 +148,9 @@ export default class SimulationController {
       this._chart = null;
     }
 
-    // Run new simulation
     const results = this._simulationEngine.run();
     this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
 
-    // Create and store report
     const report = {
         results: results,
         completedInstances: this._simulationEngine.completedInstances,
@@ -157,10 +162,8 @@ export default class SimulationController {
     this.simulationReports.unshift(report);
     this.simulationReports = this.simulationReports.slice(0, 2);
 
-    // Update simulationResults for other functions that rely on it
     this.simulationResults = report.results;
 
-    // Refresh any open chart
     if (this._chartPanel.isOpen()) {
         this.showChart();
     }
@@ -287,12 +290,12 @@ export default class SimulationController {
     }
 
     if (metric === 'overallSummary') {
-      if (!this.simulationResults) {
+      if (this.simulationReports.length === 0) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
         return;
       }
-      const summaryHtml = this.createOverallSummary(this.simulationResults);
+      const summaryHtml = this.createOverallSummary(this.simulationReports[0]);
       this._chartPanel.showHtmlContent(summaryHtml);
       return;
     }
@@ -308,7 +311,7 @@ export default class SimulationController {
       return;
     }
 
-    this._chartPanel.showCanvas(); // Ensure canvas is visible for charts
+    this._chartPanel.showCanvas();
 
     if (!this.simulationResults && metric !== 'resourceQuantity') {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
@@ -334,7 +337,7 @@ export default class SimulationController {
 
     let chartType = 'bar';
     if (metric === 'scatter') chartType = 'scatter';
-    if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') chartType = 'bar'; // It's a mixed type, but 'bar' is the base
+    if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') chartType = 'bar';
 
     const options = {
         scales: {
@@ -345,7 +348,7 @@ export default class SimulationController {
                 beginAtZero: true,
                 title: {
                     display: true,
-                    text: 'Valor' // Placeholder
+                    text: 'Valor'
                 }
             }
         }
@@ -363,6 +366,8 @@ export default class SimulationController {
         metric === 'reworkTime' ? 'Tiempo de Reparación Total (s)' :
         metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
+        metric === 'dailyProduction' ? 'Piezas Completadas' :
+        metric === 'workPlan' ? 'Valor' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -377,9 +382,7 @@ export default class SimulationController {
                 display: true,
                 text: 'Porcentaje Acumulado (%)'
             },
-            grid: {
-                drawOnChartArea: false, // only draw grid for primary axis
-            },
+            grid: { drawOnChartArea: false },
         };
     }
 
@@ -387,18 +390,11 @@ export default class SimulationController {
         options.scales.x = {
             type: 'linear',
             position: 'bottom',
-            title: {
-                display: true,
-                text: 'Tiempo de Proceso Promedio (s)'
-            }
+            title: { display: true, text: 'Tiempo de Proceso Promedio (s)' }
         };
-        options.scales.y.title = {
-            display: true,
-            text: 'Costo Total ($)'
-        };
+        options.scales.y.title = { display: true, text: 'Costo Total ($)' };
     }
 
-    // For pareto, datasets are pre-built. For others, build them now.
     const datasets = chartData.datasets ? chartData.datasets : [{
         label: chartData.label,
         data: chartData.data,
@@ -414,9 +410,7 @@ export default class SimulationController {
                 callbacks: {
                     label: function(context) {
                         let label = context.dataset.label || '';
-                        if (label) {
-                            label += ': ';
-                        }
+                        if (label) { label += ': '; }
                         if (context.parsed.y !== null) {
                           if (context.dataset.yAxisID === 'y1') {
                             label += context.parsed.y.toFixed(1) + '%';
@@ -437,9 +431,7 @@ export default class SimulationController {
                 callbacks: {
                     label: function(context) {
                         let label = context.dataset.label || '';
-                        if (label) {
-                            label += ': ';
-                        }
+                        if (label) { label += ': '; }
                         if (context.parsed.y !== null) {
                           if (context.dataset.yAxisID === 'y1') {
                             label += context.parsed.y.toFixed(1) + '%';
@@ -460,7 +452,7 @@ export default class SimulationController {
                 callbacks: {
                     label: function(context) {
                         const label = context.dataset.label || '';
-                        const time = formatMilliseconds(context.parsed.x * 1000); // convert seconds back to ms for formatting
+                        const time = formatMilliseconds(context.parsed.x * 1000);
                         const cost = context.parsed.y.toFixed(2);
                         return `${context.chart.data.labels[context.dataIndex]}: (${time}, $${cost})`;
                     }
@@ -471,10 +463,7 @@ export default class SimulationController {
 
     return {
       type: chartType,
-      data: {
-        labels: chartData.labels,
-        datasets: datasets
-      },
+      data: { labels: chartData.labels, datasets: datasets },
       options: options
     };
   }
@@ -483,7 +472,6 @@ export default class SimulationController {
     const allElements = this._elementRegistry.getAll();
     const elementsWithData = [];
     allElements.forEach(element => {
-      // We are interested in elements that can have simulation data
       if (is(element, 'bpmn:Process') || is(element, 'bpmn:Participant') || is(element, 'bpmn:Task') || is(element, 'bpmn:StartEvent') || (is(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway')) {
         const data = getSimulationData(element);
         if (data && Object.keys(data).length > 0) {
@@ -558,53 +546,64 @@ export default class SimulationController {
     return tableHtml;
   }
 
-  createOverallSummary(results) {
-    let totalCost = 0;
-    let totalOvertime = 0;
-    let totalFailures = 0;
-    let totalCompleted = 0;
-    let minStartTime = Infinity;
-    let maxEndTime = 0;
+  createOverallSummary(report) {
+    let totalCost = 0, totalOvertimeTime = 0, totalFailures = 0,
+        totalReworkCost = 0, totalWaitTimeCost = 0, inefficientDispatchCount = 0, totalOvertimeCost = 0;
 
-    results.forEach(result => {
-      totalCost += result.totalCost;
-      totalOvertime += result.totalOvertime;
-      totalFailures += result.failureCount;
-
-      if (result.executionCount > 0) {
-        const element = this._elementRegistry.get(result.name); // Assuming name is id
-        if (is(element, 'bpmn:EndEvent')) {
-          totalCompleted += result.executionCount;
-        }
-      }
+    report.results.forEach(result => {
+      totalCost += result.totalCost || 0;
+      totalOvertimeTime += result.totalOvertime || 0;
+      totalFailures += result.failureCount || 0;
+      totalReworkCost += result.totalReworkCost || 0;
+      totalWaitTimeCost += result.totalWaitTimeCost || 0;
+      inefficientDispatchCount += result.inefficientDispatchCount || 0;
+      totalOvertimeCost += result.totalOvertimeCost || 0;
     });
 
-    // Calculate elapsed working time from the start of the simulation (time 0) to the final clock time.
-    const simulationDurationInMinutes = this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock));
-    const simulationDurationInMillis = simulationDurationInMinutes * 60000;
+    const operationalCost = totalCost - totalReworkCost - totalWaitTimeCost - totalOvertimeCost;
 
     return `
       <div class="sim-summary-container">
         <h2>Resumen General de la Simulación</h2>
         <div class="sim-summary-item">
-          <span class="label">Duración Total (Tiempo de Trabajo Neto):</span>
-          <span class="value">${formatMilliseconds(simulationDurationInMillis)}</span>
-        </div>
-        <div class="sim-summary-item">
           <span class="label">Instancias Completadas:</span>
-          <span class="value">${this._simulationEngine.completedInstances}</span>
+          <span class="value">${report.completedInstances}</span>
         </div>
         <div class="sim-summary-item">
-          <span class="label">Costo Total de Operación:</span>
-          <span class="value">$${totalCost.toFixed(2)}</span>
+          <span class="label">Duración Total (Tiempo de Trabajo Neto):</span>
+          <span class="value">${formatMilliseconds(report.duration)}</span>
         </div>
         <div class="sim-summary-item">
-          <span class="label">Tiempo Total de Horas Extras:</span>
-          <span class="value">${formatMilliseconds(totalOvertime)}</span>
+          <span class="label">Duración Total (Días Naturales):</span>
+          <span class="value">${(report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2)} días</span>
         </div>
         <div class="sim-summary-item">
           <span class="label">Número Total de Fallos:</span>
           <span class="value">${totalFailures}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Despachos Ineficientes:</span>
+          <span class="value">${inefficientDispatchCount}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo de Operación:</span>
+          <span class="value">$${operationalCost.toFixed(2)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo de Espera:</span>
+          <span class="value">$${totalWaitTimeCost.toFixed(2)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo de Reparación:</span>
+          <span class="value">$${totalReworkCost.toFixed(2)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo de Horas Extras:</span>
+          <span class="value">$${totalOvertimeCost.toFixed(2)}</span>
+        </div>
+        <div class="sim-summary-item">
+          <span class="label">Costo Total de Operación:</span>
+          <span class="value">$${totalCost.toFixed(2)}</span>
         </div>
       </div>
     `;
@@ -631,7 +630,6 @@ export default class SimulationController {
     `;
 
     results.forEach(result => {
-      // Only show elements that were executed or have some value
       if (result.executionCount > 0 || result.totalCost > 0 || result.totalProcessingTime > 0) {
         tableHtml += `
           <tr>
@@ -775,6 +773,34 @@ export default class SimulationController {
         detailHtml
       };
     }
+
+    if (metric === 'dailyProduction') {
+      if (this.simulationReports.length === 0) {
+        return { labels: [], datasets: [] };
+      }
+      const report = this.simulationReports[0];
+      const dailyData = report.dailyCompletions;
+
+      if (!dailyData || dailyData.size === 0) {
+        return { labels: [], datasets: [] };
+      }
+
+      const sortedDailyData = Array.from(dailyData.entries()).sort((a, b) => new Date(a[0]) - new Date(b[0]));
+      const labels = sortedDailyData.map(entry => entry[0]);
+      const data = sortedDailyData.map(entry => entry[1]);
+
+      return {
+        labels,
+        datasets: [{
+          label: 'Piezas Completadas por Día',
+          data: data,
+          backgroundColor: 'rgba(153, 102, 255, 0.2)',
+          borderColor: 'rgba(153, 102, 255, 1)',
+          borderWidth: 1
+        }]
+      };
+    }
+
     const tasks = [];
 
     if (metric === 'resourceQuantity') {
