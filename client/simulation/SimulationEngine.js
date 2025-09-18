@@ -97,6 +97,7 @@ export default class SimulationEngine {
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
         totalOvertime: 0, totalReworkTime: 0, totalReworkCost: 0, totalWaitTimeCost: 0, totalOvertimeCost: 0,
         totalDoubleOvertime: 0, totalTripleOvertime: 0,
+        totalDoubleOvertimeCost: 0, totalTripleOvertimeCost: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -246,9 +247,9 @@ export default class SimulationEngine {
     const normalOvertime = Math.min(taskOvertimeDuration, Math.max(0, limitInMillis - currentWeeklyOvertime));
     const excessOvertime = Math.max(0, taskOvertimeDuration - normalOvertime);
 
-    const overtimeCost =
-      ((normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1)) +
-      ((excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1));
+    const doubleOvertimeCost = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
+    const tripleOvertimeCost = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
+    const overtimeCost = doubleOvertimeCost + tripleOvertimeCost;
 
     instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
 
@@ -256,6 +257,8 @@ export default class SimulationEngine {
     if (results) {
       results.totalDoubleOvertime += normalOvertime;
       results.totalTripleOvertime += excessOvertime;
+      results.totalDoubleOvertimeCost += doubleOvertimeCost;
+      results.totalTripleOvertimeCost += tripleOvertimeCost;
     }
 
     console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalProcessingTimeForTask}ms`);
