@@ -191,6 +191,7 @@ export default class SimulationController {
   }
 
   runSimulation() {
+    this._simulationEngine.reset(); // Ensure a clean state before any run
     this.clear();
 
     const rootConfig = this._simulationEngine._findRootConfig();
@@ -207,8 +208,16 @@ export default class SimulationController {
 
     this.lastMetric = null;
 
+    console.log("--- INICIANDO SIMULACIÓN NORMAL ---");
+    console.log("Estado del motor ANTES de la ejecución normal:", { ...this._simulationEngine });
     const normalReport = this._runAndGetReport({ useOvertime: false });
+    console.log("Estado del motor DESPUÉS de la ejecución normal:", { ...this._simulationEngine });
+
+
+    console.log("--- INICIANDO SIMULACIÓN CON HORAS EXTRAS ---");
+    console.log("Estado del motor ANTES de la ejecución con horas extras:", { ...this._simulationEngine });
     const overtimeReport = this._runAndGetReport({ useOvertime: true });
+    console.log("Estado del motor DESPUÉS de la ejecución con horas extras:", { ...this._simulationEngine });
 
     if (!normalReport || !overtimeReport) {
       this._notifications.showNotification({ text: 'Una de las simulaciones falló. No se pueden mostrar resultados comparativos.', type: 'error', duration: 6000 });

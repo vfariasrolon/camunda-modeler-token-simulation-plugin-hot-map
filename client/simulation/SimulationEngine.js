@@ -64,6 +64,20 @@ export default class SimulationEngine {
     this.rootConfig = {};
   }
 
+  reset() {
+    this.eventQueue = new EventQueue();
+    this.results = new Map();
+    this.resourcePools = new Map();
+    this.instanceStates = new Map();
+    this.clock = 0;
+    this.completedInstances = 0;
+    this.calendar = null;
+    this.rootConfig = {};
+    this.simulationStartTime = 0;
+    this.weeklyStats = new Map();
+    this.dailyCompletions = new Map();
+  }
+
   initialize(rootConfig) {
     this.rootConfig = rootConfig;
     this.calendar = new BusinessCalendar(rootConfig.calendar);
