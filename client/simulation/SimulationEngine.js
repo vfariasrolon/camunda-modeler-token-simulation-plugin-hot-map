@@ -244,8 +244,6 @@ export default class SimulationEngine {
         - Business Time: ${businessTime/1000}s
         - Overtime Duration: ${taskOvertimeDuration/1000}s`);
 
-    const overtimeRules = this.rootConfig.overtime || {};
-    const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     if (!this.weeklyStats.has(instanceId)) this.weeklyStats.set(instanceId, new Map());
     const instanceWeeklyStats = this.weeklyStats.get(instanceId);

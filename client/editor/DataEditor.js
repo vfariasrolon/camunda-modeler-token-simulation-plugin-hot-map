@@ -426,13 +426,13 @@ export default class DataEditor {
           }
         },
         cost: {
-          baseRatePerHour: parseFloat(body.querySelector('[name="cost.baseRatePerHour"]').value),
-          waitCostPerHour: parseFloat(body.querySelector('[name="cost.waitCostPerHour"]').value)
+          baseRatePerHour: parseFloat(body.querySelector('[name="cost.baseRatePerHour"]').value) || 0,
+          waitCostPerHour: parseFloat(body.querySelector('[name="cost.waitCostPerHour"]').value) || 0
         },
         overtime: {
-          limitHours: parseInt(body.querySelector('[name="overtime.limitHours"]').value, 10),
-          payMultiplier: parseFloat(body.querySelector('[name="overtime.payMultiplier"]').value),
-          excessPayMultiplier: parseFloat(body.querySelector('[name="overtime.excessPayMultiplier"]').value)
+          limitHours: parseInt(body.querySelector('[name="overtime.limitHours"]').value, 10) || 0,
+          payMultiplier: parseFloat(body.querySelector('[name="overtime.payMultiplier"]').value) || 1,
+          excessPayMultiplier: parseFloat(body.querySelector('[name="overtime.excessPayMultiplier"]').value) || 1
         }
       };
     } else if (is(this._selectedElement, 'bpmn:Process') || is(this._selectedElement, 'bpmn:Participant')) {
