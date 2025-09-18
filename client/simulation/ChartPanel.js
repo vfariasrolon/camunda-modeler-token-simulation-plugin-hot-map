@@ -27,6 +27,7 @@ export default class ChartPanel {
           <select class="chart-select">
             <option value="overallSummary">Resumen General</option>
             <option value="dailyProduction">Producción Diaria</option>
+            <option value="productionCompare">Análisis de Producción (Normal vs. Extras)</option>
             <option value="inputParams">Parámetros de Entrada (Tabla)</option>
             <option value="resultsTable">Resultados de Simulación (Tabla)</option>
             <option value="cost">Top 5 por Costo</option>
