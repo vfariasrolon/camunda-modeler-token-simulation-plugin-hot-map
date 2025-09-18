@@ -362,7 +362,7 @@ export default class SimulationController {
 
     // HTML-based reports
     if (metric === 'overallSummary') {
-      const summaryHtml = this.createOverallSummary(this.simulationReports[0]);
+      const summaryHtml = this.createOverallSummary(this.simulationReports[0], this.normalReport);
       this._chartPanel.showHtmlContent(summaryHtml);
       return;
     }
@@ -648,7 +648,7 @@ export default class SimulationController {
     return tableHtml;
   }
 
-  createOverallSummary(report) {
+  createOverallSummary(report, normalReport) {
     let totalCost = 0, totalReworkCost = 0, totalOvertimeCost = 0,
         totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
         totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0;
@@ -664,7 +664,7 @@ export default class SimulationController {
       totalTripleOvertimeCost += result.totalTripleOvertimeCost || 0;
     });
 
-    const totalTimeDays = report.totalCalendarDays;
+    const totalTimeDays = normalReport.totalCalendarDays;
     const totalTimeHours = (report.calendarDuration / (1000 * 60 * 60)).toFixed(2);
     const overtimePercentage = report.calendarDuration > 0
       ? ((totalOvertimeMs / report.calendarDuration) * 100).toFixed(1)
