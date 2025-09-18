@@ -77,7 +77,7 @@ export default class SimulationEngine {
     simStart.setHours(start.hour, start.minute, 0, 0);
 
     // Advance to the first available working day
-    while (!this.config.workingDays.includes(simStart.getDay())) {
+    while (!this.calendar.config.workingDays.includes(simStart.getDay())) {
       simStart.setDate(simStart.getDate() + 1);
     }
 
@@ -308,14 +308,13 @@ export default class SimulationEngine {
       return config;
     }
 
-    // Handle both no-root and multiple-roots cases
+    // Handle both no-root and multiple-roots cases by returning null
     if (rootEvents.length > 1) {
       console.warn('Multiple root start events found. A single root event is required.');
     } else {
       console.warn('No root start event found. A root event is required.');
     }
 
-    // Return null to indicate failure to find a SINGLE root
     return null;
   }
 
