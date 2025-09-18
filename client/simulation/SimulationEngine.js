@@ -236,6 +236,15 @@ export default class SimulationEngine {
     // The time saved (in milliseconds) is the overtime duration.
     const taskOvertimeDuration = standardEndTime.getTime() - endTime;
 
+    if (taskOvertimeDuration > 0) {
+      console.log(`[COSTING] Task: ${element.id}
+        - Start: ${new Date(time).toLocaleString()}
+        - Duration: ${totalProcessingTimeForTask/1000}s
+        - Standard End: ${standardEndTime.toLocaleString()}
+        - Actual End: ${new Date(endTime).toLocaleString()}
+        - Overtime Duration: ${taskOvertimeDuration}ms`);
+    }
+
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     if (!this.weeklyStats.has(instanceId)) this.weeklyStats.set(instanceId, new Map());
     const instanceWeeklyStats = this.weeklyStats.get(instanceId);

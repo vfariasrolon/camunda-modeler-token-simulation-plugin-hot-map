@@ -55,6 +55,7 @@ export default class SimulationController {
     this.simulationResults = null;
     this.simulationReports = [];
     this.overtimeReport = null;
+    this.normalReport = null;
     this.lastMetric = null;
 
     this._eventBus.on('canvas.init', () => {
@@ -214,10 +215,11 @@ export default class SimulationController {
 
     this._notifications.showNotification({ text: 'Simulaciones completadas', type: 'info', duration: 3000 });
 
-    this.simulationReports = [normalReport];
-    this.overtimeReport = overtimeReport; // Store the overtime report separately
+    // The main report for the summary panel is the overtime one, as it's the most comprehensive.
+    this.simulationReports = [overtimeReport];
+    this.normalReport = normalReport; // Store the normal report for comparison chart.
 
-    this.simulationResults = normalReport.results;
+    this.simulationResults = overtimeReport.results; // Heatmap and overlays are based on the main report.
 
     if (this._chartPanel.isOpen()) {
         this.showChart();
@@ -382,13 +384,13 @@ export default class SimulationController {
 
   getChartConfig(metric) {
     if (metric === 'productionCompare') {
-      if (!this.simulationReports.length || !this.overtimeReport) {
+      if (!this.normalReport || !this.simulationReports.length) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación comparativa disponibles.</p>');
         return null;
       }
-      const normalReport = this.simulationReports[0];
-      const overtimeReport = this.overtimeReport;
+      const normalReport = this.normalReport;
+      const overtimeReport = this.simulationReports[0];
       const allDates = [...new Set([...normalReport.dailyCompletions.keys(), ...overtimeReport.dailyCompletions.keys()])];
       allDates.sort((a, b) => new Date(a) - new Date(b));
 
