@@ -177,6 +177,9 @@ export default class SimulationController {
         return null;
     }
 
+    const totalMs = this._simulationEngine.clock - this._simulationEngine.simulationStartTime;
+    const totalCalendarDays = Math.ceil(totalMs / (1000 * 60 * 60 * 24));
+
     const report = {
         results: results,
         completedInstances: this._simulationEngine.completedInstances,
@@ -185,7 +188,8 @@ export default class SimulationController {
             new Date(this._simulationEngine.clock)
         ) * 60 * 1000, // convert minutes to ms
         dailyCompletions: new Map(this._simulationEngine.dailyCompletions),
-        createdAt: new Date()
+        createdAt: new Date(),
+        totalCalendarDays: totalCalendarDays
     };
     return report;
   }
@@ -646,7 +650,7 @@ export default class SimulationController {
 
   createOverallSummary(report) {
     let totalCost = 0, totalReworkCost = 0, totalOvertimeCost = 0,
-        totalFailures = 0, totalReworkTime = 0,
+        totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
         totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0;
 
     report.results.forEach(result => {
@@ -655,12 +659,16 @@ export default class SimulationController {
       totalOvertimeCost += result.totalOvertimeCost || 0;
       totalFailures += result.failureCount || 0;
       totalReworkTime += result.totalReworkTime || 0;
+      totalOvertimeMs += result.totalOvertime || 0;
       totalDoubleOvertimeCost += result.totalDoubleOvertimeCost || 0;
       totalTripleOvertimeCost += result.totalTripleOvertimeCost || 0;
     });
 
-    const totalTimeDays = (report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2);
+    const totalTimeDays = report.totalCalendarDays;
     const totalTimeHours = (report.calendarDuration / (1000 * 60 * 60)).toFixed(2);
+    const overtimePercentage = report.calendarDuration > 0
+      ? ((totalOvertimeMs / report.calendarDuration) * 100).toFixed(1)
+      : 0;
 
     return `
       <div class="sim-summary-container">
@@ -679,12 +687,16 @@ export default class SimulationController {
             <span class="value">${totalTimeDays}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Tiempo Total (Horas):</span>
+            <span class="label">Tiempo Total (Horas Netas):</span>
             <span class="value">${totalTimeHours}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Tiempo de Reparación Total:</span>
             <span class="value">${formatMilliseconds(totalReworkTime)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Total de Horas Extra:</span>
+            <span class="value">${formatMilliseconds(totalOvertimeMs)}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Costo Total:</span>
@@ -705,6 +717,10 @@ export default class SimulationController {
           <div class="sim-summary-item">
             <span class="label">Costo Horas Extras Triples:</span>
             <span class="value">${formatCurrency(totalTripleOvertimeCost, 'MXN')}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Porcentaje de Tiempo Extra:</span>
+            <span class="value">${overtimePercentage}%</span>
           </div>
         </div>
       </div>
