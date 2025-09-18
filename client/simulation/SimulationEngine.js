@@ -245,10 +245,7 @@ export default class SimulationEngine {
         - Overtime Duration: ${taskOvertimeDuration/1000}s`);
 
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
-    if (!this.weeklyStats.has(instanceId)) this.weeklyStats.set(instanceId, new Map());
-    const instanceWeeklyStats = this.weeklyStats.get(instanceId);
-    if (!instanceWeeklyStats.has(weekNumber)) instanceWeeklyStats.set(weekNumber, { overtime: 0 });
-    const currentWeeklyOvertime = instanceWeeklyStats.get(weekNumber).overtime;
+    const currentWeeklyOvertime = this.weeklyStats.get(weekNumber) || 0;
 
     const overtimeRules = this.rootConfig.overtime;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
@@ -270,7 +267,7 @@ export default class SimulationEngine {
         - tripleOvertimeCost: ${tripleOvertimeCost}
         - overtimeCost: ${overtimeCost}`);
 
-    instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
+    this.weeklyStats.set(weekNumber, currentWeeklyOvertime + taskOvertimeDuration);
 
     const results = this.results.get(element.id);
     if (results) {
