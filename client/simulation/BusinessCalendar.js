@@ -169,4 +169,25 @@ export default class BusinessCalendar {
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   }
+
+  calculateWorkingDays(startDate, endDate) {
+    let workingDaysCount = 0;
+    let currentDate = new Date(startDate.getTime());
+    currentDate.setHours(0, 0, 0, 0); // Start of the day
+
+    const holidaysSet = new Set(this.config.holidays || []);
+
+    while (currentDate <= endDate) {
+      const dayOfWeek = currentDate.getDay();
+      const dateString = currentDate.toISOString().slice(0, 10);
+
+      if (this.config.workingDays.includes(dayOfWeek) && !holidaysSet.has(dateString)) {
+        workingDaysCount++;
+      }
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return workingDaysCount;
+  }
 }

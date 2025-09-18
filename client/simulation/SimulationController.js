@@ -177,8 +177,10 @@ export default class SimulationController {
         return null;
     }
 
-    const totalMs = this._simulationEngine.clock - this._simulationEngine.simulationStartTime;
-    const totalCalendarDays = Math.ceil(totalMs / (1000 * 60 * 60 * 24));
+    const totalWorkingDays = this._simulationEngine.calendar.calculateWorkingDays(
+      new Date(this._simulationEngine.simulationStartTime),
+      new Date(this._simulationEngine.clock)
+    );
 
     const report = {
         results: results,
@@ -189,7 +191,7 @@ export default class SimulationController {
         ) * 60 * 1000, // convert minutes to ms
         dailyCompletions: new Map(this._simulationEngine.dailyCompletions),
         createdAt: new Date(),
-        totalCalendarDays: totalCalendarDays
+        totalWorkingDays: totalWorkingDays
     };
     return report;
   }
