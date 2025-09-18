@@ -180,8 +180,10 @@ export default class SimulationController {
     const report = {
         results: results,
         completedInstances: this._simulationEngine.completedInstances,
-        // duration: this._simulationEngine.calendar.calculateElapsedTime(...) // This is too slow
-        calendarDuration: this._simulationEngine.clock - this._simulationEngine.simulationStartTime,
+        calendarDuration: this._simulationEngine.calendar.calculateBusinessDurationInMinutes(
+            new Date(this._simulationEngine.simulationStartTime),
+            new Date(this._simulationEngine.clock)
+        ) * 60 * 1000, // convert minutes to ms
         dailyCompletions: new Map(this._simulationEngine.dailyCompletions),
         createdAt: new Date()
     };

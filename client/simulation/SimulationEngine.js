@@ -157,7 +157,8 @@ export default class SimulationEngine {
       this.dailyCompletions.set(dayKey, currentCount + 1);
 
       console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
-      elementResults.totalCycleTime += this.calendar.calculateElapsedTime(new Date(startTime), new Date(this.clock));
+      const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
+      elementResults.totalCycleTime += standardCalendar.calculateBusinessDurationInMinutes(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);
       return;
     }
@@ -190,6 +191,7 @@ export default class SimulationEngine {
   }
 
   scheduleTask(taskEvent) {
+    console.log('[DEBUG] Root config in scheduleTask:', this.rootConfig);
     const { element, time, instanceId, startTime } = taskEvent;
     const data = getSimulationData(element);
     const baseRatePerHour = this.rootConfig.cost.baseRatePerHour || 0;
@@ -227,24 +229,23 @@ export default class SimulationEngine {
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
     const endTime = this.calendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000).getTime();
 
-    // To accurately calculate overtime for costing, we compare when a task would have ended
-    // under a standard calendar vs. when it actually ended with the current calendar (which may be extended).
-    // The time "saved" is the overtime worked.
     const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
-    const standardEndTime = standardCalendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000);
+    const businessTime = standardCalendar.calculateBusinessDuration(new Date(time), new Date(endTime));
+    let taskOvertimeDuration = totalProcessingTimeForTask - businessTime;
 
-    // The time saved (in milliseconds) is the overtime duration.
-    const taskOvertimeDuration = standardEndTime.getTime() - endTime;
-
-    if (taskOvertimeDuration > 0) {
-      console.log(`[COSTING] Task: ${element.id}
-        - Start: ${new Date(time).toLocaleString()}
-        - Duration: ${totalProcessingTimeForTask/1000}s
-        - Standard End: ${standardEndTime.toLocaleString()}
-        - Actual End: ${new Date(endTime).toLocaleString()}
-        - Overtime Duration: ${taskOvertimeDuration}ms`);
+    if (taskOvertimeDuration < 1000) { // Less than a second is not overtime
+      taskOvertimeDuration = 0;
     }
 
+    console.log(`[COSTING] Task: ${element.id}
+        - Start: ${new Date(time).toLocaleString()}
+        - Duration: ${totalProcessingTimeForTask/1000}s
+        - Actual End: ${new Date(endTime).toLocaleString()}
+        - Business Time: ${businessTime/1000}s
+        - Overtime Duration: ${taskOvertimeDuration/1000}s`);
+
+    const overtimeRules = this.rootConfig.overtime || {};
+    const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     if (!this.weeklyStats.has(instanceId)) this.weeklyStats.set(instanceId, new Map());
     const instanceWeeklyStats = this.weeklyStats.get(instanceId);
@@ -260,6 +261,16 @@ export default class SimulationEngine {
     const doubleOvertimeCost = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
     const tripleOvertimeCost = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
     const overtimeCost = doubleOvertimeCost + tripleOvertimeCost;
+
+    console.log(`[COSTING-DETAIL] Task: ${element.id}
+        - normalOvertime: ${normalOvertime/1000}s
+        - excessOvertime: ${excessOvertime/1000}s
+        - baseRatePerHour: ${baseRatePerHour}
+        - payMultiplier: ${overtimeRules.payMultiplier}
+        - excessPayMultiplier: ${overtimeRules.excessPayMultiplier}
+        - doubleOvertimeCost: ${doubleOvertimeCost}
+        - tripleOvertimeCost: ${tripleOvertimeCost}
+        - overtimeCost: ${overtimeCost}`);
 
     instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
 
@@ -413,7 +424,8 @@ export default class SimulationEngine {
         results.totalOvertimeCost += event.overtimeCost;
 
         if (event.waitStart) {
-          const waitTime = this.calendar.calculateElapsedTime(new Date(event.waitStart), new Date(this.clock));
+          const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
+          const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
           const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
           const currentWaitCost = (waitTime / 60) * waitCostPerHour; // waitTime is in minutes
@@ -427,7 +439,8 @@ export default class SimulationEngine {
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
             const nextTaskResults = this.results.get(nextTask.element.id);
-            const waitTime = this.calendar.calculateElapsedTime(new Date(nextTask.waitStart), new Date(this.clock));
+            const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
+            const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(nextTask.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
             const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
             const currentWaitCost = (waitTime / 60) * waitCostPerHour;

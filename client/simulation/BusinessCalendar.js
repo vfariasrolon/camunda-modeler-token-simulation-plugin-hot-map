@@ -91,7 +91,7 @@ export default class BusinessCalendar {
     return currentDate;
   }
 
-  calculateElapsedTime(startDate, endDate) {
+  calculateBusinessDurationInMinutes(startDate, endDate) {
     if (endDate <= startDate) return 0;
 
     let totalMinutes = 0;
@@ -105,6 +105,38 @@ export default class BusinessCalendar {
     }
 
     return totalMinutes;
+  }
+
+  calculateBusinessDuration(startDate, endDate) {
+    if (endDate <= startDate) return 0;
+
+    let businessMs = 0;
+    let current = new Date(startDate.getTime());
+
+    while (current < endDate) {
+        const day = current.getDay();
+
+        if (this.config.workingDays.includes(day)) {
+            const { start, end } = this.config.workingHours;
+
+            const startOfDay = new Date(current.getTime());
+            startOfDay.setHours(start.hour, start.minute, 0, 0);
+
+            const endOfDay = new Date(current.getTime());
+            endOfDay.setHours(end.hour, end.minute, 0, 0);
+
+            const effectiveStart = Math.max(current.getTime(), startOfDay.getTime());
+            const effectiveEnd = Math.min(endDate.getTime(), endOfDay.getTime());
+
+            if (effectiveStart < effectiveEnd) {
+                businessMs += (effectiveEnd - effectiveStart);
+            }
+        }
+
+        // Move to the start of the next day, robustly
+        current = new Date(current.getFullYear(), current.getMonth(), current.getDate() + 1);
+    }
+    return businessMs;
   }
 
   getWorkdayEnd(date) {
