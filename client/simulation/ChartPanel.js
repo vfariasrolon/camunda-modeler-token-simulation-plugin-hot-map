@@ -49,8 +49,10 @@ export default class ChartPanel {
           </div>
         </div>
         <div class="content">
+          <div class="chart-wrapper">
+            <canvas id="simulationChartCanvas"></canvas>
+          </div>
           <div class="html-content"></div>
-          <canvas id="simulationChartCanvas"></canvas>
         </div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
@@ -76,6 +78,7 @@ export default class ChartPanel {
     this.helpContent = this._container.querySelector('.help-content');
     this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
+    this.chartWrapper = this._container.querySelector('.chart-wrapper');
     this.canvas = this._container.querySelector('#simulationChartCanvas');
     this.scheduleModalOverlay = this._container.querySelector('.schedule-modal-overlay');
     this.scheduleModalClose = this._container.querySelector('.schedule-modal .close-modal');
@@ -110,14 +113,14 @@ export default class ChartPanel {
   showHtmlContent(html) {
     const htmlContent = this._container.querySelector('.html-content');
     htmlContent.innerHTML = html;
-    domClasses(this.canvas).add('hidden');
+    domClasses(this.chartWrapper).add('hidden');
     domClasses(htmlContent).remove('hidden');
   }
 
   showCanvas() {
     const htmlContent = this._container.querySelector('.html-content');
     htmlContent.innerHTML = ''; // Clear it
-    domClasses(this.canvas).remove('hidden');
+    domClasses(this.chartWrapper).remove('hidden');
     domClasses(htmlContent).add('hidden');
   }
 

@@ -340,6 +340,11 @@ export default class SimulationController {
 
   showChart() {
     const metric = this._chartPanel.getChartType();
+    const chartWrapper = this._chartPanel.chartWrapper;
+
+    // Reset wrapper style for non-canvas or non-scrolling charts by default
+    chartWrapper.style.width = '100%';
+    chartWrapper.style.height = 'auto';
 
     // This metric does not require a simulation run
     if (metric === 'inputParams') {
@@ -378,6 +383,14 @@ export default class SimulationController {
     const chartConfig = this.getChartConfig(metric);
     if (!chartConfig) {
       return; // getChartConfig is responsible for showing an error message
+    }
+
+    // Dynamically adjust wrapper size for scrollable charts
+    if (metric === 'dailyProduction' || metric === 'productionCompare' || metric === 'workPlan' || metric === 'allWaitTimes') {
+        const labels = chartConfig.data.labels || [];
+        const requiredWidth = Math.max(950, labels.length * 40); // 40px per bar, min 950px
+        chartWrapper.style.width = `${requiredWidth}px`;
+        chartWrapper.style.height = '450px';
     }
 
     const ctx = this._chartPanel.getCanvas().getContext('2d');

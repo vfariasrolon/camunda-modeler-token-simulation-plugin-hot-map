@@ -147,6 +147,7 @@
 .simulation-chart-panel .content {
     max-height: 60vh; /* Limit height to 60% of viewport height */
     overflow-y: auto; /* Add vertical scroll if content overflows */
+    overflow-x: auto; /* Add horizontal scroll for wide charts */
 }
 
 .simulation-chart-panel .html-content {

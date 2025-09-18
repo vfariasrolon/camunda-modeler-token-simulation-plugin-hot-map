@@ -247,6 +247,8 @@ export default class SimulationEngine {
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     const currentWeeklyOvertime = this.weeklyStats.get(weekNumber) || 0;
 
+    console.log(`[COSTING-WEEKLY] Week: ${weekNumber}, Accumulated Overtime Before This Task: ${currentWeeklyOvertime/1000}s`);
+
     const overtimeRules = this.rootConfig.overtime;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
 
