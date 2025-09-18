@@ -223,23 +223,20 @@ export default class SimulationEngine {
       reworkCost = (reworkTime / 3600000) * baseRatePerHour;
     }
 
-    const totalProcessingTimeForTask = processingTime + reworkTime;
-    const processingCost = (totalProcessingTimeForTask / 3600000) * baseRatePerHour;
+    const totalTaskDuration = processingTime + reworkTime;
+
+    const { businessTime, overtime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDuration / 60000);
+
+    const processingCost = (businessTime / 3600000) * baseRatePerHour;
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
-    const endTime = this.calendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000).getTime();
+    const endTime = this.calendar.addWorkingTime(new Date(time), totalTaskDuration / 60000).getTime();
 
-    const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
-    const businessTime = standardCalendar.calculateBusinessDuration(new Date(time), new Date(endTime));
-    let taskOvertimeDuration = totalProcessingTimeForTask - businessTime;
-
-    if (taskOvertimeDuration < 1000) { // Less than a second is not overtime
-      taskOvertimeDuration = 0;
-    }
+    const taskOvertimeDuration = overtime;
 
     console.log(`[COSTING] Task: ${element.id}
         - Start: ${new Date(time).toLocaleString()}
-        - Duration: ${totalProcessingTimeForTask/1000}s
+        - Duration: ${totalTaskDuration/1000}s
         - Actual End: ${new Date(endTime).toLocaleString()}
         - Business Time: ${businessTime/1000}s
         - Overtime Duration: ${taskOvertimeDuration/1000}s`);
@@ -277,12 +274,13 @@ export default class SimulationEngine {
       results.totalTripleOvertimeCost += tripleOvertimeCost;
     }
 
-    console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalProcessingTimeForTask}ms`);
+    console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalTaskDuration}ms`);
 
     const newTaskEvent = {
       type: 'TASK_COMPLETE', element, time: endTime, instanceId, startTime,
-      processingTime: totalProcessingTimeForTask, reworkTime, overtime: taskOvertimeDuration,
-      processingCost, reworkCost, overtimeCost, quantityRequired
+      processingTime: processingTime, reworkTime, overtime: taskOvertimeDuration,
+      processingCost, reworkCost, overtimeCost, quantityRequired,
+      totalDuration: totalTaskDuration
     };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
@@ -442,7 +440,7 @@ export default class SimulationEngine {
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
 
-            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.processingTime / 60000).getTime();
+            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.totalDuration / 60000).getTime();
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
           });

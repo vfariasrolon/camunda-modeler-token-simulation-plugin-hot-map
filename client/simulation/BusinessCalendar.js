@@ -146,6 +146,22 @@ export default class BusinessCalendar {
     return endOfDay;
   }
 
+  calculateBusinessTime(startDate, durationInMinutes) {
+    const businessTimeMs = durationInMinutes * 60000;
+
+    if (businessTimeMs <= 0) {
+      return { businessTime: 0, overtime: 0 };
+    }
+
+    const endDate = this.addWorkingTime(new Date(startDate.getTime()), durationInMinutes);
+    const totalElapsedMs = endDate.getTime() - startDate.getTime();
+
+    // Overtime is the total elapsed time minus the business time.
+    const overtimeMs = totalElapsedMs - businessTimeMs;
+
+    return { businessTime: businessTimeMs, overtime: overtimeMs > 0 ? overtimeMs : 0 };
+  }
+
   getWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;
