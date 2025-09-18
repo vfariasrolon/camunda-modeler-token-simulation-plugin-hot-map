@@ -65,21 +65,38 @@ export default class SimulationEngine {
   }
 
   initialize(rootConfig) {
-    this.clock = 0;
+    this.rootConfig = rootConfig;
+    this.calendar = new BusinessCalendar(rootConfig.calendar);
+
+    let simStart = new Date();
+    if (rootConfig.startDate && /^\d{4}-\d{2}-\d{2}$/.test(rootConfig.startDate)) {
+      simStart = new Date(rootConfig.startDate + 'T00:00:00');
+    }
+
+    const { start } = this.calendar.config.workingHours;
+    simStart.setHours(start.hour, start.minute, 0, 0);
+
+    // Advance to the first available working day
+    while (!this.calendar.config.workingDays.includes(simStart.getDay())) {
+      simStart.setDate(simStart.getDate() + 1);
+    }
+
+    this.simulationStartTime = simStart.getTime();
+    this.clock = this.simulationStartTime;
     this.completedInstances = 0;
     this.eventQueue = new EventQueue();
     this.results = new Map();
     this.resourcePools = new Map();
     this.instanceStates = new Map();
-    this.weeklyStats = new Map(); // For overtime tracking
-    this.dailyCompletions = new Map(); // For daily production tracking
-    this.rootConfig = rootConfig;
-    this.calendar = new BusinessCalendar(rootConfig.calendar);
+    this.weeklyStats = new Map();
+    this.dailyCompletions = new Map();
+
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
         totalOvertime: 0, totalReworkTime: 0, totalReworkCost: 0, totalWaitTimeCost: 0, totalOvertimeCost: 0,
+        totalDoubleOvertime: 0, totalTripleOvertime: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -209,9 +226,13 @@ export default class SimulationEngine {
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
     const endTime = this.calendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000).getTime();
 
-    const taskOvertimeDuration = endTime > this.calendar.getWorkdayEnd(new Date(endTime)).getTime()
-      ? (endTime - this.calendar.getWorkdayEnd(new Date(endTime)).getTime())
-      : 0;
+    // For costing, we must use the original, standard work hours from the root config,
+    // not the potentially modified calendar used for the simulation run.
+    const standardEnd = this.rootConfig.calendar.workingHours.end;
+    const standardWorkdayEnd = new Date(endTime);
+    standardWorkdayEnd.setHours(standardEnd.hour, standardEnd.minute, 0, 0);
+
+    const taskOvertimeDuration = endTime > standardWorkdayEnd.getTime() ? (endTime - standardWorkdayEnd.getTime()) : 0;
 
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     if (!this.weeklyStats.has(instanceId)) this.weeklyStats.set(instanceId, new Map());
@@ -230,6 +251,12 @@ export default class SimulationEngine {
       ((excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1));
 
     instanceWeeklyStats.get(weekNumber).overtime += taskOvertimeDuration;
+
+    const results = this.results.get(element.id);
+    if (results) {
+      results.totalDoubleOvertime += normalOvertime;
+      results.totalTripleOvertime += excessOvertime;
+    }
 
     console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalProcessingTimeForTask}ms`);
 
@@ -256,28 +283,52 @@ export default class SimulationEngine {
     const rootEvents = startEvents.filter(el => getSimulationData(el)?.isRoot);
 
     if (rootEvents.length === 1) {
-      return getSimulationData(rootEvents[0]);
+      const config = getSimulationData(rootEvents[0]);
+      config.element = rootEvents[0]; // Attach element for easy access
+      return config;
     }
 
+    // Handle both no-root and multiple-roots cases
     if (rootEvents.length > 1) {
-      console.warn('Multiple root start events found. Using default simulation configuration.');
+      console.warn('Multiple root start events found. A single root event is required.');
     } else {
-      console.warn('No root start event found. Using default simulation configuration.');
+      console.warn('No root start event found. A root event is required.');
     }
 
-    return {
-      simulationConfig: { runValue: 1000 },
-      isRoot: true,
-      calendar: { workingDays: [1, 2, 3, 4, 5], workingHours: { start: {hour:9, minute:0}, end: {hour:17, minute:0} } },
-      cost: { waitCostPerHour: 0, baseRatePerHour: 50, currency: 'MXN' },
-      overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 },
-      arrivalRate: { value: 60, unit: 'minute' }
-    };
+    // Return null to indicate failure to find a SINGLE root
+    return null;
   }
 
-  run() {
+  run(options = { useOvertime: false }) {
     const rootConfig = this._findRootConfig();
+    if (!rootConfig) {
+      // This case is handled by the controller, but as a safeguard:
+      throw new Error("Cannot run simulation without a root configuration.");
+    }
     this.initialize(rootConfig);
+
+    const originalCalendar = this.calendar;
+    if (options.useOvertime && this.rootConfig.overtime) {
+      const overtimeCalendarConfig = JSON.parse(JSON.stringify(rootConfig.calendar));
+      const weeklyOvertimeLimit = this.rootConfig.overtime.limitHours || 0;
+      const workdaysInWeek = overtimeCalendarConfig.workingDays.length;
+      if (workdaysInWeek > 0) {
+        const dailyOvertimeHours = weeklyOvertimeLimit / workdaysInWeek;
+        overtimeCalendarConfig.workingHours.end.hour += Math.floor(dailyOvertimeHours);
+        overtimeCalendarConfig.workingHours.end.minute += Math.round((dailyOvertimeHours % 1) * 60);
+
+        // Handle minute overflow
+        overtimeCalendarConfig.workingHours.end.hour += Math.floor(overtimeCalendarConfig.workingHours.end.minute / 60);
+        overtimeCalendarConfig.workingHours.end.minute %= 60;
+
+        // Cap at 24 hours to avoid date wrapping issues
+        if (overtimeCalendarConfig.workingHours.end.hour >= 24) {
+            overtimeCalendarConfig.workingHours.end.hour = 23;
+            overtimeCalendarConfig.workingHours.end.minute = 59;
+        }
+      }
+      this.calendar = new BusinessCalendar(overtimeCalendarConfig);
+    }
 
     console.log("--- Simulation Starting ---");
     console.log("Root Config Found:", rootConfig);
@@ -311,7 +362,8 @@ export default class SimulationEngine {
 
     startEvents.forEach((startEvent, index) => {
       const instanceId = index + 1;
-      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId, startTime: 0 });
+      const startTime = this.simulationStartTime;
+      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: startTime, instanceId, startTime: startTime });
       this.instanceStates.set(instanceId, { gateways: {} });
     });
 
@@ -396,6 +448,10 @@ export default class SimulationEngine {
 
     console.log("--- Simulation Finished ---");
     console.table(Object.fromEntries(this.results));
+
+    // Restore original calendar to leave engine in a clean state
+    this.calendar = originalCalendar;
+
     return this.results;
   }
 }

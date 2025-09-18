@@ -161,37 +161,51 @@ export default class SimulationController {
     `;
   }
 
-  runSimulation() {
-    this.clear();
-
-    const rootConfig = this._simulationEngine._findRootConfig();
-    if (!rootConfig || !rootConfig.isRoot) {
-      this._notifications.showNotification({
-        text: 'Por favor, defina un Evento de Inicio como raíz (isRoot) en la configuración de simulación para empezar.',
-        type: 'warning',
-        duration: 8000
-      });
-      return;
-    }
-
-    this.lastMetric = null;
+  _runAndGetReport(options) {
+    // We clear overlays and charts here before each run
     this.clearOverlaysAndHeatmap();
     if (this._chart) {
       this._chart.destroy();
       this._chart = null;
     }
 
-    const results = this._simulationEngine.run();
-    this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
+    const results = this._simulationEngine.run(options);
+    if (!results) {
+        this._notifications.showNotification({ text: 'La simulación falló al ejecutarse.', type: 'error', duration: 5000 });
+        return null;
+    }
 
     const report = {
         results: results,
         completedInstances: this._simulationEngine.completedInstances,
-        duration: this._simulationEngine.calendar.calculateElapsedTime(new Date(0), new Date(this._simulationEngine.clock)) * 60000,
-        calendarDuration: this._simulationEngine.clock,
-        dailyCompletions: this._simulationEngine.dailyCompletions,
+        // duration: this._simulationEngine.calendar.calculateElapsedTime(...) // This is too slow
+        calendarDuration: this._simulationEngine.clock - this._simulationEngine.simulationStartTime,
+        dailyCompletions: new Map(this._simulationEngine.dailyCompletions),
         createdAt: new Date()
     };
+    return report;
+  }
+
+  runSimulation() {
+    this.clear();
+
+    const rootConfig = this._simulationEngine._findRootConfig();
+    if (!rootConfig) {
+      this._notifications.showNotification({
+        text: 'Error: No se encontró una configuración raíz única. Por favor, designe un único Evento de Inicio como "Configuración Raíz".',
+        type: 'error',
+        duration: 8000
+      });
+      return;
+    }
+
+    this.lastMetric = null;
+
+    const report = this._runAndGetReport({ useOvertime: false });
+    if (!report) return;
+
+    this._notifications.showNotification({ text: 'Simulación completada', type: 'info', duration: 3000 });
+
     this.simulationReports.unshift(report);
     this.simulationReports = this.simulationReports.slice(0, 2);
 
@@ -315,6 +329,33 @@ export default class SimulationController {
   showChart() {
     const metric = this._chartPanel.getChartType();
 
+    if (metric === 'productionCompare') {
+      const rootConfig = this._simulationEngine._findRootConfig();
+      if (!rootConfig) {
+        this._notifications.showNotification({ text: 'Error: Por favor, configure un Evento de Inicio raíz primero.', type: 'error', duration: 6000 });
+        this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">Se requiere una configuración raíz.</p>');
+        return;
+      }
+
+      this._notifications.showNotification({ text: 'Ejecutando simulación comparativa...', type: 'info', duration: 2000 });
+
+      const normalReport = this._runAndGetReport({ useOvertime: false });
+      const overtimeReport = this._runAndGetReport({ useOvertime: true });
+
+      if (!normalReport || !overtimeReport) {
+        this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">Falló la ejecución de la simulación comparativa.</p>');
+        return;
+      }
+
+      this._chartPanel.showCanvas();
+      if (this._chart) this._chart.destroy();
+
+      const chartConfig = this.getChartConfig(metric, { normalReport, overtimeReport });
+      const ctx = this._chartPanel.getCanvas().getContext('2d');
+      this._chart = new Chart(ctx, chartConfig);
+      return;
+    }
+
     if (metric === 'inputParams') {
       const data = this.getInputParametersData();
       const tableHtml = this.createInputParametersTable(data);
@@ -361,7 +402,47 @@ export default class SimulationController {
     this._chart = new Chart(ctx, chartConfig);
   }
 
-  getChartConfig(metric) {
+  getChartConfig(metric, reports = {}) {
+    if (metric === 'productionCompare') {
+      const { normalReport, overtimeReport } = reports;
+      const allDates = [...new Set([...normalReport.dailyCompletions.keys(), ...overtimeReport.dailyCompletions.keys()])];
+      allDates.sort((a, b) => new Date(a) - new Date(b));
+
+      const normalData = allDates.map(date => normalReport.dailyCompletions.get(date) || 0);
+      const overtimeData = allDates.map(date => overtimeReport.dailyCompletions.get(date) || 0);
+
+      return {
+        type: 'bar',
+        data: {
+          labels: allDates,
+          datasets: [
+            {
+              label: 'Producción Normal',
+              data: normalData,
+              backgroundColor: 'rgba(54, 162, 235, 0.5)',
+              borderColor: 'rgba(54, 162, 235, 1)',
+              borderWidth: 1
+            },
+            {
+              label: 'Producción con Horas Extras',
+              data: overtimeData,
+              backgroundColor: 'rgba(255, 159, 64, 0.5)',
+              borderColor: 'rgba(255, 159, 64, 1)',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Piezas Completadas por Día' }
+            }
+          }
+        }
+      };
+    }
+
     const chartData = this.getChartData(metric);
 
     let chartType = 'bar';
@@ -576,48 +657,67 @@ export default class SimulationController {
   }
 
   createOverallSummary(report) {
-    let totalCost = 0, totalReworkCost = 0, totalWaitTimeCost = 0,
-        inefficientDispatchCount = 0, totalOvertimeCost = 0;
+    let totalCost = 0, totalReworkCost = 0, totalOvertimeCost = 0,
+        totalFailures = 0, totalReworkTime = 0,
+        totalDoubleOvertime = 0, totalTripleOvertime = 0;
 
     report.results.forEach(result => {
       totalCost += result.totalCost || 0;
       totalReworkCost += result.totalReworkCost || 0;
-      totalWaitTimeCost += result.totalWaitTimeCost || 0;
-      inefficientDispatchCount += result.inefficientDispatchCount || 0;
       totalOvertimeCost += result.totalOvertimeCost || 0;
+      totalFailures += result.failureCount || 0;
+      totalReworkTime += result.totalReworkTime || 0;
+      totalDoubleOvertime += result.totalDoubleOvertime || 0;
+      totalTripleOvertime += result.totalTripleOvertime || 0;
     });
 
-    // The user wants to see the total cost, not the operational one, so we use totalCost directly.
+    const totalTimeDays = (report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2);
+    const totalTimeHours = (report.calendarDuration / (1000 * 60 * 60)).toFixed(2);
+
     return `
       <div class="sim-summary-container">
         <h2>Resumen General</h2>
-        <div class="sim-summary-item">
-          <span class="label">Costo Total de Simulación:</span>
-          <span class="value">${formatCurrency(totalCost, 'MXN')}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Costo de Reparación:</span>
-          <span class="value">${formatCurrency(totalReworkCost, 'MXN')}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Costo de Espera:</span>
-          <span class="value">${formatCurrency(totalWaitTimeCost, 'MXN')}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Despachos Ineficientes:</span>
-          <span class="value">${inefficientDispatchCount}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Duración Total (Días Naturales):</span>
-          <span class="value">${(report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2)} días</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Piezas producidas:</span>
-          <span class="value">${report.completedInstances}</span>
-        </div>
-        <div class="sim-summary-item">
-          <span class="label">Costo de Horas Extras:</span>
-          <span class="value">${formatCurrency(totalOvertimeCost, 'MXN')}</span>
+        <div class="sim-summary-grid">
+          <div class="sim-summary-item">
+            <span class="label">Piezas Producidas:</span>
+            <span class="value">${report.completedInstances}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Total de Errores:</span>
+            <span class="value">${totalFailures}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Tiempo Total (Días):</span>
+            <span class="value">${totalTimeDays}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Tiempo Total (Horas):</span>
+            <span class="value">${totalTimeHours}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Tiempo de Reparación Total:</span>
+            <span class="value">${formatMilliseconds(totalReworkTime)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo Total:</span>
+            <span class="value">${formatCurrency(totalCost, 'MXN')}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo del Tiempo de Reparación:</span>
+            <span class="value">${formatCurrency(totalReworkCost, 'MXN')}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo de Solo las Extras:</span>
+            <span class="value">${formatCurrency(totalOvertimeCost, 'MXN')}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Horas Extras Dobles:</span>
+            <span class="value">${formatMilliseconds(totalDoubleOvertime)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Horas Extras Triples:</span>
+            <span class="value">${formatMilliseconds(totalTripleOvertime)}</span>
+          </div>
         </div>
       </div>
     `;
