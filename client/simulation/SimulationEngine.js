@@ -227,13 +227,14 @@ export default class SimulationEngine {
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
     const endTime = this.calendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000).getTime();
 
-    // For costing, we must use the original, standard work hours from the root config,
-    // not the potentially modified calendar used for the simulation run.
-    const standardEnd = this.rootConfig.calendar.workingHours.end;
-    const standardWorkdayEnd = new Date(endTime);
-    standardWorkdayEnd.setHours(standardEnd.hour, standardEnd.minute, 0, 0);
+    // To accurately calculate overtime for costing, we compare when a task would have ended
+    // under a standard calendar vs. when it actually ended with the current calendar (which may be extended).
+    // The time "saved" is the overtime worked.
+    const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
+    const standardEndTime = standardCalendar.addWorkingTime(new Date(time), totalProcessingTimeForTask / 60000);
 
-    const taskOvertimeDuration = endTime > standardWorkdayEnd.getTime() ? (endTime - standardWorkdayEnd.getTime()) : 0;
+    // The time saved (in milliseconds) is the overtime duration.
+    const taskOvertimeDuration = standardEndTime.getTime() - endTime;
 
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     if (!this.weeklyStats.has(instanceId)) this.weeklyStats.set(instanceId, new Map());
