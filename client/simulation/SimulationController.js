@@ -53,9 +53,7 @@ export default class SimulationController {
     this._radius = 20;
     this._blur = 10;
     this.simulationResults = null;
-    this.simulationReports = [];
-    this.overtimeReport = null;
-    this.normalReport = null;
+    this.simulationReports = [];   // Holds the last two full simulation reports
     this.lastMetric = null;
 
     this._eventBus.on('canvas.init', () => {

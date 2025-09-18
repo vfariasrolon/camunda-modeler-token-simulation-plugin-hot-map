@@ -183,6 +183,18 @@
     display: none;
 }
 
+/* Summary Panel */
+.sim-summary-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.sim-summary-item:last-child {
+    border-bottom: none;
+}
+
 /* Schedule Modal */
 .schedule-modal-overlay,
 .plan-breakdown-modal-overlay {
@@ -280,33 +292,4 @@
 
 .work-plan-table {
     flex: 1;
-}
-
-.sim-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 15px;
-  padding-top: 10px;
-}
-
-.sim-summary-grid .sim-summary-item {
-  display: flex;
-  flex-direction: column;
-  background: #f9f9f9;
-  padding: 10px;
-  border-radius: 5px;
-  border-left: 4px solid #1565c0; /* Accent color */
-}
-
-.sim-summary-grid .sim-summary-item .label {
-  font-weight: bold;
-  color: #333;
-  font-size: 0.9em;
-  margin-bottom: 5px;
-}
-
-.sim-summary-grid .sim-summary-item .value {
-  font-size: 1.2em;
-  color: #1565c0;
-  font-weight: bold;
 }

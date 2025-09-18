@@ -165,7 +165,6 @@ export default class DataEditor {
 
   _getStartEventDefaults(data = {}) {
     const defaults = {
-      startDate: '',
       arrivalRate: { value: 60, unit: 'minute' },
       simulationConfig: { runValue: 1000 },
       isRoot: false,
@@ -243,7 +242,7 @@ export default class DataEditor {
   }
 
   renderStartEventForm(container, data) {
-    const { arrivalRate, isRoot, calendar, cost, overtime, simulationConfig, startDate } = data;
+    const { arrivalRate, isRoot, calendar, cost, overtime, simulationConfig } = data;
 
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const workingDaysCheckboxes = days.map((day, index) => `
@@ -269,11 +268,6 @@ export default class DataEditor {
         <label>Instancias a Simular (runValue)</label>
         <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
       </div>
-      <div class="form-group">
-        <label>Fecha de Inicio de Simulación</label>
-        <input type="date" name="startDate" value="${startDate || ''}">
-      </div>
-      <p class="helper-text">Si se deja en blanco, la simulación usará la fecha actual.</p>
       <hr/>
       <div class="form-group">
         <label class="is-root-label">
@@ -403,7 +397,6 @@ export default class DataEditor {
       };
 
       newData = {
-        startDate: body.querySelector('[name="startDate"]').value,
         arrivalRate: {
           value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value),
           unit: body.querySelector('[name="arrivalRate.unit"]').value
@@ -426,13 +419,13 @@ export default class DataEditor {
           }
         },
         cost: {
-          baseRatePerHour: parseFloat(body.querySelector('[name="cost.baseRatePerHour"]').value) || 0,
-          waitCostPerHour: parseFloat(body.querySelector('[name="cost.waitCostPerHour"]').value) || 0
+          baseRatePerHour: parseFloat(body.querySelector('[name="cost.baseRatePerHour"]').value),
+          waitCostPerHour: parseFloat(body.querySelector('[name="cost.waitCostPerHour"]').value)
         },
         overtime: {
-          limitHours: parseInt(body.querySelector('[name="overtime.limitHours"]').value, 10) || 0,
-          payMultiplier: parseFloat(body.querySelector('[name="overtime.payMultiplier"]').value) || 1,
-          excessPayMultiplier: parseFloat(body.querySelector('[name="overtime.excessPayMultiplier"]').value) || 1
+          limitHours: parseInt(body.querySelector('[name="overtime.limitHours"]').value, 10),
+          payMultiplier: parseFloat(body.querySelector('[name="overtime.payMultiplier"]').value),
+          excessPayMultiplier: parseFloat(body.querySelector('[name="overtime.excessPayMultiplier"]').value)
         }
       };
     } else if (is(this._selectedElement, 'bpmn:Process') || is(this._selectedElement, 'bpmn:Participant')) {

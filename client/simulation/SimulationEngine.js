@@ -77,7 +77,7 @@ export default class SimulationEngine {
     simStart.setHours(start.hour, start.minute, 0, 0);
 
     // Advance to the first available working day
-    while (!this.calendar.config.workingDays.includes(simStart.getDay())) {
+    while (!this.config.workingDays.includes(simStart.getDay())) {
       simStart.setDate(simStart.getDate() + 1);
     }
 
@@ -157,8 +157,7 @@ export default class SimulationEngine {
       this.dailyCompletions.set(dayKey, currentCount + 1);
 
       console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
-      const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
-      elementResults.totalCycleTime += standardCalendar.calculateBusinessDurationInMinutes(new Date(startTime), new Date(this.clock));
+      elementResults.totalCycleTime += this.calendar.calculateElapsedTime(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);
       return;
     }
@@ -383,8 +382,7 @@ export default class SimulationEngine {
 
     startEvents.forEach((startEvent, index) => {
       const instanceId = index + 1;
-      const startTime = this.simulationStartTime;
-      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: startTime, instanceId, startTime: startTime });
+      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: 0, instanceId, startTime: 0 });
       this.instanceStates.set(instanceId, { gateways: {} });
     });
 
@@ -421,8 +419,7 @@ export default class SimulationEngine {
         results.totalOvertimeCost += event.overtimeCost;
 
         if (event.waitStart) {
-          const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
-          const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(event.waitStart), new Date(this.clock));
+          const waitTime = this.calendar.calculateElapsedTime(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
           const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
           const currentWaitCost = (waitTime / 60) * waitCostPerHour; // waitTime is in minutes
@@ -436,8 +433,7 @@ export default class SimulationEngine {
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
             const nextTaskResults = this.results.get(nextTask.element.id);
-            const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
-            const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(nextTask.waitStart), new Date(this.clock));
+            const waitTime = this.calendar.calculateElapsedTime(new Date(nextTask.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
             const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
             const currentWaitCost = (waitTime / 60) * waitCostPerHour;
