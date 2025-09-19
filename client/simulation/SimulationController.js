@@ -164,13 +164,6 @@ export default class SimulationController {
   }
 
   _runAndGetReport(options) {
-    // We clear overlays and charts here before each run
-    this.clearOverlaysAndHeatmap();
-    if (this._chart) {
-      this._chart.destroy();
-      this._chart = null;
-    }
-
     const results = this._simulationEngine.run(options);
     if (!results) {
         this._notifications.showNotification({ text: 'La simulación falló al ejecutarse.', type: 'error', duration: 5000 });
@@ -197,8 +190,6 @@ export default class SimulationController {
   }
 
   runSimulation() {
-    this.clear();
-
     const rootConfig = this._simulationEngine._findRootConfig();
     if (!rootConfig) {
       this._notifications.showNotification({
@@ -213,7 +204,12 @@ export default class SimulationController {
 
     this.lastMetric = null;
 
+    // Run normal simulation
+    this.clear();
     const normalReport = this._runAndGetReport({ useOvertime: false });
+
+    // Run overtime simulation
+    this.clear();
     const overtimeReport = this._runAndGetReport({ useOvertime: true });
 
     if (!normalReport || !overtimeReport) {
@@ -364,7 +360,7 @@ export default class SimulationController {
 
     // HTML-based reports
     if (metric === 'overallSummary') {
-      const summaryHtml = this.createOverallSummary(this.simulationReports[0]);
+      const summaryHtml = this.createOverallSummary(this.simulationReports[0], this.normalReport);
       this._chartPanel.showHtmlContent(summaryHtml);
       return;
     }
@@ -671,12 +667,16 @@ export default class SimulationController {
       totalOvertimeCost += result.totalOvertimeCost || 0;
       totalFailures += result.failureCount || 0;
       totalReworkTime += result.totalReworkTime || 0;
+      totalOvertimeMs += result.totalOvertime || 0;
       totalDoubleOvertimeCost += result.totalDoubleOvertimeCost || 0;
       totalTripleOvertimeCost += result.totalTripleOvertimeCost || 0;
     });
 
-    const totalTimeDays = (report.calendarDuration / (1000 * 60 * 60 * 24)).toFixed(2);
+    const totalTimeDays = normalReport.totalWorkingDays;
     const totalTimeHours = (report.calendarDuration / (1000 * 60 * 60)).toFixed(2);
+    const overtimePercentage = report.calendarDuration > 0
+      ? ((totalOvertimeMs / report.calendarDuration) * 100).toFixed(1)
+      : 0;
 
     return `
       <div class="sim-summary-container">
@@ -691,16 +691,20 @@ export default class SimulationController {
             <span class="value">${totalFailures}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Tiempo Total (Días):</span>
+            <span class="label">Días Laborales Totales:</span>
             <span class="value">${totalTimeDays}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Tiempo Total (Horas):</span>
+            <span class="label">Tiempo Total (Horas Netas):</span>
             <span class="value">${totalTimeHours}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Tiempo de Reparación Total:</span>
             <span class="value">${formatMilliseconds(totalReworkTime)}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Total de Horas Extra:</span>
+            <span class="value">${formatMilliseconds(totalOvertimeMs)}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Costo Total:</span>
@@ -721,6 +725,10 @@ export default class SimulationController {
           <div class="sim-summary-item">
             <span class="label">Costo Horas Extras Triples:</span>
             <span class="value">${formatCurrency(totalTripleOvertimeCost, 'MXN')}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Porcentaje de Tiempo Extra:</span>
+            <span class="value">${overtimePercentage}%</span>
           </div>
         </div>
       </div>
