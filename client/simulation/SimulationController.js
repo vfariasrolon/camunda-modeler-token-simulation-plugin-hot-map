@@ -776,10 +776,10 @@ export default class SimulationController {
 
   getChartData(metric) {
     if (metric === 'dailyProduction') {
-      if (this.simulationReports.length === 0) {
+      if (!this.normalReport) {
         return { labels: [], datasets: [] };
       }
-      const report = this.simulationReports[0];
+      const report = this.normalReport;
       const dailyData = report.dailyCompletions;
 
       if (!dailyData || dailyData.size === 0) {
