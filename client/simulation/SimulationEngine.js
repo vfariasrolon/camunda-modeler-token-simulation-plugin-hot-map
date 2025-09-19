@@ -234,12 +234,12 @@ export default class SimulationEngine {
 
     const taskOvertimeDuration = overtime;
 
-    console.log(`[COSTING] Task: ${element.id}
-        - Start: ${new Date(time).toLocaleString()}
-        - Duration: ${totalTaskDuration/1000}s
-        - Actual End: ${new Date(endTime).toLocaleString()}
-        - Business Time: ${businessTime/1000}s
-        - Overtime Duration: ${taskOvertimeDuration/1000}s`);
+    // console.log(`[COSTING] Task: ${element.id}
+    //     - Start: ${new Date(time).toLocaleString()}
+    //     - Duration: ${totalTaskDuration/1000}s
+    //     - Actual End: ${new Date(endTime).toLocaleString()}
+    //     - Business Time: ${businessTime/1000}s
+    //     - Overtime Duration: ${taskOvertimeDuration/1000}s`);
 
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     const currentWeeklyOvertime = this.weeklyStats.get(weekNumber) || 0;
@@ -254,15 +254,15 @@ export default class SimulationEngine {
     const tripleOvertimeCost = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
     const overtimeCost = doubleOvertimeCost + tripleOvertimeCost;
 
-    console.log(`[COSTING-DETAIL] Task: ${element.id}
-        - normalOvertime: ${normalOvertime/1000}s
-        - excessOvertime: ${excessOvertime/1000}s
-        - baseRatePerHour: ${baseRatePerHour}
-        - payMultiplier: ${overtimeRules.payMultiplier}
-        - excessPayMultiplier: ${overtimeRules.excessPayMultiplier}
-        - doubleOvertimeCost: ${doubleOvertimeCost}
-        - tripleOvertimeCost: ${tripleOvertimeCost}
-        - overtimeCost: ${overtimeCost}`);
+    // console.log(`[COSTING-DETAIL] Task: ${element.id}
+    //     - normalOvertime: ${normalOvertime/1000}s
+    //     - excessOvertime: ${excessOvertime/1000}s
+    //     - baseRatePerHour: ${baseRatePerHour}
+    //     - payMultiplier: ${overtimeRules.payMultiplier}
+    //     - excessPayMultiplier: ${overtimeRules.excessPayMultiplier}
+    //     - doubleOvertimeCost: ${doubleOvertimeCost}
+    //     - tripleOvertimeCost: ${tripleOvertimeCost}
+    //     - overtimeCost: ${overtimeCost}`);
 
     this.weeklyStats.set(weekNumber, currentWeeklyOvertime + taskOvertimeDuration);
 
@@ -274,7 +274,7 @@ export default class SimulationEngine {
       results.totalTripleOvertimeCost += tripleOvertimeCost;
     }
 
-    console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalTaskDuration}ms`);
+    // console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalTaskDuration}ms`);
 
     const newTaskEvent = {
       type: 'TASK_COMPLETE', element, time: endTime, instanceId, startTime,
@@ -398,14 +398,14 @@ export default class SimulationEngine {
       const event = this.eventQueue.next();
       this.clock = event.time;
 
-      console.log(`[${iterationCounter}] Processing event: ${event.type} for element ${event.element.id} at time ${new Date(this.clock).toLocaleString()}`);
-      console.log(`Queue size: ${this.eventQueue.items.length}, Completed instances: ${this.completedInstances}`);
+      // console.log(`[${iterationCounter}] Processing event: ${event.type} for element ${event.element.id} at time ${new Date(this.clock).toLocaleString()}`);
+      // console.log(`Queue size: ${this.eventQueue.items.length}, Completed instances: ${this.completedInstances}`);
 
 
       if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
 
-        console.log(`[RESULTS] Task ${event.element.id} | Adding to totals: processTime=${event.processingTime}, reworkTime=${event.reworkTime}`);
+        // console.log(`[RESULTS] Task ${event.element.id} | Adding to totals: processTime=${event.processingTime}, reworkTime=${event.reworkTime}`);
 
         results.totalProcessingTime += event.processingTime;
         results.totalReworkTime += event.reworkTime;

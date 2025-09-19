@@ -405,6 +405,11 @@ export default class SimulationController {
       const normalData = allDates.map(date => normalReport.dailyCompletions.get(date) || 0);
       const overtimeData = allDates.map(date => overtimeReport.dailyCompletions.get(date) || 0);
 
+      console.log('--- CHART DATA ---');
+      console.log('Labels (Dates):', allDates);
+      console.log('Normal Production Data:', normalData);
+      console.log('Overtime Production Data:', overtimeData);
+
       return {
         type: 'bar',
         data: {
@@ -650,10 +655,15 @@ export default class SimulationController {
     return tableHtml;
   }
 
-  createOverallSummary(report) {
+  createOverallSummary(report, normalReport) {
     let totalCost = 0, totalReworkCost = 0, totalOvertimeCost = 0,
-        totalFailures = 0, totalReworkTime = 0,
+        totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
         totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0;
+
+    console.log('--- SUMMARY DATA ---');
+    console.log('Overtime Report:', report);
+    console.log('Normal Report:', normalReport);
+
 
     report.results.forEach(result => {
       totalCost += result.totalCost || 0;
