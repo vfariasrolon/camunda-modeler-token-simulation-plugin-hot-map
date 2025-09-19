@@ -323,8 +323,8 @@ export default class SimulationController {
     `;
   }
 
-  _runAndGetReport(options) {
-    const results = this._simulationEngine.run(options);
+  _runAndGetReport(rootConfig, options) {
+    const results = this._simulationEngine.run(rootConfig, options);
     if (!results) {
         this._notifications.showNotification({ text: 'La simulación falló al ejecutarse.', type: 'error', duration: 5000 });
         return null;
@@ -372,10 +372,10 @@ export default class SimulationController {
 
     // Run normal simulation
     this.clear();
-    this.normalReport = this._runAndGetReport({ useOvertime: false });
+    this.normalReport = this._runAndGetReport(rootConfig, { useOvertime: false });
 
     // Run overtime simulation
-    this.overtimeReport = this._runAndGetReport({ useOvertime: true });
+    this.overtimeReport = this._runAndGetReport(rootConfig, { useOvertime: true });
 
     if (!this.normalReport || !this.overtimeReport) {
       this._notifications.showNotification({ text: 'Una de las simulaciones falló. No se pueden mostrar resultados comparativos.', type: 'error', duration: 6000 });

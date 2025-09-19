@@ -291,10 +291,9 @@ export default class SimulationEngine {
     return null;
   }
 
-  run(options = { useOvertime: false }) {
-    const rootConfig = this._findRootConfig();
+  run(rootConfig, options = { useOvertime: false }) {
     if (!rootConfig) {
-      throw new Error("Cannot run simulation without a root configuration.");
+      throw new Error("Root configuration must be provided to run the simulation.");
     }
     this.initialize(rootConfig);
 
