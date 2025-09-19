@@ -54,33 +54,13 @@ export default class SimulationController {
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
 
-    this._eventBus.on('simulation.charts.opened', () => this.showAnalysisPanel());
+    this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', () => this.showChart());
   }
 
-  showAnalysisPanel() {
-    if (!this.normalReport || !this.overtimeReport) {
-      this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles. Por favor, ejecute una simulación.</p>', true);
-      return;
-    }
-
-    const comparisonHtml = this.createComparisonCardsHtml();
-    this._chartPanel.showComparison(comparisonHtml);
-    this.showChart();
-
-    setTimeout(() => {
-      const helpIcon = document.getElementById('plan-comparison-help-icon');
-      const helpContent = document.getElementById('plan-comparison-help-content');
-      if (helpIcon && helpContent) {
-        helpIcon.addEventListener('click', () => {
-          helpContent.classList.toggle('hidden-help');
-        });
-      }
-    }, 100);
-  }
-
   createComparisonCardsHtml() {
-    // ... (logic for aggregating costs and creating plan objects)
+    if (!this.normalReport || !this.overtimeReport) return '';
+
     const aggregateReportCosts = (report) => {
       let totalOperationCost = 0, totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0;
       report.results.forEach(r => {
@@ -116,6 +96,20 @@ export default class SimulationController {
     const helpText = `<h4>¿Cómo leer los costos?</h4><ul><li><strong>Costo de Operación:</strong> Costo del trabajo a tarifa normal.</li><li><strong>Pago Extra:</strong> Bono adicional por sobretiempo.</li><li><strong>Costo Total:</strong> Suma de operación y extras.</li></ul>`;
 
     return `
+      <style>
+        .plan-comparison-container { display: flex; gap: 20px; justify-content: space-around; flex-wrap: wrap; }
+        .plan-card { border: 1px solid #ccc; border-radius: 8px; padding: 15px; width: 45%; min-width: 250px; background-color: #f9f9f9; }
+        .plan-card h4 { margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 10px; }
+        .plan-card .sim-summary-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .plan-card .sim-summary-item:last-child { border-bottom: none; }
+        .plan-card .label { font-weight: 500; }
+        .plan-card .value { font-weight: bold; }
+        .total-cost { font-size: 1.1em; border-top: 2px solid #ccc; margin-top: 10px; padding-top: 10px; }
+        .help-icon-button { font-family: monospace; font-weight: bold; cursor: pointer; border: 1px solid #999; border-radius: 50%; width: 20px; height: 20px; display: inline-flex; justify-content: center; align-items: center; font-size: 14px; }
+        .hidden-help { display: none; }
+        .comparison-title-container { display: flex; justify-content: space-between; align-items: center; }
+        .schedule-container { padding: 10px; border: 1px solid #ddd; margin-top: 10px; border-radius: 5px; background: #f0f0f0; }
+      </style>
       <div class="schedule-container">${scheduleHtml}</div>
       <hr style="margin: 20px 0;"/>
       <div class="comparison-title-container">
@@ -124,22 +118,8 @@ export default class SimulationController {
       </div>
       <div id="plan-comparison-help-content" class="hidden-help">${helpText}</div>
       <div class="plan-comparison-container" style="margin-top: 20px;">
-        <div class="plan-card">
-          <h4>Plan Normal</h4>
-          <div class="sim-summary-item"><span class="label">Días Laborales:</span><span class="value">${normalPlan.totalDays}</span></div>
-          <div class="sim-summary-item"><span class="label">Piezas Producidas:</span><span class="value">${normalPlan.completedInstances}</span></div>
-          <div class="sim-summary-item"><span class="label">Costo Operación:</span><span class="value">${formatCurrency(normalPlan.operationCost, 'MXN')}</span></div>
-          <div class="sim-summary-item total-cost"><span class="label">Costo Total:</span><span class="value">${formatCurrency(normalPlan.totalCost, 'MXN')}</span></div>
-        </div>
-        <div class="plan-card">
-          <h4>Plan con Horas Extras</h4>
-          <div class="sim-summary-item"><span class="label">Días Laborales:</span><span class="value">${overtimePlan.totalDays}</span></div>
-          <div class="sim-summary-item"><span class="label">Piezas Producidas:</span><span class="value">${overtimePlan.completedInstances}</span></div>
-          <div class="sim-summary-item"><span class="label">Costo Operación:</span><span class="value">${formatCurrency(overtimePlan.operationCost, 'MXN')}</span></div>
-          <div class="sim-summary-item"><span class="label">Pago Extra (Doble):</span><span class="value">${formatCurrency(overtimePlan.doublePremium, 'MXN')}</span></div>
-          <div class="sim-summary-item"><span class="label">Pago Extra (Triple):</span><span class="value">${formatCurrency(overtimePlan.triplePremium, 'MXN')}</span></div>
-          <div class="sim-summary-item total-cost"><span class="label">Costo Total:</span><span class="value">${formatCurrency(overtimePlan.totalCost, 'MXN')}</span></div>
-        </div>
+        <div class="plan-card"><h4>Plan Normal</h4><div class="sim-summary-item"><span class="label">Días Laborales:</span><span class="value">${normalPlan.totalDays}</span></div><div class="sim-summary-item"><span class="label">Piezas Producidas:</span><span class="value">${normalPlan.completedInstances}</span></div><div class="sim-summary-item"><span class="label">Costo Operación:</span><span class="value">${formatCurrency(normalPlan.operationCost, 'MXN')}</span></div><div class="sim-summary-item total-cost"><span class="label">Costo Total:</span><span class="value">${formatCurrency(normalPlan.totalCost, 'MXN')}</span></div></div>
+        <div class="plan-card"><h4>Plan con Horas Extras</h4><div class="sim-summary-item"><span class="label">Días Laborales:</span><span class="value">${overtimePlan.totalDays}</span></div><div class="sim-summary-item"><span class="label">Piezas Producidas:</span><span class="value">${overtimePlan.completedInstances}</span></div><div class="sim-summary-item"><span class="label">Costo Operación:</span><span class="value">${formatCurrency(overtimePlan.operationCost, 'MXN')}</span></div><div class="sim-summary-item"><span class="label">Pago Extra (Doble):</span><span class="value">${formatCurrency(overtimePlan.doublePremium, 'MXN')}</span></div><div class="sim-summary-item"><span class="label">Pago Extra (Triple):</span><span class="value">${formatCurrency(overtimePlan.triplePremium, 'MXN')}</span></div><div class="sim-summary-item total-cost"><span class="label">Costo Total:</span><span class="value">${formatCurrency(overtimePlan.totalCost, 'MXN')}</span></div></div>
       </div>
     `;
   }
@@ -150,16 +130,8 @@ export default class SimulationController {
     const formatTime = (timeObj) => `${String(timeObj.hour).padStart(2, '0')}:${String(timeObj.minute).padStart(2, '0')}`;
     const dayNames = ["D", "L", "M", "M", "J", "V", "S"];
     let workweekHtml = '';
-    for (let i = 0; i < 7; i++) {
-        const isWorking = workingDays.includes(i);
-        workweekHtml += `<td class="${isWorking ? 'working' : ''}">${dayNames[i]}</td>`;
-    }
-    return `<style>.schedule-table {width: 100%; text-align: center;} .working {font-weight: bold; color: #1565c0;}</style>
-      <h4>Horario de Trabajo</h4>
-      <table class="schedule-table"><tr>${workweekHtml}</tr></table>
-      <p>${formatTime(workingHours.start)} - ${formatTime(workingHours.end)}</p>
-      ${holidays.length ? `<p><strong>Días Festivos:</strong> ${holidays.join(', ')}</p>` : ''}
-    `;
+    for (let i = 0; i < 7; i++) { workweekHtml += `<td class="${workingDays.includes(i) ? 'working' : ''}">${dayNames[i]}</td>`; }
+    return `<style>.schedule-table {width: 100%; text-align: center;} .working {font-weight: bold; color: #1565c0;}</style><h4>Horario de Trabajo</h4><table class="schedule-table"><tr>${workweekHtml}</tr></table><p>${formatTime(workingHours.start)} - ${formatTime(workingHours.end)}</p>${holidays.length ? `<p><strong>Días Festivos:</strong> ${holidays.join(', ')}</p>` : ''}`;
   }
 
   _runAndGetReport(rootConfig, options) {
@@ -188,12 +160,36 @@ export default class SimulationController {
     this._notifications.showNotification({ text: 'Simulaciones completadas.', type: 'info', duration: 4000 });
     this.simulationResults = this.overtimeReport.results;
     if (this._chartPanel.isOpen()) {
-        this.showAnalysisPanel();
+        this.showChart();
     }
   }
 
   showChart() {
+    if (!this.normalReport || !this.overtimeReport) {
+      this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
+      return;
+    }
+
     const metric = this._chartPanel.getChartType();
+
+    if (metric === 'overallSummary') {
+        const comparisonHtml = this.createComparisonCardsHtml();
+        this._chartPanel.showComparison(comparisonHtml);
+        this._chartPanel.showHtmlContent(''); // Clear bottom content
+        setTimeout(() => {
+            const helpIcon = document.getElementById('plan-comparison-help-icon');
+            const helpContent = document.getElementById('plan-comparison-help-content');
+            if (helpIcon && helpContent) {
+                helpIcon.addEventListener('click', () => {
+                helpContent.classList.toggle('hidden-help');
+                });
+            }
+        }, 100);
+        return;
+    }
+
+    this._chartPanel.showComparison('');
+
     if (metric === 'inputParams' || metric === 'resultsTable') {
         const tableHtml = metric === 'inputParams'
             ? this.createInputParametersTable(this.getInputParametersData())
@@ -201,11 +197,13 @@ export default class SimulationController {
         this._chartPanel.showHtmlContent(tableHtml);
         return;
     }
+
     this._chartPanel.showCanvas();
     if (this._chart) { this._chart.destroy(); }
+
     const chartConfig = this.getChartConfig(metric);
     if (!chartConfig) {
-      this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay datos para mostrar para este gráfico.</p>');
+      this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay datos para este gráfico.</p>');
       return;
     }
     const ctx = this._chartPanel.getCanvas().getContext('2d');
@@ -230,7 +228,7 @@ export default class SimulationController {
 
   getChartData(metric) {
     const tasks = [];
-    this.simulationResults.forEach((result, elementId) => {
+    (this.simulationResults || new Map()).forEach((result, elementId) => {
         const element = this._elementRegistry.get(elementId);
         if (element && is(element, 'bpmn:Task')) { tasks.push({ ...result, name: element.businessObject.name || element.id }); }
     });
@@ -250,12 +248,40 @@ export default class SimulationController {
     return { labels: top5.map(t => t.name), data: top5.map(t => t[dataProperty]), label: label };
   }
 
-  createInputParametersTable(data) { /* ... unchanged ... */ }
-  createResultsTable(results) { /* ... unchanged ... */ }
+  getInputParametersData() {
+    const allElements = this._elementRegistry.getAll();
+    const elementsWithData = [];
+    allElements.forEach(element => {
+      if (is(element, 'bpmn:Process') || is(element, 'bpmn:Participant') || is(element, 'bpmn:Task') || is(element, 'bpmn:StartEvent') || (is(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway')) {
+        const data = getSimulationData(element);
+        if (data && Object.keys(data).length > 0) {
+          elementsWithData.push({ id: element.id, name: element.businessObject.name || element.id, type: element.type, data: data });
+        }
+      }
+    });
+    return elementsWithData;
+  }
+
+  createInputParametersTable(data) {
+    if (!data || data.length === 0) { return '<p>No hay datos para mostrar.</p>'; }
+    let tableHtml = `<table class="sim-results-table"><thead><tr><th>Elemento</th><th>Parámetro</th><th>Valor</th></tr></thead><tbody>`;
+    data.forEach(element => { Object.entries(element.data).forEach(([key, value]) => { tableHtml += `<tr><td>${element.name}</td><td>${key}</td><td>${JSON.stringify(value)}</td></tr>`; }); });
+    tableHtml += '</tbody></table>';
+    return tableHtml;
+  }
+
+  createResultsTable(results) {
+    if (!results || results.size === 0) { return '<p>No hay datos para mostrar.</p>'; }
+    let tableHtml = `<table class="sim-results-table"><thead><tr><th>Elemento</th><th>Ejecuciones</th><th>Costo Total</th></tr></thead><tbody>`;
+    results.forEach(result => { if (result.executionCount > 0) { tableHtml += `<tr><td>${result.name}</td><td>${result.executionCount}</td><td>${formatCurrency(result.totalCost, 'MXN')}</td></tr>`; } });
+    tableHtml += '</tbody></table>';
+    return tableHtml;
+  }
+
   adjustHeatmap(type, amount) { if (type === 'radius') this._radius = Math.max(1, this._radius + amount); else if (type === 'blur') this._blur = Math.max(0, this._blur + amount); if (this.lastMetric) this.showMetric(this.lastMetric); }
   showMetric(metric) { this.clearOverlaysAndHeatmap(); this.lastMetric = metric; const dataPoints = []; let max = 0; if (!this.simulationResults) { this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 }); return; } this.simulationResults.forEach((result, elementId) => { const element = this._elementRegistry.get(elementId); if (!element || !is(element, 'bpmn:FlowNode')) return; let value = 0; if (metric === 'frequency') value = result.executionCount; else if (metric === 'cost') value = result.totalCost; else if (metric === 'waitTime') value = result.totalWaitTime / (result.executionCount || 1); else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1); else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1); else if (metric === 'overtime') value = result.totalOvertime; if (value > max) max = value; if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]); }); this.createHeatmap(); this._heatmap.data(dataPoints).max(max || 1).radius(this._radius, this._blur).draw(); this.showOverlays(metric); }
   showOverlays(metric) { const elements = Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id)); elements.forEach(element => { if (!element) return; let overlayText = ''; const result = this.simulationResults.get(element.id); if (result) { if (is(element, 'bpmn:Task')) { if (metric === 'cost') overlayText = `Costo: ${formatCurrency(result.totalCost, 'MXN')}`; else if (metric === 'waitTime') overlayText = `Espera Prom: ${formatMilliseconds(result.totalWaitTime / (result.executionCount || 1))}`; else if (metric === 'processTime') overlayText = `Proceso: ${formatMilliseconds(result.totalProcessingTime / (result.executionCount || 1))}`; else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`; else if (metric === 'overtime') overlayText = `H. Extras: ${formatMilliseconds(result.totalOvertime)}`; } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) { overlayText = `Ciclo: ${formatMilliseconds(result.totalCycleTime / (result.executionCount || 1))}`; } } if (overlayText) this._overlays.add(element, 'simulation-overlay', { position: { bottom: -5, left: element.width / 2 - 20 }, html: `<div class="simulation-overlay-text">${overlayText}</div>` }); if (result && is(element, 'bpmn:ExclusiveGateway')) { element.outgoing.forEach(flow => { const flowResult = this.simulationResults.get(flow.id); if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) { const percentage = (flowResult.executionCount / result.executionCount * 100).toFixed(1); this._overlays.add(flow.id, 'simulation-overlay', { position: { top: -15, left: -20 }, html: `<div class="simulation-overlay-text">${flowResult.executionCount} (${percentage}%)</div>` }); } }); } }); }
-  clear() { this.lastMetric = null; this.simulationResults = null; this.normalReport = null; this.overtimeReport = null; this.clearOverlaysAndHeatmap(); if (this._chartPanel.isOpen()) { this._chartPanel.showHtmlContent(''); } }
+  clear() { this.lastMetric = null; this.simulationResults = null; this.normalReport = null; this.overtimeReport = null; this.clearOverlaysAndHeatmap(); if (this._chartPanel.isOpen()) { this._chartPanel.showHtmlContent(''); this._chartPanel.showComparison(''); } }
   clearOverlaysAndHeatmap() { if (this._heatmap) { this._heatmap.destroy(); this._heatmap = null; } domClasses(this._canvas.getContainer()).remove('heatmap-shown'); this._overlays.remove({ type: 'simulation-overlay' }); }
   createHeatmap() { if (this._heatmap) return; this._heatmap = new SimpleHeatSVG(this._canvas); domClasses(this._canvas.getContainer()).add('heatmap-shown'); }
 }
