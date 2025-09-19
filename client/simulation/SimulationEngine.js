@@ -222,7 +222,15 @@ export default class SimulationEngine {
     }
 
     const totalTaskDurationInMillis = processingTime + reworkTime;
-    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000);
+    const timeResult = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000);
+
+    if (!timeResult || !timeResult.endTime) {
+      // This is a safeguard against a hard-to-reproduce bug.
+      // If the calendar ever fails, we stop the simulation instead of crashing.
+      throw new Error('FATAL: BusinessCalendar.calculateBusinessTime returned an invalid result.');
+    }
+
+    const { businessTime, overtime, endTime } = timeResult;
 
     // "Costo de Operación" is the cost of all hours worked at the base rate.
     const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
