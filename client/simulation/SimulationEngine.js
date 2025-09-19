@@ -196,8 +196,6 @@ export default class SimulationEngine {
     const data = getSimulationData(element);
     const baseRatePerHour = this.rootConfig.cost.baseRatePerHour || 0;
 
-    console.log(`[DEBUG] scheduleTask for ${element.id} at time ${new Date(time).toISOString()}`);
-
     let processingTime = 0;
     const pt = data.processingTime;
     if (pt) {
@@ -224,29 +222,7 @@ export default class SimulationEngine {
     }
 
     const totalTaskDurationInMinutes = (processingTime + reworkTime) / 60000;
-    console.log(`[DEBUG] totalTaskDurationInMinutes: ${totalTaskDurationInMinutes}`);
-
-    if (!this.calendar || typeof this.calendar.calculateBusinessTime !== 'function') {
-      console.error('[DEBUG] FATAL: this.calendar.calculateBusinessTime is not a function!');
-      return;
-    }
-
-    const timeCalcResult = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMinutes);
-    console.log('[DEBUG] Result from calculateBusinessTime:', timeCalcResult);
-
-    if (!timeCalcResult) {
-      console.error('[DEBUG] FATAL: calculateBusinessTime returned undefined!');
-      return;
-    }
-
-    const { businessTime, overtime, endTime } = timeCalcResult;
-
-    console.log(`[DEBUG] Destructured values: businessTime=${businessTime}, overtime=${overtime}, endTime=${endTime}`);
-
-    if (!endTime) {
-      console.error('[DEBUG] FATAL: endTime is undefined after destructuring!');
-      // Let it crash here so we see the error
-    }
+    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMinutes);
 
     // Cost of time spent during normal business hours
     const normalTimeCost = (businessTime / 3600000) * baseRatePerHour;

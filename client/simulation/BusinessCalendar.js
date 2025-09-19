@@ -19,7 +19,12 @@ export default class BusinessCalendar {
     if (!this.config.workingDays.includes(day)) {
       return false;
     }
-    // TODO: Holiday check
+
+    const dateString = date.toISOString().slice(0, 10);
+    if (this.config.holidays && this.config.holidays.includes(dateString)) {
+      return false;
+    }
+
     const { start, end } = this.config.workingHours;
     const currentTime = date.getHours() * 60 + date.getMinutes();
     const startTime = start.hour * 60 + start.minute;
@@ -31,11 +36,14 @@ export default class BusinessCalendar {
     const newDate = new Date(date.getTime());
     const { start } = this.config.workingHours;
     newDate.setHours(start.hour, start.minute, 0, 0);
+
     if (date >= newDate) {
         newDate.setDate(newDate.getDate() + 1);
     }
-    while (!this.config.workingDays.includes(newDate.getDay())) {
+
+    while (!this.isWorkingTime(newDate)) {
       newDate.setDate(newDate.getDate() + 1);
+      newDate.setHours(start.hour, start.minute, 0, 0);
     }
     return newDate;
   }
@@ -69,19 +77,17 @@ export default class BusinessCalendar {
     if (numWorkDaysInWeek > 0) {
         const fullDays = Math.floor(remainingMinutes / minutesPerWorkDay);
         if (fullDays > 0) {
-            let calendarDays = 0;
             let workDaysCounted = 0;
             let tempDate = new Date(currentDate.getTime());
             while(workDaysCounted < fullDays) {
-                if(this.config.workingDays.includes(tempDate.getDay())) {
+                if(this.isWorkingTime(tempDate)) {
                     workDaysCounted++;
                 }
                 if (workDaysCounted < fullDays) {
                   tempDate.setDate(tempDate.getDate() + 1);
-                  calendarDays++;
                 }
             }
-            currentDate.setDate(currentDate.getDate() + calendarDays);
+            currentDate = tempDate;
             remainingMinutes -= fullDays * minutesPerWorkDay;
         }
     }
@@ -105,6 +111,19 @@ export default class BusinessCalendar {
     }
 
     return totalMinutes;
+  }
+
+  calculateBusinessTime(startDate, durationInMinutes) {
+    const endDate = this.addWorkingTime(new Date(startDate), durationInMinutes);
+    const totalElapsedMs = endDate.getTime() - startDate.getTime();
+    const businessMs = durationInMinutes * 60 * 1000;
+    const overtimeMs = totalElapsedMs - businessMs;
+
+    return {
+      businessTime: businessMs,
+      overtime: overtimeMs > 0 ? overtimeMs : 0,
+      endTime: endDate
+    };
   }
 
   calculateBusinessDuration(startDate, endDate) {
@@ -146,22 +165,6 @@ export default class BusinessCalendar {
     return endOfDay;
   }
 
-  calculateBusinessTime(startDate, durationInMinutes) {
-    const businessTimeMs = durationInMinutes * 60000;
-
-    if (businessTimeMs <= 0) {
-      return { businessTime: 0, overtime: 0 };
-    }
-
-    const endDate = this.addWorkingTime(new Date(startDate.getTime()), durationInMinutes);
-    const totalElapsedMs = endDate.getTime() - startDate.getTime();
-
-    // Overtime is the total elapsed time minus the business time.
-    const overtimeMs = totalElapsedMs - businessTimeMs;
-
-    return { businessTime: businessTimeMs, overtime: overtimeMs > 0 ? overtimeMs : 0 };
-  }
-
   getWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;
@@ -191,5 +194,3 @@ export default class BusinessCalendar {
     return workingDaysCount;
   }
 }
-
-// Jules verification comment 1
