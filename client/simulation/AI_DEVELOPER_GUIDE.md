@@ -15,6 +15,7 @@ El flujo de trabajo general es el siguiente:
 3.  **Análisis y Visualización de Resultados**: Una vez finalizada la simulación, el plugin ofrece herramientas visuales para analizar los resultados:
     *   **Mapa de Calor (Heatmap)**: Colorea el diagrama para mostrar visualmente los "puntos calientes" del proceso, como las tareas que consumen más tiempo o las rutas más transitadas.
     *   **Panel de Gráficos Avanzados**: Muestra un panel con múltiples gráficos para un análisis más profundo, incluyendo:
+        *   **Comparativo de Planes (Vista Principal)**: Al seleccionar "Resumen General" (la primera opción), ahora se muestra una vista de comparación avanzada. Esta interfaz presenta dos tarjetas lado a lado: "Plan Normal" vs. "Plan con Horas Extras". La tarjeta de horas extras desglosa los costos detalladamente, permitiendo al usuario ver exactamente cuánto corresponde al costo de operación base y cuánto a los bonos de tiempo extra. Esta es la herramienta principal para el análisis financiero y la toma de decisiones.
         *   **Gráficos de Barras**: Para identificar las tareas "Top 5" por costo, tiempo de espera o tiempo de procesamiento.
         *   **Diagrama de Dispersión**: Para correlacionar el costo y el tiempo de las tareas.
         *   **Diagrama de Pareto**: Para aplicar el principio 80/20 e identificar qué pocas tareas son responsables de la mayoría de los fallos del proceso.
@@ -83,15 +84,16 @@ La configuración de la simulación (calendario, costos, reglas de horas extras,
 4.  Al ejecutar la simulación, `SimulationEngine.js` llama a `_findRootConfig()` para escanear todos los eventos de inicio y encontrar el que tiene la bandera `isRoot: true`.
 5.  Toda la simulación se ejecuta con base en la configuración de ese evento de inicio raíz. Si no se encuentra ninguno, se usa una configuración por defecto y se muestra una advertencia en la consola.
 
-### 3. Lógica de Costos y Horas Extras
+### 3. Lógica de Costos y Horas Extras (Refactorizada)
 
-El sistema de costos fue refactorizado para ser más detallado y realista.
+El sistema de costos fue refactorizado para proveer un desglose más claro y útil para la toma de decisiones.
 
-*   El costo de una tarea ahora es una suma de componentes:
-    *   **Costo de Procesamiento**: Basado en el `processingTime` y el `baseRatePerHour` de la configuración raíz.
-    *   **Costo de Reparación**: Basado en el `reworkTime` y el `baseRatePerHour`.
-    *   **Costo de Espera**: Basado en el `totalWaitTime` y el `waitCostPerHour` de la configuración raíz.
-    *   **Costo de Horas Extras**: Se calcula usando una lógica por niveles basada en un límite semanal y multiplicadores de pago (ej. 2x y 3x), todos configurables en la configuración raíz. El motor rastrea las horas extras acumuladas por semana para cada instancia de la simulación para aplicar los multiplicadores correctamente.
+*   El costo de una tarea ahora se calcula con base en los siguientes componentes, que se almacenan en el objeto de resultados de la simulación:
+    *   **`totalOperationCost`**: Este es el **costo base de la operación**. Se calcula tomando todo el tiempo de trabajo de una tarea (tiempo de procesamiento + tiempo de reparación) y multiplicándolo por la tarifa base (`baseRatePerHour`). Es el costo del trabajo como si todas las horas se pagaran a tarifa normal.
+    *   **`totalDoubleOvertimeCost`**: Este es el **pago extra (premium)** por las horas trabajadas en la franja de "pago doble". No incluye el costo base de esas horas (que ya está en `totalOperationCost`).
+    *   **`totalTripleOvertimeCost`**: Similar al anterior, es el **pago extra (premium)** por las horas que exceden el límite y entran en la franja de "pago triple".
+    *   **`totalWaitTimeCost`**: El costo incurrido por el tiempo de espera de recursos.
+*   El **`totalCost`** de una tarea (y del proceso) es la suma de todos estos componentes: `totalOperationCost` + `totalDoubleOvertimeCost` + `totalTripleOvertimeCost` + `totalWaitTimeCost`.
 
 ---
 

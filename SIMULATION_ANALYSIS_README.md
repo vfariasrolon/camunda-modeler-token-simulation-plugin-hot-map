@@ -1,92 +1,61 @@
 # Documentación del Módulo de Análisis de Simulación
 
-Este documento detalla el funcionamiento, la arquitectura y el uso de la nueva funcionalidad de "Análisis de Simulación de Procesos" añadida a este plugin de Camunda Modeler.
+Este documento detalla el funcionamiento y uso de la funcionalidad de "Análisis de Simulación de Procesos" en este plugin de Camunda Modeler.
 
-## I. Cómo Usar la Nueva Funcionalidad
+## I. Flujo de Trabajo: De Modelo a Decisión
 
 El flujo de trabajo está diseñado para ser intuitivo y se divide en tres pasos principales:
 
-### Paso 1: Preparar los Datos de Simulación
+### Paso 1: Configurar la Simulación (en el Evento de Inicio)
 
-Tienes dos opciones para definir los datos que usará la simulación:
+Toda la configuración de la simulación se centraliza en un único **Evento de Inicio (`bpmn:StartEvent`)**.
 
-**Opción A (Recomendada para pruebas): Generar Datos Aleatorios**
-1.  Ve al menú superior de la aplicación: `Plugins`.
-2.  Haz clic en **"Insertar Lógica de Simulación (Datos Aleatorios)"**.
-3.  Automáticamente, el diagrama se poblará con datos de simulación lógicos pero aleatorios.
+1.  Selecciona el Evento de Inicio de tu proceso.
+2.  En el panel de propiedades, marca la casilla **"Usar como Configuración Raíz"**.
+3.  Aparecerá un formulario donde podrás configurar todos los parámetros globales:
+    *   **Configuración de Simulación**: Define cuántas instancias del proceso quieres simular (ej. 100 piezas).
+    *   **Tasa de Llegada**: ¿Con qué frecuencia inicia un nuevo caso? (ej. 1 cada 5 minutos).
+    *   **Calendario Laboral**: Define los días y horas de trabajo, así como los días festivos.
+    *   **Costos y Horas Extras**: Define la tarifa por hora base y las reglas para el pago de horas extras (cuándo se pagan al doble o al triple).
 
-**Opción B: Introducir Datos Manuales**
-1.  Selecciona un elemento del diagrama (ej. una tarea).
-2.  En el panel de propiedades, ve a la sección "Extensiones" y añade una nueva propiedad (`camunda:property`).
-3.  Nombra la propiedad **`simulationData`**.
-4.  En el campo "Valor", introduce un objeto JSON con la configuración deseada. La estructura del JSON se detalla en el Apéndice A de este documento.
+### Paso 2: Definir Parámetros de las Tareas
 
-### Paso 2: Ejecutar la Simulación
+1.  Selecciona una Tarea (`bpmn:Task`) en tu diagrama.
+2.  En el panel de propiedades, define sus parámetros específicos:
+    *   **Tiempo de Procesamiento**: ¿Cuánto tiempo toma realizar la tarea?
+    *   **Tasa de Fallo y Tiempo de Reparación**: ¿Qué probabilidad hay de que la tarea falle y cuánto tiempo extra cuesta repararla?
+    *   **Recursos**: Si has definido "piscinas de recursos" (en el elemento Proceso o Participante), aquí puedes asignar cuántos recursos de una piscina necesita la tarea.
 
-1.  En la barra de herramientas principal (arriba a la izquierda), haz clic en el nuevo botón con el icono de **reproducir (play)**.
-2.  El motor de simulación se ejecutará en segundo plano con los datos actuales del diagrama.
-3.  Aparecerá una notificación confirmando "Simulación completada". Los resultados se guardan internamente.
+### Paso 3: Ejecutar y Analizar
 
-### Paso 3: Visualizar y Analizar los Resultados
+1.  **Ejecutar**: En la barra de herramientas de la izquierda, haz clic en el botón de **reproducir (▶️)**. El motor ejecutará dos simulaciones completas en segundo plano: una con el horario normal y otra aplicando las reglas de horas extras.
+2.  **Analizar**: Haz clic en el botón de **gráfico de barras (📊)** para abrir el panel de análisis.
 
-1.  **Visualizar Mapa de Calor**: Haz clic en el botón con el icono de un **yin-yang** para abrir la paleta de análisis y visualizar métricas como mapas de calor sobre el diagrama.
-2.  **Visualizar Gráficos**: Haz clic en el botón con el icono de un **gráfico de barras** para abrir un panel con gráficos detallados. Este panel, que ahora es más ancho para mejor visualización, incluye:
-    -   Un menú desplegable para cambiar entre diferentes tipos de gráficos:
-        -   **Top 5 por...**: Gráficos de barras que muestran las tareas con mayor impacto en Costo, Tiempo de Proceso y Tiempo de Espera.
-        -   **Recursos Asignados**: Un resumen de la configuración de recursos por tarea.
-        -   **Diagrama de Dispersión (Tiempo vs. Costo)**: Un gráfico de puntos para identificar visualmente las tareas que son a la vez costosas y largas.
-        -   **Diagrama de Pareto (Fallos)**: Un gráfico combinado de barras y línea que ayuda a identificar qué pocas tareas son responsables de la mayoría de los fallos (el principio 80/20).
-    -   Un botón de ayuda (`?`) que explica en detalle qué significa cada gráfico.
+## II. El Panel de Análisis: Tu Centro de Mando
 
-## II. Arquitectura y Funcionamiento Interno
+El panel de análisis es donde podrás entender el rendimiento de tu proceso.
 
-Toda la nueva funcionalidad se encuentra en el directorio `client/simulation/`.
+### Vista Principal: Comparativo de Planes
 
--   **`RandomDataGenerator.js`**: Implementa la lógica del menú.
--   **`SimulationController.js`**: Orquesta la UI.
--   **`SimulationPalette.js`**: Define la paleta de visualización.
--   **`SimulationEngine.js`**: Es el cerebro, implementa un motor de simulación de eventos discretos.
--   **`util.js`**: Contiene funciones de ayuda compartidas.
+Al abrir el panel, la primera vista que verás es el **"Comparativo de Planes"**. Esta es la herramienta más importante para la toma de decisiones.
 
-### Lógica del Motor de Simulación (`SimulationEngine.js`)
+*   **Diseño de Tarjetas**: Muestra dos tarjetas, "Plan Normal" y "Plan con Horas Extras", una al lado de la otra para una fácil comparación.
+*   **Cronograma Fijo**: En la parte superior, siempre verás el calendario laboral que se usó para la simulación, para que tengas el contexto completo.
+*   **Desglose de Costos Detallado**: La tarjeta del "Plan con Horas Extras" te ofrece un desglose financiero claro:
+    *   **Costo de Operación**: El costo total del tiempo trabajado, pagado a tarifa normal.
+    *   **Pago Extra (Doble/Triple)**: El bono *adicional* que se paga por trabajar en horas extras.
+    *   **Costo Total**: La suma de la operación más los bonos.
+*   **Icono de Ayuda (?)**: Si tienes dudas, haz clic en el ícono de ayuda junto al título para ver una explicación detallada de cada métrica y un ejemplo práctico.
 
-El motor usa una **Simulación de Eventos Discretos**.
+### Otras Visualizaciones
 
--   **Compuertas Exclusivas (con 'X')**: Usa la propiedad `branchingProbability` para decidir qué camino tomar.
--   **Compuertas Paralelas (con '+')**: El motor ahora soporta la bifurcación y unión de flujos en compuertas paralelas.
--   **Recursos Múltiples por Tarea**: Una tarea puede requerir más de un recurso de una piscina. Esto se define con la propiedad `quantityRequired`.
--   **Fallos y Reparaciones**: Usa `failureRate` para simular fallos en tareas. Si una tarea falla, se añade el `reworkTime` y su costo asociado.
--   **Lógica de Transporte (Desactivada)**: El motor contenía una lógica compleja para simular transporte y agrupación de ítems ("carritos"). Esta funcionalidad se ha desactivado temporalmente para garantizar la estabilidad y fiabilidad del motor de simulación principal, resolviendo un error crítico que provocaba que las simulaciones se detuvieran. El código se conserva comentado para una futura revisión.
-
-## Apéndice A: Estructura de `simulationData`
-
--   **En el Proceso o Pool:**
-    ```json
-    {
-      "simulationConfig": { "runValue": 1000 },
-      "resourcePools": [ { "name": "...", "quantity": 0 } ]
-    }
-    ```
--   **En un Evento de Inicio:**
-    ```json
-    { "arrivalRate": { "distribution": "...", "unit": "...", "value": 0 } }
-    ```
--   **En una Tarea:**
-    ```json
-    {
-      "processingTime": { "...": "..." },
-      "cost": { "...": "..." },
-      "resources": { "pool": "...", "quantityRequired": 1 },
-      "failureRate": 0.0,
-      "reworkTime": { "...": "..." }
-    }
-    ```
--   **En un Flujo de Secuencia:**
-    ```json
-    { "branchingProbability": 0.0 }
-    ```
+Usa el menú desplegable en la parte superior del panel para acceder a otros gráficos y tablas que te permitirán un análisis más profundo, como:
+*   **Análisis de Producción**: Compara la producción diaria entre el plan normal y el de horas extras.
+*   **Top 5 por Costo/Tiempo**: Identifica rápidamente las tareas más costosas o que más tiempo consumen.
+*   **Diagramas de Pareto**: Aplica el principio 80/20 para encontrar las causas raíz de los fallos o los altos costos.
+*   **Tabla de Resultados**: Ve una tabla con todas las métricas detalladas para cada elemento del proceso.
 
 ## III. Guía para Desarrolladores de IA
 
-Para extender esta funcionalidad o construir nuevas herramientas que interactúen con los datos de simulación, consulta la guía técnica detallada:
-[**Guía para Desarrolladores de IA: Lectura y Escritura de Datos de Simulación](./client/simulation/AI_DEVELOPER_GUIDE.md)**
+Para extender esta funcionalidad o construir nuevas herramientas, consulta la guía técnica detallada:
+[**Guía para Desarrolladores de IA](./client/simulation/AI_DEVELOPER_GUIDE.md)**

@@ -476,7 +476,6 @@ export default class SimulationController {
         metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         metric === 'dailyProduction' ? 'Piezas Completadas' :
-        metric === 'workPlan' ? 'Horas de Trabajo' :
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
@@ -812,83 +811,6 @@ export default class SimulationController {
       };
     }
 
-    if (metric === 'workPlan') {
-      const rootElement = this._simulationEngine._findRootConfig()?.element;
-      if (!rootElement) {
-        this._notifications.showNotification({ text: 'No se encontró un evento de inicio raíz para el plan de trabajo.', type: 'warning', duration: 4000 });
-        return { labels: [], datasets: [] };
-      }
-
-      const simData = getSimulationData(rootElement);
-      const planStartDate = simData.planStartDate ? new Date(simData.planStartDate) : new Date();
-      planStartDate.setHours(0, 0, 0, 0);
-
-      const totalWorkHours = simData.workPlanHours || 0;
-      const dailyOvertimeHours = simData.dailyOvertime || 0;
-
-      if (totalWorkHours === 0) {
-        this._notifications.showNotification({ text: 'El total de horas del plan (workPlanHours) no está definido en el evento raíz.', type: 'info', duration: 5000 });
-        return { labels: [], datasets: [] };
-      }
-
-      const calendar = this._simulationEngine.calendar;
-      if (!calendar || !calendar.config) {
-        this._notifications.showNotification({ text: 'El calendario de trabajo no está disponible.', type: 'error', duration: 4000 });
-        return { labels: [], datasets: [] };
-      }
-
-      const { workingDays, workingHours } = calendar.config;
-      const dailyWorkSeconds = (workingHours.end.hour * 3600 + workingHours.end.minute * 60) - (workingHours.start.hour * 3600 + workingHours.start.minute * 60);
-      const dailyWorkHours = dailyWorkSeconds / 3600;
-
-      const calculatePlan = (useOvertime) => {
-        const plan = [];
-        let hoursRemaining = totalWorkHours;
-        const currentDate = new Date(planStartDate.getTime());
-
-        while (hoursRemaining > 0) {
-          const dayOfWeek = currentDate.getDay();
-          if (workingDays.includes(dayOfWeek)) {
-            const dailyHours = useOvertime ? Math.min(hoursRemaining, dailyWorkHours + dailyOvertimeHours) : Math.min(hoursRemaining, dailyWorkHours);
-            plan.push({ date: new Date(currentDate.getTime()), hours: dailyHours });
-            hoursRemaining -= dailyHours;
-          }
-          currentDate.setDate(currentDate.getDate() + 1);
-        }
-        return plan;
-      };
-
-      const normalPlan = calculatePlan(false);
-      const overtimePlan = calculatePlan(true);
-
-      const allDates = [...new Set([...normalPlan.map(p => p.date.toISOString().split('T')[0]), ...overtimePlan.map(p => p.date.toISOString().split('T')[0])])];
-      allDates.sort();
-
-      const labels = allDates;
-      const normalData = allDates.map(date => normalPlan.find(p => p.date.toISOString().split('T')[0] === date)?.hours || 0);
-      const overtimeData = allDates.map(date => overtimePlan.find(p => p.date.toISOString().split('T')[0] === date)?.hours || 0);
-
-      return {
-        labels,
-        datasets: [
-          {
-            label: 'Plan Normal (Horas)',
-            data: normalData,
-            backgroundColor: 'rgba(54, 162, 235, 0.5)',
-            borderColor: 'rgba(54, 162, 235, 1)',
-            borderWidth: 1
-          },
-          {
-            label: 'Plan con Horas Extras (Horas)',
-            data: overtimeData,
-            backgroundColor: 'rgba(255, 159, 64, 0.5)',
-            borderColor: 'rgba(255, 159, 64, 1)',
-            borderWidth: 1
-          }
-        ]
-      };
-    }
-
     const tasks = [];
 
     if (metric === 'resourceQuantity') {
@@ -1122,50 +1044,55 @@ export default class SimulationController {
       avgCostPerPiece: this.overtimeReport.completedInstances > 0 ? (this.overtimeReport.totalCost / this.overtimeReport.completedInstances) : 0
     };
 
-    const html = `
+    const scheduleHtml = this.createScheduleHtml(this._simulationEngine.calendar);
+
+    const helpText = `
+      <div class="help-content-container">
+        <h4>¿Cómo leer los costos?</h4>
+        <ul>
+          <li><strong>Costo de Operación:</strong> Es el costo de todo el tiempo trabajado, pagado a tarifa normal. Imagina que es el sueldo base que le pagas a un cocinero por preparar jugos.</li>
+          <li><strong>Pago Extra (Doble/Triple):</strong> Es el <strong>bono adicional</strong> que se paga por trabajar fuera del horario. Es el dinero extra que le das al cocinero por quedarse más tiempo.</li>
+          <li><strong>Costo Total:</strong> Es la suma de <code>Costo de Operación</code> + todos los <code>Pagos Extras</code>.</li>
+        </ul>
+        <h4>Ejemplo con Frutas:</h4>
+        <p>Quieres hacer 10 jugos de naranja. Cada uno toma 1 hora en prepararse y pagas $10 la hora. Tu jornada normal es de 8 horas.</p>
+        <p><strong>Plan Normal:</strong> Tomas 10 horas repartidas en 2 días.</p>
+        <ul>
+          <li><code>Costo de Operación</code>: 10 horas x $10/hora = $100.</li>
+          <li><code>Pago Extra</code>: $0.</li>
+          <li><code>Costo Total</code>: $100.</li>
+        </ul>
+        <p><strong>Plan con Extras:</strong> Trabajas 10 horas seguidas en 1 solo día. Las primeras 8 horas son normales y las últimas 2 son extras que se pagan al doble.</p>
+        <ul>
+          <li><code>Costo de Operación</code>: 10 horas x $10/hora = $100 (el costo base del trabajo).</li>
+          <li><code>Pago Extra (Doble)</code>: 2 horas x ($10/hora de bono) = $20.</li>
+          <li><code>Costo Total</code>: $100 (operación) + $20 (extra) = $120.</li>
+        </ul>
+      </div>
+    `;
+
+    const comparisonHtml = `
       <style>
-        .plan-comparison-container {
-          display: flex;
-          gap: 20px;
-          justify-content: space-around;
-        }
-        .plan-card {
-          border: 1px solid #ccc;
-          border-radius: 8px;
-          padding: 15px;
-          width: 45%;
-          background-color: #f9f9f9;
-        }
-        .plan-card h4 {
-          margin-top: 0;
-          border-bottom: 1px solid #ddd;
-          padding-bottom: 10px;
-        }
-        .plan-card .sim-summary-item {
-          display: flex;
-          justify-content: space-between;
-          padding: 8px 0;
-          border-bottom: 1px solid #eee;
-        }
-        .plan-card .sim-summary-item:last-child {
-          border-bottom: none;
-        }
-        .plan-card .label {
-          font-weight: 500;
-        }
-        .plan-card .value {
-          font-weight: bold;
-        }
-        .total-cost {
-          font-size: 1.1em;
-          border-top: 2px solid #ccc;
-          margin-top: 10px;
-          padding-top: 10px;
-        }
+        .plan-comparison-container { display: flex; gap: 20px; justify-content: space-around; }
+        .plan-card { border: 1px solid #ccc; border-radius: 8px; padding: 15px; width: 45%; background-color: #f9f9f9; }
+        .plan-card h4 { margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .plan-card .sim-summary-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .plan-card .sim-summary-item:last-child { border-bottom: none; }
+        .plan-card .label { font-weight: 500; }
+        .plan-card .value { font-weight: bold; }
+        .total-cost { font-size: 1.1em; border-top: 2px solid #ccc; margin-top: 10px; padding-top: 10px; }
+        .help-icon-button { font-family: monospace; font-weight: bold; cursor: pointer; border: 1px solid #999; border-radius: 50%; width: 20px; height: 20px; display: inline-flex; justify-content: center; align-items: center; font-size: 14px; }
+        .hidden-help { display: none; }
       </style>
       <div class="sim-summary-container">
-        <h2>Comparativo de Planes</h2>
-        <div class="plan-comparison-container">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2>Comparativo de Planes</h2>
+          <span id="plan-comparison-help-icon" class="help-icon-button" title="Ayuda sobre costos">?</span>
+        </div>
+        <div id="plan-comparison-help-content" class="hidden-help" style="padding: 10px; border: 1px solid #ddd; margin-top: 10px; border-radius: 5px; background: #f0f0f0;">
+          ${helpText}
+        </div>
+        <div class="plan-comparison-container" style="margin-top: 20px;">
           <div class="plan-card">
             <h4>Plan Normal</h4>
             <div class="sim-summary-item">
@@ -1224,7 +1151,19 @@ export default class SimulationController {
       </div>
     `;
 
-    this._eventBus.fire('simulation.schedule.show', { html });
+    const finalHtml = scheduleHtml + '<hr style="margin: 20px 0;"/>' + comparisonHtml;
+
+    this._eventBus.fire('simulation.schedule.show', { html: finalHtml });
+
+    setTimeout(() => {
+      const helpIcon = document.getElementById('plan-comparison-help-icon');
+      const helpContent = document.getElementById('plan-comparison-help-content');
+      if (helpIcon && helpContent) {
+        helpIcon.addEventListener('click', () => {
+          helpContent.classList.toggle('hidden-help');
+        });
+      }
+    }, 100);
   }
 }
 
