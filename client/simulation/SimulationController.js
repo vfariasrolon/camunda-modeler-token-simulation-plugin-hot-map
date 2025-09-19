@@ -88,7 +88,7 @@ export default class SimulationController {
   }
 
   showSchedule() {
-    if (!this._simulationEngine.calendar) {
+    if (!this.normalReport) {
       this._notifications.showNotification({
         text: 'Por favor, ejecute una simulación primero para ver el cronograma utilizado.',
         type: 'info',
@@ -175,6 +175,11 @@ export default class SimulationController {
       new Date(this._simulationEngine.clock)
     );
 
+    let totalCost = 0;
+    results.forEach(result => {
+      totalCost += result.totalCost || 0;
+    });
+
     const report = {
         results: results,
         completedInstances: this._simulationEngine.completedInstances,
@@ -184,7 +189,8 @@ export default class SimulationController {
         ) * 60 * 1000, // convert minutes to ms
         dailyCompletions: new Map(this._simulationEngine.dailyCompletions),
         createdAt: new Date(),
-        totalWorkingDays: totalWorkingDays
+        totalWorkingDays: totalWorkingDays,
+        totalCost: totalCost
     };
     return report;
   }
@@ -206,13 +212,13 @@ export default class SimulationController {
 
     // Run normal simulation
     this.clear();
-    const normalReport = this._runAndGetReport({ useOvertime: false });
+    this.normalReport = this._runAndGetReport({ useOvertime: false });
 
     // Run overtime simulation
-    this.clear();
-    const overtimeReport = this._runAndGetReport({ useOvertime: true });
+    // We DON'T clear here so the calendar from the normal run is preserved for the overtime run
+    this.overtimeReport = this._runAndGetReport({ useOvertime: true });
 
-    if (!normalReport || !overtimeReport) {
+    if (!this.normalReport || !this.overtimeReport) {
       this._notifications.showNotification({ text: 'Una de las simulaciones falló. No se pueden mostrar resultados comparativos.', type: 'error', duration: 6000 });
       return;
     }
@@ -220,10 +226,9 @@ export default class SimulationController {
     this._notifications.showNotification({ text: 'Simulaciones completadas', type: 'info', duration: 3000 });
 
     // The main report for the summary panel is the overtime one, as it's the most comprehensive.
-    this.simulationReports = [overtimeReport];
-    this.normalReport = normalReport; // Store the normal report for comparison chart.
+    this.simulationReports = [this.overtimeReport];
 
-    this.simulationResults = overtimeReport.results; // Heatmap and overlays are based on the main report.
+    this.simulationResults = this.overtimeReport.results; // Heatmap and overlays are based on the main report.
 
     if (this._chartPanel.isOpen()) {
         this.showChart();
@@ -351,8 +356,7 @@ export default class SimulationController {
       return;
     }
 
-    // All other metrics require a simulation report
-    if (this.simulationReports.length === 0) {
+    if (!this.normalReport || !this.overtimeReport) {
       this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
       this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
       return;
@@ -360,7 +364,7 @@ export default class SimulationController {
 
     // HTML-based reports
     if (metric === 'overallSummary') {
-      const summaryHtml = this.createOverallSummary(this.simulationReports[0], this.normalReport);
+      const summaryHtml = this.createOverallSummary(this.overtimeReport, this.normalReport);
       this._chartPanel.showHtmlContent(summaryHtml);
       return;
     }
@@ -388,23 +392,23 @@ export default class SimulationController {
 
   getChartConfig(metric) {
     if (metric === 'productionCompare') {
-      if (!this.normalReport || !this.simulationReports.length) {
+      if (!this.normalReport || !this.overtimeReport) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación comparativa disponibles.</p>');
         return null;
       }
       const normalReport = this.normalReport;
-      const overtimeReport = this.simulationReports[0];
+      const overtimeReport = this.overtimeReport;
       const allDates = [...new Set([...normalReport.dailyCompletions.keys(), ...overtimeReport.dailyCompletions.keys()])];
       allDates.sort((a, b) => new Date(a) - new Date(b));
 
       const normalData = allDates.map(date => normalReport.dailyCompletions.get(date) || 0);
       const overtimeData = allDates.map(date => overtimeReport.dailyCompletions.get(date) || 0);
 
-      console.log('--- CHART DATA ---');
-      console.log('Labels (Dates):', allDates);
-      console.log('Normal Production Data:', normalData);
-      console.log('Overtime Production Data:', overtimeData);
+      // console.log('--- CHART DATA ---');
+      // console.log('Labels (Dates):', allDates);
+      // console.log('Normal Production Data:', normalData);
+      // console.log('Overtime Production Data:', overtimeData);
 
       return {
         type: 'bar',
@@ -656,9 +660,9 @@ export default class SimulationController {
         totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
         totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0;
 
-    console.log('--- SUMMARY DATA ---');
-    console.log('Overtime Report:', report);
-    console.log('Normal Report:', normalReport);
+    // console.log('--- SUMMARY DATA ---');
+    // console.log('Overtime Report:', report);
+    // console.log('Normal Report:', normalReport);
 
 
     report.results.forEach(result => {
@@ -1072,51 +1076,20 @@ export default class SimulationController {
   }
 
   showPlanBreakdown() {
-    const rootElement = this._simulationEngine._findRootConfig()?.element;
-    if (!rootElement) {
-        this._notifications.showNotification({ text: 'No se encontró un evento de inicio raíz.', type: 'error', duration: 4000 });
+    if (!this.normalReport || !this.overtimeReport) {
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero.', type: 'warning', duration: 4000 });
         return;
     }
 
-    const simData = getSimulationData(rootElement);
-    const totalWorkHours = simData.workPlanHours || 0;
-    const dailyOvertimeHours = simData.dailyOvertime || 0;
-    const resourceCost = simData.resources?.costPerHour || 0;
-    const overtimeMultiplier = simData.resources?.overtimeCostMultiplier || 1.5;
-
-    const calendar = this._simulationEngine.calendar;
-    const { workingDays, workingHours } = calendar.config;
-    const dailyWorkSeconds = (workingHours.end.hour * 3600 + workingHours.end.minute * 60) - (workingHours.start.hour * 3600 + workingHours.start.minute * 60);
-    const dailyWorkHours = dailyWorkSeconds / 3600;
-
-    const calculatePlanDetails = (useOvertime) => {
-        let hoursRemaining = totalWorkHours;
-        let totalDays = 0;
-        let totalCost = 0;
-        let currentDate = new Date(simData.planStartDate ? simData.planStartDate : Date.now());
-        currentDate.setHours(0,0,0,0);
-
-        while (hoursRemaining > 0) {
-            const dayOfWeek = currentDate.getDay();
-            if (workingDays.includes(dayOfWeek)) {
-                const normalHoursToday = Math.min(hoursRemaining, dailyWorkHours);
-                totalCost += normalHoursToday * resourceCost;
-                hoursRemaining -= normalHoursToday;
-
-                if (useOvertime && hoursRemaining > 0) {
-                    const overtimeToday = Math.min(hoursRemaining, dailyOvertimeHours);
-                    totalCost += overtimeToday * resourceCost * overtimeMultiplier;
-                    hoursRemaining -= overtimeToday;
-                }
-            }
-            currentDate.setDate(currentDate.getDate() + 1);
-            totalDays++;
-        }
-        return { totalDays, totalCost };
+    const normalPlan = {
+      totalDays: this.normalReport.totalWorkingDays,
+      totalCost: this.normalReport.totalCost
     };
 
-    const normalPlan = calculatePlanDetails(false);
-    const overtimePlan = calculatePlanDetails(true);
+    const overtimePlan = {
+      totalDays: this.overtimeReport.totalWorkingDays,
+      totalCost: this.overtimeReport.totalCost
+    };
 
     const html = `
         <div class="sim-summary-container">
@@ -1124,7 +1097,7 @@ export default class SimulationController {
             <hr>
             <h4>Plan Normal</h4>
             <div class="sim-summary-item">
-                <span class="label">Duración Total (Días Naturales):</span>
+                <span class="label">Duración Total (Días Laborales):</span>
                 <span class="value">${normalPlan.totalDays}</span>
             </div>
             <div class="sim-summary-item">
@@ -1134,7 +1107,7 @@ export default class SimulationController {
             <hr>
             <h4>Plan con Horas Extras</h4>
             <div class="sim-summary-item">
-                <span class="label">Duración Total (Días Naturales):</span>
+                <span class="label">Duración Total (Días Laborales):</span>
                 <span class="value">${overtimePlan.totalDays}</span>
             </div>
             <div class="sim-summary-item">
