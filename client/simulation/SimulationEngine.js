@@ -77,7 +77,7 @@ export default class SimulationEngine {
     simStart.setHours(start.hour, start.minute, 0, 0);
 
     // Advance to the first available working day
-    while (!this.calendar.config.workingDays.includes(simStart.getDay())) {
+    while (!this.calendar.isWorkingTime(simStart)) {
       simStart.setDate(simStart.getDate() + 1);
     }
 
@@ -98,6 +98,7 @@ export default class SimulationEngine {
         totalOvertime: 0, totalReworkTime: 0, totalReworkCost: 0, totalWaitTimeCost: 0, totalOvertimeCost: 0,
         totalDoubleOvertime: 0, totalTripleOvertime: 0,
         totalDoubleOvertimeCost: 0, totalTripleOvertimeCost: 0,
+        totalNormalTimeCost: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -156,7 +157,7 @@ export default class SimulationEngine {
       const currentCount = this.dailyCompletions.get(dayKey) || 0;
       this.dailyCompletions.set(dayKey, currentCount + 1);
 
-      console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
+      // console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
       const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
       elementResults.totalCycleTime += standardCalendar.calculateBusinessDurationInMinutes(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);
@@ -191,7 +192,6 @@ export default class SimulationEngine {
   }
 
   scheduleTask(taskEvent) {
-    console.log('[DEBUG] Root config in scheduleTask:', this.rootConfig);
     const { element, time, instanceId, startTime } = taskEvent;
     const data = getSimulationData(element);
     const baseRatePerHour = this.rootConfig.cost.baseRatePerHour || 0;
@@ -202,13 +202,12 @@ export default class SimulationEngine {
       if (pt.distribution === 'triangular') {
         const randomValue = triangular(pt.min, pt.mode, pt.max);
         processingTime = timeToMilliseconds(randomValue, pt.unit);
-      } else { // Default to fixed distribution
+      } else {
         processingTime = timeToMilliseconds(pt.value, pt.unit);
       }
     }
 
     let reworkTime = 0;
-    let reworkCost = 0;
     if (data.failureRate && Math.random() < data.failureRate) {
       const rt = data.reworkTime;
       if (rt) {
@@ -220,49 +219,30 @@ export default class SimulationEngine {
         }
       }
       this.results.get(element.id).failureCount++;
-      reworkCost = (reworkTime / 3600000) * baseRatePerHour;
     }
 
-    const totalTaskDuration = processingTime + reworkTime;
+    const totalTaskDurationInMinutes = (processingTime + reworkTime) / 60000;
+    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMinutes);
 
-    const { businessTime, overtime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDuration / 60000);
+    // Cost of time spent during normal business hours
+    const normalTimeCost = (businessTime / 3600000) * baseRatePerHour;
 
-    const processingCost = (businessTime / 3600000) * baseRatePerHour;
+    // Cost of rework is calculated based on its full duration, assuming it's always done at base rate
+    const reworkCost = (reworkTime / 3600000) * baseRatePerHour;
 
-    const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
-    const endTime = this.calendar.addWorkingTime(new Date(time), totalTaskDuration / 60000).getTime();
-
-    const taskOvertimeDuration = overtime;
-
-    // console.log(`[COSTING] Task: ${element.id}
-    //     - Start: ${new Date(time).toLocaleString()}
-    //     - Duration: ${totalTaskDuration/1000}s
-    //     - Actual End: ${new Date(endTime).toLocaleString()}
-    //     - Business Time: ${businessTime/1000}s
-    //     - Overtime Duration: ${taskOvertimeDuration/1000}s`);
-
+    // Overtime cost is the PREMIUM ONLY. The base rate for overtime hours is already in normalTimeCost.
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     const currentWeeklyOvertime = this.weeklyStats.get(weekNumber) || 0;
-
     const overtimeRules = this.rootConfig.overtime;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
 
+    const taskOvertimeDuration = overtime;
     const normalOvertime = Math.min(taskOvertimeDuration, Math.max(0, limitInMillis - currentWeeklyOvertime));
     const excessOvertime = Math.max(0, taskOvertimeDuration - normalOvertime);
 
-    const doubleOvertimeCost = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
-    const tripleOvertimeCost = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
-    const overtimeCost = doubleOvertimeCost + tripleOvertimeCost;
-
-    // console.log(`[COSTING-DETAIL] Task: ${element.id}
-    //     - normalOvertime: ${normalOvertime/1000}s
-    //     - excessOvertime: ${excessOvertime/1000}s
-    //     - baseRatePerHour: ${baseRatePerHour}
-    //     - payMultiplier: ${overtimeRules.payMultiplier}
-    //     - excessPayMultiplier: ${overtimeRules.excessPayMultiplier}
-    //     - doubleOvertimeCost: ${doubleOvertimeCost}
-    //     - tripleOvertimeCost: ${tripleOvertimeCost}
-    //     - overtimeCost: ${overtimeCost}`);
+    const doubleOvertimePremium = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
+    const tripleOvertimePremium = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
+    const totalOvertimePremium = doubleOvertimePremium + tripleOvertimePremium;
 
     this.weeklyStats.set(weekNumber, currentWeeklyOvertime + taskOvertimeDuration);
 
@@ -270,17 +250,26 @@ export default class SimulationEngine {
     if (results) {
       results.totalDoubleOvertime += normalOvertime;
       results.totalTripleOvertime += excessOvertime;
-      results.totalDoubleOvertimeCost += doubleOvertimeCost;
-      results.totalTripleOvertimeCost += tripleOvertimeCost;
+      results.totalDoubleOvertimeCost += doubleOvertimePremium; // Storing premium only
+      results.totalTripleOvertimeCost += tripleOvertimePremium; // Storing premium only
     }
 
-    // console.log(`[SCHEDULE] Task ${element.id} | Base Time: ${processingTime}ms | Rework Time: ${reworkTime}ms | Total Processing: ${totalTaskDuration}ms`);
+    const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
 
     const newTaskEvent = {
-      type: 'TASK_COMPLETE', element, time: endTime, instanceId, startTime,
-      processingTime: processingTime, reworkTime, overtime: taskOvertimeDuration,
-      processingCost, reworkCost, overtimeCost, quantityRequired,
-      totalDuration: totalTaskDuration
+      type: 'TASK_COMPLETE',
+      element,
+      time: endTime.getTime(),
+      instanceId,
+      startTime,
+      processingTime,
+      reworkTime,
+      overtime: taskOvertimeDuration,
+      normalTimeCost,
+      reworkCost,
+      overtimeCost: totalOvertimePremium, // This is the PREMIUM
+      quantityRequired,
+      totalDuration: businessTime + overtime
     };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
@@ -305,21 +294,18 @@ export default class SimulationEngine {
       return config;
     }
 
-    // Handle both no-root and multiple-roots cases
     if (rootEvents.length > 1) {
       console.warn('Multiple root start events found. A single root event is required.');
     } else {
       console.warn('No root start event found. A root event is required.');
     }
 
-    // Return null to indicate failure to find a SINGLE root
     return null;
   }
 
   run(options = { useOvertime: false }) {
     const rootConfig = this._findRootConfig();
     if (!rootConfig) {
-      // This case is handled by the controller, but as a safeguard:
       throw new Error("Cannot run simulation without a root configuration.");
     }
     this.initialize(rootConfig);
@@ -334,11 +320,9 @@ export default class SimulationEngine {
         overtimeCalendarConfig.workingHours.end.hour += Math.floor(dailyOvertimeHours);
         overtimeCalendarConfig.workingHours.end.minute += Math.round((dailyOvertimeHours % 1) * 60);
 
-        // Handle minute overflow
         overtimeCalendarConfig.workingHours.end.hour += Math.floor(overtimeCalendarConfig.workingHours.end.minute / 60);
         overtimeCalendarConfig.workingHours.end.minute %= 60;
 
-        // Cap at 24 hours to avoid date wrapping issues
         if (overtimeCalendarConfig.workingHours.end.hour >= 24) {
             overtimeCalendarConfig.workingHours.end.hour = 23;
             overtimeCalendarConfig.workingHours.end.minute = 59;
@@ -347,8 +331,7 @@ export default class SimulationEngine {
       this.calendar = new BusinessCalendar(overtimeCalendarConfig);
     }
 
-    console.log("--- Simulation Starting ---");
-    console.log("Root Config Found:", rootConfig);
+    console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
 
     const processRoot = this._elementRegistry.find(el => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
     const processConfig = getSimulationData(processRoot);
@@ -364,14 +347,14 @@ export default class SimulationEngine {
     }
 
     const arrivalRate = this.rootConfig.arrivalRate || { value: 1, unit: 'minute' };
-    let arrivalInterval = 60000; // Default to 1 per minute
+    let arrivalInterval = 60000;
     if (arrivalRate.value > 0) {
       let intervalInSeconds;
       if (arrivalRate.unit === 'second') {
         intervalInSeconds = 1 / arrivalRate.value;
       } else if (arrivalRate.unit === 'hour') {
         intervalInSeconds = 3600 / arrivalRate.value;
-      } else { // minute
+      } else {
         intervalInSeconds = 60 / arrivalRate.value;
       }
       arrivalInterval = intervalInSeconds * 1000;
@@ -387,41 +370,35 @@ export default class SimulationEngine {
     let instanceCounter = startEvents.length;
     let iterationCounter = 0;
 
-    console.log(`Starting simulation with ${runValue} instances to complete.`);
-
     while (!this.eventQueue.isEmpty()) {
       iterationCounter++;
-      if (iterationCounter > (runValue * 1000)) { // Safety break, increased limit
+      if (iterationCounter > (runValue * 1000)) {
         throw new Error(`Simulation safety break triggered. Exceeded ${runValue * 1000} iterations. Likely an infinite loop.`);
       }
 
       const event = this.eventQueue.next();
       this.clock = event.time;
 
-      // console.log(`[${iterationCounter}] Processing event: ${event.type} for element ${event.element.id} at time ${new Date(this.clock).toLocaleString()}`);
-      // console.log(`Queue size: ${this.eventQueue.items.length}, Completed instances: ${this.completedInstances}`);
-
-
       if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
-
-        // console.log(`[RESULTS] Task ${event.element.id} | Adding to totals: processTime=${event.processingTime}, reworkTime=${event.reworkTime}`);
 
         results.totalProcessingTime += event.processingTime;
         results.totalReworkTime += event.reworkTime;
         results.totalOvertime += event.overtime;
+        results.totalNormalTimeCost += event.normalTimeCost;
+        results.totalOvertimeCost += event.overtimeCost; // This is the premium
+        results.totalReworkCost += event.reworkCost;
 
         const waitTimeCost = results.totalWaitTimeCost;
-        results.totalCost = (results.totalCost - waitTimeCost) + event.processingCost + event.reworkCost + event.overtimeCost + waitTimeCost;
-        results.totalReworkCost += event.reworkCost;
-        results.totalOvertimeCost += event.overtimeCost;
+        // The total cost is the sum of its parts.
+        results.totalCost = (results.totalCost - waitTimeCost) + event.normalTimeCost + event.reworkCost + event.overtimeCost + waitTimeCost;
 
         if (event.waitStart) {
           const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
           const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
           const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
-          const currentWaitCost = (waitTime / 60) * waitCostPerHour; // waitTime is in minutes
+          const currentWaitCost = (waitTime / 60) * waitCostPerHour;
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
         }
@@ -454,11 +431,9 @@ export default class SimulationEngine {
         instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
-        console.log(`Scheduling next instance (${instanceCounter}) to arrive at ${new Date(nextArrivalTime).toLocaleString()}`);
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
         this.instanceStates.set(instanceCounter, { gateways: {} });
       }
-      console.log(`Checking end condition: completed=${this.completedInstances}, target=${runValue}`);
       if (this.completedInstances >= runValue) {
         console.log(`Target of ${runValue} completed instances reached. Ending simulation.`);
         break;
@@ -466,9 +441,7 @@ export default class SimulationEngine {
     }
 
     console.log("--- Simulation Finished ---");
-    console.table(Object.fromEntries(this.results));
 
-    // Restore original calendar to leave engine in a clean state
     this.calendar = originalCalendar;
 
     return this.results;

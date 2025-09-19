@@ -658,7 +658,8 @@ export default class SimulationController {
   createOverallSummary(report, normalReport) {
     let totalCost = 0, totalReworkCost = 0, totalOvertimeCost = 0,
         totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
-        totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0;
+        totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0,
+        totalNormalTimeCost = 0;
 
     // console.log('--- SUMMARY DATA ---');
     // console.log('Overtime Report:', report);
@@ -674,6 +675,7 @@ export default class SimulationController {
       totalOvertimeMs += result.totalOvertime || 0;
       totalDoubleOvertimeCost += result.totalDoubleOvertimeCost || 0;
       totalTripleOvertimeCost += result.totalTripleOvertimeCost || 0;
+      totalNormalTimeCost += result.totalNormalTimeCost || 0;
     });
 
     const totalTimeDays = normalReport.totalWorkingDays;
@@ -719,7 +721,7 @@ export default class SimulationController {
             <span class="value">${formatCurrency(totalReworkCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Costo Total de Horas Extras:</span>
+            <span class="label">Costo Total Horas Extras:</span>
             <span class="value">${formatCurrency(totalOvertimeCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
@@ -729,6 +731,10 @@ export default class SimulationController {
           <div class="sim-summary-item">
             <span class="label">Costo Horas Extras Triples:</span>
             <span class="value">${formatCurrency(totalTripleOvertimeCost, 'MXN')}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">Costo Horas Normales:</span>
+            <span class="value">${formatCurrency(totalNormalTimeCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Porcentaje de Tiempo Extra:</span>
