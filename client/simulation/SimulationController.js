@@ -678,7 +678,7 @@ export default class SimulationController {
       totalNormalTimeCost += result.totalNormalTimeCost || 0;
     });
 
-    const totalTimeDays = normalReport.totalWorkingDays;
+    const totalTimeDays = report.totalWorkingDays;
     const totalTimeHours = (report.calendarDuration / (1000 * 60 * 60)).toFixed(2);
     const overtimePercentage = report.calendarDuration > 0
       ? ((totalOvertimeMs / report.calendarDuration) * 100).toFixed(1)
