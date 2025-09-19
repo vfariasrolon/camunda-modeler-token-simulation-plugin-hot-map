@@ -1089,12 +1089,18 @@ export default class SimulationController {
 
     const normalPlan = {
       totalDays: this.normalReport.totalWorkingDays,
-      totalCost: this.normalReport.totalCost
+      totalCost: this.normalReport.totalCost,
+      totalNetHours: (this.normalReport.calendarDuration / (1000 * 60 * 60)).toFixed(2),
+      completedInstances: this.normalReport.completedInstances,
+      avgCostPerPiece: this.normalReport.completedInstances > 0 ? (this.normalReport.totalCost / this.normalReport.completedInstances) : 0
     };
 
     const overtimePlan = {
       totalDays: this.overtimeReport.totalWorkingDays,
-      totalCost: this.overtimeReport.totalCost
+      totalCost: this.overtimeReport.totalCost,
+      totalNetHours: (this.overtimeReport.calendarDuration / (1000 * 60 * 60)).toFixed(2),
+      completedInstances: this.overtimeReport.completedInstances,
+      avgCostPerPiece: this.overtimeReport.completedInstances > 0 ? (this.overtimeReport.totalCost / this.overtimeReport.completedInstances) : 0
     };
 
     const html = `
@@ -1102,23 +1108,51 @@ export default class SimulationController {
             <h2>Comparativo de Planes</h2>
             <hr>
             <h4>Plan Normal</h4>
-            <div class="sim-summary-item">
-                <span class="label">Duración Total (Días Laborales):</span>
-                <span class="value">${normalPlan.totalDays}</span>
-            </div>
-            <div class="sim-summary-item">
-                <span class="label">Costo Total Estimado:</span>
-                <span class="value">${formatCurrency(normalPlan.totalCost, 'MXN')}</span>
+            <div class="sim-summary-grid">
+              <div class="sim-summary-item">
+                  <span class="label">Duración (Días Laborales):</span>
+                  <span class="value">${normalPlan.totalDays}</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Horas Netas Totales:</span>
+                  <span class="value">${normalPlan.totalNetHours}h</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Piezas Producidas:</span>
+                  <span class="value">${normalPlan.completedInstances}</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Costo Total:</span>
+                  <span class="value">${formatCurrency(normalPlan.totalCost, 'MXN')}</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Costo Promedio por Pieza:</span>
+                  <span class="value">${formatCurrency(normalPlan.avgCostPerPiece, 'MXN')}</span>
+              </div>
             </div>
             <hr>
             <h4>Plan con Horas Extras</h4>
-            <div class="sim-summary-item">
-                <span class="label">Duración Total (Días Laborales):</span>
-                <span class="value">${overtimePlan.totalDays}</span>
-            </div>
-            <div class="sim-summary-item">
-                <span class="label">Costo Total Estimado:</span>
-                <span class="value">${formatCurrency(overtimePlan.totalCost, 'MXN')}</span>
+            <div class="sim-summary-grid">
+              <div class="sim-summary-item">
+                  <span class="label">Duración (Días Laborales):</span>
+                  <span class="value">${overtimePlan.totalDays}</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Horas Netas Totales:</span>
+                  <span class="value">${overtimePlan.totalNetHours}h</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Piezas Producidas:</span>
+                  <span class="value">${overtimePlan.completedInstances}</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Costo Total:</span>
+                  <span class="value">${formatCurrency(overtimePlan.totalCost, 'MXN')}</span>
+              </div>
+              <div class="sim-summary-item">
+                  <span class="label">Costo Promedio por Pieza:</span>
+                  <span class="value">${formatCurrency(overtimePlan.avgCostPerPiece, 'MXN')}</span>
+              </div>
             </div>
         </div>
     `;
