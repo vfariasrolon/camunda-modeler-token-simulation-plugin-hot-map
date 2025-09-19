@@ -83,22 +83,7 @@ export default class SimulationController {
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
-    this._eventBus.on('simulation.schedule.requested', () => this.showSchedule());
     this._eventBus.on('simulation.plan_summary.requested', () => this.showPlanBreakdown());
-  }
-
-  showSchedule() {
-    if (!this.normalReport) {
-      this._notifications.showNotification({
-        text: 'Por favor, ejecute una simulación primero para ver el cronograma utilizado.',
-        type: 'info',
-        duration: 5000
-      });
-      return;
-    }
-    const calendar = this._simulationEngine.calendar;
-    const html = this.createScheduleHtml(calendar);
-    this._eventBus.fire('simulation.schedule.show', { html });
   }
 
   createScheduleHtml(calendar) {

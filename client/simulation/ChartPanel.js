@@ -42,7 +42,6 @@ export default class ChartPanel {
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
           </select>
           <div class="header-buttons">
-            <button class="schedule-button" title="Ver Cronograma"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ClockIcon}</svg></button>
             <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
             <button class="close" title="Cerrar">×</button>
           </div>
@@ -71,7 +70,6 @@ export default class ChartPanel {
 
     this.closeButton = this._container.querySelector('button.close');
     this.helpButton = this._container.querySelector('button.help-button');
-    this.scheduleButton = this._container.querySelector('button.schedule-button');
     this.helpContent = this._container.querySelector('.help-content');
     this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
@@ -82,7 +80,6 @@ export default class ChartPanel {
 
     domEvent.bind(this.closeButton, 'click', () => this.toggle(false));
     domEvent.bind(this.helpButton, 'click', () => this.toggleHelp());
-    domEvent.bind(this.scheduleButton, 'click', () => this._eventBus.fire('simulation.schedule.requested'));
 
     domEvent.bind(this.scheduleModalClose, 'click', () => this.showScheduleModal(false));
     domEvent.bind(this.scheduleModalOverlay, 'click', (event) => {
