@@ -95,10 +95,10 @@ export default class SimulationEngine {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
-        totalOvertime: 0, totalReworkTime: 0, totalReworkCost: 0, totalWaitTimeCost: 0, totalOvertimeCost: 0,
-        totalDoubleOvertime: 0, totalTripleOvertime: 0,
-        totalDoubleOvertimeCost: 0, totalTripleOvertimeCost: 0,
-        totalNormalTimeCost: 0,
+        totalOvertime: 0, totalReworkTime: 0, totalWaitTimeCost: 0,
+        totalOperationCost: 0,
+        totalDoubleOvertimeCost: 0,
+        totalTripleOvertimeCost: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -221,16 +221,13 @@ export default class SimulationEngine {
       this.results.get(element.id).failureCount++;
     }
 
-    const totalTaskDurationInMinutes = (processingTime + reworkTime) / 60000;
-    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMinutes);
+    const totalTaskDurationInMillis = processingTime + reworkTime;
+    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000);
 
-    // Cost of time spent during normal business hours
-    const normalTimeCost = (businessTime / 3600000) * baseRatePerHour;
+    // "Costo de Operación" is the cost of all hours worked at the base rate.
+    const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
 
-    // Cost of rework is calculated based on its full duration, assuming it's always done at base rate
-    const reworkCost = (reworkTime / 3600000) * baseRatePerHour;
-
-    // Overtime cost is the PREMIUM ONLY. The base rate for overtime hours is already in normalTimeCost.
+    // Overtime cost is the PREMIUM ONLY.
     const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
     const currentWeeklyOvertime = this.weeklyStats.get(weekNumber) || 0;
     const overtimeRules = this.rootConfig.overtime;
@@ -242,17 +239,8 @@ export default class SimulationEngine {
 
     const doubleOvertimePremium = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
     const tripleOvertimePremium = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
-    const totalOvertimePremium = doubleOvertimePremium + tripleOvertimePremium;
 
     this.weeklyStats.set(weekNumber, currentWeeklyOvertime + taskOvertimeDuration);
-
-    const results = this.results.get(element.id);
-    if (results) {
-      results.totalDoubleOvertime += normalOvertime;
-      results.totalTripleOvertime += excessOvertime;
-      results.totalDoubleOvertimeCost += doubleOvertimePremium; // Storing premium only
-      results.totalTripleOvertimeCost += tripleOvertimePremium; // Storing premium only
-    }
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
 
@@ -265,11 +253,11 @@ export default class SimulationEngine {
       processingTime,
       reworkTime,
       overtime: taskOvertimeDuration,
-      normalTimeCost,
-      reworkCost,
-      overtimeCost: totalOvertimePremium, // This is the PREMIUM
+      operationCost,
+      doubleOvertimePremium,
+      tripleOvertimePremium,
       quantityRequired,
-      totalDuration: businessTime + overtime
+      totalDuration: totalTaskDurationInMillis
     };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
@@ -385,13 +373,15 @@ export default class SimulationEngine {
         results.totalProcessingTime += event.processingTime;
         results.totalReworkTime += event.reworkTime;
         results.totalOvertime += event.overtime;
-        results.totalNormalTimeCost += event.normalTimeCost;
-        results.totalOvertimeCost += event.overtimeCost; // This is the premium
-        results.totalReworkCost += event.reworkCost;
+
+        // Accumulate new cost components
+        results.totalOperationCost += event.operationCost;
+        results.totalDoubleOvertimeCost += event.doubleOvertimePremium;
+        results.totalTripleOvertimeCost += event.tripleOvertimePremium;
 
         const waitTimeCost = results.totalWaitTimeCost;
         // The total cost is the sum of its parts.
-        results.totalCost = (results.totalCost - waitTimeCost) + event.normalTimeCost + event.reworkCost + event.overtimeCost + waitTimeCost;
+        results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + waitTimeCost;
 
         if (event.waitStart) {
           const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);

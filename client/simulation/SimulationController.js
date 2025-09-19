@@ -1087,10 +1087,27 @@ export default class SimulationController {
         return;
     }
 
+    const aggregateReportCosts = (report) => {
+      let totalOperationCost = 0;
+      let totalDoubleOvertimeCost = 0;
+      let totalTripleOvertimeCost = 0;
+
+      report.results.forEach(r => {
+        totalOperationCost += r.totalOperationCost || 0;
+        totalDoubleOvertimeCost += r.totalDoubleOvertimeCost || 0;
+        totalTripleOvertimeCost += r.totalTripleOvertimeCost || 0;
+      });
+
+      return { totalOperationCost, totalDoubleOvertimeCost, totalTripleOvertimeCost };
+    };
+
+    const normalCosts = aggregateReportCosts(this.normalReport);
+    const overtimeCosts = aggregateReportCosts(this.overtimeReport);
+
     const normalPlan = {
       totalDays: this.normalReport.totalWorkingDays,
       totalCost: this.normalReport.totalCost,
-      totalNetHours: (this.normalReport.calendarDuration / (1000 * 60 * 60)).toFixed(2),
+      operationCost: normalCosts.totalOperationCost,
       completedInstances: this.normalReport.completedInstances,
       avgCostPerPiece: this.normalReport.completedInstances > 0 ? (this.normalReport.totalCost / this.normalReport.completedInstances) : 0
     };
@@ -1098,66 +1115,116 @@ export default class SimulationController {
     const overtimePlan = {
       totalDays: this.overtimeReport.totalWorkingDays,
       totalCost: this.overtimeReport.totalCost,
-      totalNetHours: (this.overtimeReport.calendarDuration / (1000 * 60 * 60)).toFixed(2),
+      operationCost: overtimeCosts.totalOperationCost,
+      doublePremium: overtimeCosts.totalDoubleOvertimeCost,
+      triplePremium: overtimeCosts.totalTripleOvertimeCost,
       completedInstances: this.overtimeReport.completedInstances,
       avgCostPerPiece: this.overtimeReport.completedInstances > 0 ? (this.overtimeReport.totalCost / this.overtimeReport.completedInstances) : 0
     };
 
     const html = `
-        <div class="sim-summary-container">
-            <h2>Comparativo de Planes</h2>
-            <hr>
+      <style>
+        .plan-comparison-container {
+          display: flex;
+          gap: 20px;
+          justify-content: space-around;
+        }
+        .plan-card {
+          border: 1px solid #ccc;
+          border-radius: 8px;
+          padding: 15px;
+          width: 45%;
+          background-color: #f9f9f9;
+        }
+        .plan-card h4 {
+          margin-top: 0;
+          border-bottom: 1px solid #ddd;
+          padding-bottom: 10px;
+        }
+        .plan-card .sim-summary-item {
+          display: flex;
+          justify-content: space-between;
+          padding: 8px 0;
+          border-bottom: 1px solid #eee;
+        }
+        .plan-card .sim-summary-item:last-child {
+          border-bottom: none;
+        }
+        .plan-card .label {
+          font-weight: 500;
+        }
+        .plan-card .value {
+          font-weight: bold;
+        }
+        .total-cost {
+          font-size: 1.1em;
+          border-top: 2px solid #ccc;
+          margin-top: 10px;
+          padding-top: 10px;
+        }
+      </style>
+      <div class="sim-summary-container">
+        <h2>Comparativo de Planes</h2>
+        <div class="plan-comparison-container">
+          <div class="plan-card">
             <h4>Plan Normal</h4>
-            <div class="sim-summary-grid">
-              <div class="sim-summary-item">
-                  <span class="label">Duración (Días Laborales):</span>
-                  <span class="value">${normalPlan.totalDays}</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Horas Netas Totales:</span>
-                  <span class="value">${normalPlan.totalNetHours}h</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Piezas Producidas:</span>
-                  <span class="value">${normalPlan.completedInstances}</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Costo Total:</span>
-                  <span class="value">${formatCurrency(normalPlan.totalCost, 'MXN')}</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Costo Promedio por Pieza:</span>
-                  <span class="value">${formatCurrency(normalPlan.avgCostPerPiece, 'MXN')}</span>
-              </div>
+            <div class="sim-summary-item">
+              <span class="label">Duración (Días Laborales):</span>
+              <span class="value">${normalPlan.totalDays}</span>
             </div>
-            <hr>
+            <div class="sim-summary-item">
+              <span class="label">Piezas Producidas:</span>
+              <span class="value">${normalPlan.completedInstances}</span>
+            </div>
+            <div class="sim-summary-item">
+              <span class="label">Costo de Operación:</span>
+              <span class="value">${formatCurrency(normalPlan.operationCost, 'MXN')}</span>
+            </div>
+            <div class="sim-summary-item total-cost">
+              <span class="label">Costo Total:</span>
+              <span class="value">${formatCurrency(normalPlan.totalCost, 'MXN')}</span>
+            </div>
+            <div class="sim-summary-item">
+              <span class="label">Costo Promedio / Pieza:</span>
+              <span class="value">${formatCurrency(normalPlan.avgCostPerPiece, 'MXN')}</span>
+            </div>
+          </div>
+          <div class="plan-card">
             <h4>Plan con Horas Extras</h4>
-            <div class="sim-summary-grid">
-              <div class="sim-summary-item">
-                  <span class="label">Duración (Días Laborales):</span>
-                  <span class="value">${overtimePlan.totalDays}</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Horas Netas Totales:</span>
-                  <span class="value">${overtimePlan.totalNetHours}h</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Piezas Producidas:</span>
-                  <span class="value">${overtimePlan.completedInstances}</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Costo Total:</span>
-                  <span class="value">${formatCurrency(overtimePlan.totalCost, 'MXN')}</span>
-              </div>
-              <div class="sim-summary-item">
-                  <span class="label">Costo Promedio por Pieza:</span>
-                  <span class="value">${formatCurrency(overtimePlan.avgCostPerPiece, 'MXN')}</span>
-              </div>
+            <div class="sim-summary-item">
+              <span class="label">Duración (Días Laborales):</span>
+              <span class="value">${overtimePlan.totalDays}</span>
             </div>
+            <div class="sim-summary-item">
+              <span class="label">Piezas Producidas:</span>
+              <span class="value">${overtimePlan.completedInstances}</span>
+            </div>
+            <div class="sim-summary-item">
+              <span class="label">Costo de Operación:</span>
+              <span class="value">${formatCurrency(overtimePlan.operationCost, 'MXN')}</span>
+            </div>
+            <div class="sim-summary-item">
+              <span class="label">Pago Extra (Doble):</span>
+              <span class="value">${formatCurrency(overtimePlan.doublePremium, 'MXN')}</span>
+            </div>
+            <div class="sim-summary-item">
+              <span class="label">Pago Extra (Triple):</span>
+              <span class="value">${formatCurrency(overtimePlan.triplePremium, 'MXN')}</span>
+            </div>
+            <div class="sim-summary-item total-cost">
+              <span class="label">Costo Total:</span>
+              <span class="value">${formatCurrency(overtimePlan.totalCost, 'MXN')}</span>
+            </div>
+            <div class="sim-summary-item">
+              <span class="label">Costo Promedio / Pieza:</span>
+              <span class="value">${formatCurrency(overtimePlan.avgCostPerPiece, 'MXN')}</span>
+            </div>
+          </div>
         </div>
+      </div>
     `;
 
-    this._eventBus.fire('simulation.schedule.show', { html }); // Re-using the schedule modal
+    this._eventBus.fire('simulation.schedule.show', { html });
   }
 }
 
