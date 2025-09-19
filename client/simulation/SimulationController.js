@@ -83,7 +83,20 @@ export default class SimulationController {
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
-    this._eventBus.on('simulation.plan_summary.requested', () => this.showPlanBreakdown());
+    this._eventBus.on('simulation.summary.requested', () => this.showSummaryModal());
+    this._eventBus.on('simulation.comparison.requested', () => this.showPlanBreakdown());
+  }
+
+  showSummaryModal() {
+    if (!this.overtimeReport || !this.normalReport) {
+      this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero.', type: 'warning', duration: 4000 });
+      return;
+    }
+    const summaryHtml = this.createOverallSummary(this.overtimeReport, this.normalReport);
+    this._eventBus.fire('simulation.modal.show', {
+      title: 'Resumen General de Simulación',
+      html: summaryHtml
+    });
   }
 
   createScheduleHtml(calendar) {
@@ -348,12 +361,6 @@ export default class SimulationController {
     }
 
     // HTML-based reports
-    if (metric === 'overallSummary') {
-      const summaryHtml = this.createOverallSummary(this.overtimeReport, this.normalReport);
-      this._chartPanel.showHtmlContent(summaryHtml);
-      return;
-    }
-
     if (metric === 'resultsTable') {
       const tableHtml = this.createResultsTable(this.simulationResults);
       this._chartPanel.showHtmlContent(tableHtml);
@@ -1029,8 +1036,6 @@ export default class SimulationController {
       avgCostPerPiece: this.overtimeReport.completedInstances > 0 ? (this.overtimeReport.totalCost / this.overtimeReport.completedInstances) : 0
     };
 
-    const scheduleHtml = this.createScheduleHtml(this._simulationEngine.calendar);
-
     const helpText = `
       <div class="help-content-container">
         <h4>¿Cómo leer los costos?</h4>
@@ -1136,9 +1141,10 @@ export default class SimulationController {
       </div>
     `;
 
-    const finalHtml = scheduleHtml + '<hr style="margin: 20px 0;"/>' + comparisonHtml;
-
-    this._eventBus.fire('simulation.schedule.show', { html: finalHtml });
+    this._eventBus.fire('simulation.modal.show', {
+      title: 'Comparativo de Planes',
+      html: comparisonHtml
+    });
 
     setTimeout(() => {
       const helpIcon = document.getElementById('plan-comparison-help-icon');

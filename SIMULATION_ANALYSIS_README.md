@@ -33,23 +33,18 @@ Toda la configuración de la simulación se centraliza en un único **Evento de 
 
 ## II. El Panel de Análisis: Tu Centro de Mando
 
-El panel de análisis es donde podrás entender el rendimiento de tu proceso.
+El panel de análisis es donde podrás entender el rendimiento de tu proceso. Se abre con el botón del **gráfico de barras (📊)**.
 
-### Vista Principal: Comparativo de Planes
+### Iconos de Acceso Rápido
 
-Al abrir el panel, la primera vista que verás es el **"Comparativo de Planes"**. Esta es la herramienta más importante para la toma de decisiones.
+En la cabecera del panel, junto al menú desplegable, encontrarás dos nuevos iconos para acceder a las vistas de resumen más importantes:
 
-*   **Diseño de Tarjetas**: Muestra dos tarjetas, "Plan Normal" y "Plan con Horas Extras", una al lado de la otra para una fácil comparación.
-*   **Cronograma Fijo**: En la parte superior, siempre verás el calendario laboral que se usó para la simulación, para que tengas el contexto completo.
-*   **Desglose de Costos Detallado**: La tarjeta del "Plan con Horas Extras" te ofrece un desglose financiero claro:
-    *   **Costo de Operación**: El costo total del tiempo trabajado, pagado a tarifa normal.
-    *   **Pago Extra (Doble/Triple)**: El bono *adicional* que se paga por trabajar en horas extras.
-    *   **Costo Total**: La suma de la operación más los bonos.
-*   **Icono de Ayuda (?)**: Si tienes dudas, haz clic en el ícono de ayuda junto al título para ver una explicación detallada de cada métrica y un ejemplo práctico.
+*   **Icono de Reloj (🕒) - Ver Resumen General**: Abre una ventana que muestra las métricas totales más importantes de la simulación (considerando el plan con horas extras).
+*   **Icono de Dólar ($) - Ver Comparativo de Planes**: Abre la herramienta de análisis más potente. Esta vista presenta dos tarjetas, "Plan Normal" y "Plan con Horas Extras", una al lado de la otra para una fácil comparación. Incluye un desglose financiero detallado que separa el costo de operación de los bonos por horas extras.
 
-### Otras Visualizaciones
+### Gráficos y Tablas Detalladas
 
-Usa el menú desplegable en la parte superior del panel para acceder a otros gráficos y tablas que te permitirán un análisis más profundo, como:
+Usa el **menú desplegable** principal para cambiar entre diferentes tipos de gráficos y tablas que te permitirán un análisis más profundo de aspectos específicos, como:
 *   **Análisis de Producción**: Compara la producción diaria entre el plan normal y el de horas extras.
 *   **Top 5 por Costo/Tiempo**: Identifica rápidamente las tareas más costosas o que más tiempo consumen.
 *   **Diagramas de Pareto**: Aplica el principio 80/20 para encontrar las causas raíz de los fallos o los altos costos.
