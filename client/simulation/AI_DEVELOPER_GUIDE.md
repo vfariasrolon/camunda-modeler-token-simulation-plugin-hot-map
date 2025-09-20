@@ -6,22 +6,24 @@ Este documento es una guía técnica para agentes de IA que describe la arquitec
 
 Este proyecto es un plugin para Camunda Modeler que añade una potente capacidad de **simulación y análisis de procesos de negocio**. Permite a un usuario analizar y optimizar un proceso BPMN antes de su implementación mediante la ejecución de dos escenarios: un "Plan Normal" y un "Plan con Horas Extras".
 
-## Guía de la Interfaz de Usuario (Diseño Híbrido Final)
+## Guía de la Interfaz de Usuario (Diseño con Modales)
 
 El plugin añade tres controles principales a la interfaz de Camunda Modeler:
 
 | Icono | Título | Función |
 | :--- | :--- | :--- |
-| **▶️** | **Ejecutar Simulación** | Inicia el motor de simulación. Ejecuta las simulaciones de ambos planes y guarda los resultados. |
-| **☯️** | **Mostrar Análisis de Frecuencia** | Abre la paleta de análisis de "heatmap" para visualizar métricas como frecuencia o costo directamente sobre el diagrama. |
-| **📊** | **Mostrar Panel de Análisis** | Abre el panel de análisis principal. |
+| **▶️** | **Ejecutar Simulación** | Inicia el motor de simulación. |
+| **☯️** | **Mostrar Análisis de Frecuencia** | Abre la paleta de análisis de "heatmap". |
+| **📊** | **Mostrar Panel de Gráficos** | Abre el panel de análisis principal. |
 
-### El Panel de Análisis Híbrido
+### El Panel de Análisis
 
-Este panel es el centro de análisis y está dividido en dos secciones:
-
-1.  **Sección Superior (Estática)**: Muestra siempre la información más crítica para la toma de decisiones. Contiene el **cronograma de trabajo** utilizado y las **tarjetas de comparación** de "Plan Normal" vs. "Plan con Horas Extras", con el desglose de costos detallado y un ícono de ayuda.
-2.  **Sección Inferior (Dinámica)**: Contiene un **menú desplegable (`select`)** que permite al usuario elegir entre varios gráficos detallados (Top 5 por Costo, Diagramas de Pareto, etc.). El gráfico seleccionado se renderiza en un elemento `<canvas>` en esta sección.
+Este panel es el centro de análisis y su cabecera contiene:
+1.  **Menú Desplegable (`<select>`)**: Permite al usuario elegir entre una variedad de gráficos y tablas detalladas (Pareto, Top 5, etc.) que se renderizan en el área de contenido principal del panel.
+2.  **Botones de Iconos**:
+    *   **Reloj (🕒)**: Lanza un modal con el "Resumen General" de la simulación.
+    *   **Dólar ($)**: Lanza un modal con el "Comparativo de Planes" y su desglose de costos detallado.
+    *   **Ayuda (?)**: Muestra información sobre los gráficos del menú desplegable.
 
 ---
 
@@ -29,12 +31,11 @@ Este panel es el centro de análisis y está dividido en dos secciones:
 
 ### 1. Arquitectura de los Módulos
 
-*   **`client/simulation/SimulationEngine.js`**: El motor principal. Su método `run` ahora acepta la `rootConfig` como parámetro para asegurar que cada ejecución sea sin estado. Es responsable de calcular los costos desglosados (`operationCost`, `doubleOvertimePremium`, etc.).
-*   **`client/simulation/ChartPanel.js`**: El panel de la UI. Su HTML ha sido reestructurado para soportar el diseño híbrido con una sección superior para contenido estático (`#comparison-container`) y una sección inferior para los gráficos dinámicos (`#charts-container`), que incluye el `<select>` y el `<canvas>`.
+*   **`client/simulation/SimulationEngine.js`**: El motor principal. Su método `run` ahora acepta la `rootConfig` como parámetro para asegurar que cada ejecución sea sin estado. Es responsable de calcular los costos desglosados (`operationCost`, `doubleOvertimePremium`, etc.). La lógica para prevenir el crash de `getTime` ha sido implementada.
+*   **`client/simulation/ChartPanel.js`**: El panel de la UI. Contiene la lógica para el menú desplegable, el canvas de gráficos, y los botones de la cabecera (reloj, dólar, ayuda). Escucha eventos para mostrar ventanas modales genéricas con el contenido que le envía el controlador.
 *   **`client/simulation/SimulationController.js`**: El orquestador.
-    *   Su función `showAnalysisPanel` ahora maneja toda la lógica de renderizado. Llama a `createComparisonCardsHtml` para generar el HTML de la sección superior y lo envía al `ChartPanel` a través de un evento `simulation.panel.show`.
-    *   Inmediatamente después, llama a `showChart` para renderizar el gráfico por defecto en la sección inferior.
-    *   Contiene toda la lógica de `getChartConfig` y `getChartData` para todos los gráficos detallados del menú desplegable.
+    *   Escucha los eventos de los botones del `ChartPanel` (`simulation.summary.requested`, `simulation.comparison.requested`) y genera el HTML para los modales correspondientes.
+    *   Contiene toda la lógica de `getChartConfig` y `getChartData` para todos los gráficos y tablas detallados del menú desplegable.
 
 ### 2. Lógica de Costos y Horas Extras
 El sistema de costos desglosa los costos para mayor claridad:

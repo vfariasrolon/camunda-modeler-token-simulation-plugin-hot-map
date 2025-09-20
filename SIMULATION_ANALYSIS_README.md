@@ -15,25 +15,23 @@ En la barra de herramientas de la izquierda, haz clic en el botón de **reproduc
 ### Paso 3: Analizar los Resultados
 Haz clic en el botón de **gráfico de barras (📊)** para abrir el **Panel de Análisis**.
 
-## II. El Panel de Análisis Híbrido
+## II. El Panel de Análisis
 
-El panel de análisis ha sido diseñado para ofrecer la información más importante de un vistazo, sin dejar de lado la capacidad de un análisis profundo.
+El panel de análisis te da acceso a todas las visualizaciones de datos.
 
-### Parte Superior: Comparación de Planes (Vista Fija)
+### Iconos de Acceso Rápido (en la cabecera del panel)
 
-La sección superior del panel siempre muestra la información más crítica para la toma de decisiones:
-*   **Cronograma de Trabajo**: Los detalles del calendario laboral usado en la simulación.
-*   **Comparativo de Planes**: Dos tarjetas, "Plan Normal" y "Plan con Horas Extras", una al lado de la otra.
-*   **Desglose de Costos Detallado**: La tarjeta de horas extras desglosa los costos en `Costo de Operación` (tarifa base) y `Pago Extra` (bonos).
-*   **Icono de Ayuda (?)**: Un ícono de ayuda que explica en detalle cómo interpretar los costos.
+*   **Icono de Reloj (🕒) - Ver Resumen General**: Abre una ventana emergente (modal) que muestra las métricas totales más importantes de la simulación (considerando el plan con horas extras).
+*   **Icono de Dólar ($) - Ver Comparativo de Planes**: Abre un modal con la herramienta de análisis más potente. Esta vista presenta dos tarjetas, "Plan Normal" y "Plan con Horas Extras", una al lado de la otra, con un desglose financiero detallado.
+*   **Icono de Ayuda (?)**: Muestra una guía sobre los diferentes gráficos disponibles en el menú desplegable.
 
-### Parte Inferior: Gráficos Detallados (Vista Dinámica)
+### Gráficos y Tablas Detalladas
 
-La sección inferior del panel permite un análisis más profundo:
-*   **Menú Desplegable**: Usa este menú para seleccionar diferentes métricas.
-*   **Área de Gráfico**: El gráfico correspondiente a tu selección (ej. "Top 5 por Costo", "Diagrama de Pareto", etc.) se mostrará en esta área.
-
-Este diseño híbrido te da lo mejor de ambos mundos: una conclusión de alto nivel siempre visible y las herramientas para explorar los datos a fondo justo debajo.
+Usa el **menú desplegable** principal para cambiar entre diferentes tipos de gráficos y tablas que te permitirán un análisis más profundo de aspectos específicos, como:
+*   **Análisis de Producción**: Compara la producción diaria entre el plan normal y el de horas extras.
+*   **Top 5 por Costo/Tiempo**: Identifica rápidamente las tareas más costosas o que más tiempo consumen.
+*   **Diagramas de Pareto**: Aplica el principio 80/20 para encontrar las causas raíz de los fallos o los altos costos.
+*   **Tabla de Resultados**: Ve una tabla con todas las métricas detalladas para cada elemento del proceso.
 
 ## III. Guía para Desarrolladores de IA
 
