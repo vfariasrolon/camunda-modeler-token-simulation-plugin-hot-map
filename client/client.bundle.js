@@ -4797,9 +4797,117 @@ class SimulationEngine {
 
     console.log("--- Simulation Finished ---");
 
+    this._logReport(options.useOvertime, runValue);
+
     this.calendar = originalCalendar;
 
     return this.results;
+  }
+
+  /**
+   * Informe de validacion en consola: entradas y salidas de la simulacion.
+   *
+   * Existe para poder COMPROBAR los resultados, no para adornar. Con
+   * distribucion "fixed" y sin fallos, cada numero de aqui se puede recalcular a
+   * mano: por eso las entradas se imprimen completas y las salidas van por tarea
+   * y en unidades legibles (minutos, no milisegundos).
+   *
+   * Se usa console.table, que DevTools renderiza como tabla ordenable.
+   */
+  _logReport(useOvertime, runValue) {
+    const plan = useOvertime ? 'CON HORAS EXTRA' : 'NORMAL';
+    const cfg = this.rootConfig;
+    const cal = cfg.calendar || {};
+    const horas = (h) => `${String(h.hour).padStart(2, '0')}:${String(h.minute).padStart(2, '0')}`;
+
+    console.group(`[validación] Simulación ${plan}`);
+
+    console.log('ENTRADAS · configuración global', {
+      instanciasObjetivo: runValue,
+      instanciasCompletadas: this.completedInstances,
+      llegada: cfg.arrivalRate,
+      jornada: cal.workingHours
+        ? `${horas(cal.workingHours.start)} - ${horas(cal.workingHours.end)}` +
+          (useOvertime ? ` (extendida: ${horas(this.calendar.config.workingHours.end)})` : '')
+        : '(sin calendario)',
+      diasLaborables: cal.workingDays,
+      festivos: (cal.holidays || []).length,
+      tarifaBasePorHora: cfg.cost && cfg.cost.baseRatePerHour,
+      costoEsperaPorHora: cfg.cost && cfg.cost.waitCostPerHour,
+      horasExtra: cfg.overtime
+    });
+
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Task'));
+
+    if (!tareas.length) {
+      console.log('No hay tareas en el diagrama.');
+      console.groupEnd();
+      return;
+    }
+
+    console.log('ENTRADAS · por tarea');
+    console.table(tareas.map((el) => {
+      const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el) || {};
+      const pt = d.processingTime || {};
+      const rt = d.reworkTime || {};
+      const triangular = pt.distribution === 'triangular';
+      return {
+        tarea: el.businessObject.name || el.id,
+        distribucion: pt.distribution || '(sin datos)',
+        tiempo_fijo: triangular ? '' : (pt.value == null ? '' : pt.value),
+        min: triangular ? pt.min : '',
+        moda: triangular ? pt.mode : '',
+        max: triangular ? pt.max : '',
+        unidad: pt.unit || '',
+        tasa_fallo: d.failureRate == null ? '' : d.failureRate,
+        retrabajo: rt.value == null ? '' : rt.value,
+        recurso: d.resources ? `${d.resources.pool || '?'} x${d.resources.quantityRequired || 1}` : '(sin recurso)'
+      };
+    }));
+
+    // Minutos, no milisegundos: totalWaitTime y totalCycleTime se acumulan con
+    // calculateBusinessDurationInMinutes(), que cuenta minutos.
+    console.log('SALIDAS · por tarea');
+    console.table(tareas.map((el) => {
+      const r = this.results.get(el.id) || {};
+      const n = r.executionCount || 0;
+      return {
+        tarea: el.businessObject.name || el.id,
+        ejecuciones: n,
+        fallos: r.failureCount || 0,
+        espera_total_min: Math.round(r.totalWaitTime || 0),
+        espera_prom_min: n ? Math.round((r.totalWaitTime || 0) / n) : 0,
+        proceso_total_min: Math.round((r.totalProcessingTime || 0) / 60000),
+        horas_extra_min: Math.round((r.totalOvertime || 0) / 60000),
+        costo_total: Number((r.totalCost || 0).toFixed(2))
+      };
+    }));
+
+    // Totales sobre las tareas: el total del proceso no es la suma de todas las
+    // tareas cuando hay ramas, pero si es la suma de lo ejecutado.
+    const suma = (campo) => tareas.reduce((acc, el) => acc + ((this.results.get(el.id) || {})[campo] || 0), 0);
+    const totalCosto = suma('totalCost');
+    const totalOperacion = suma('totalOperationCost');
+    const totalDoble = suma('totalDoubleOvertimeCost');
+    const totalTriple = suma('totalTripleOvertimeCost');
+    const totalEsperaCosto = suma('totalWaitTimeCost');
+
+    console.log('SALIDAS · totales', {
+      instanciasCompletadas: this.completedInstances,
+      costo_total: Number(totalCosto.toFixed(2)),
+      de_eso_operacion: Number(totalOperacion.toFixed(2)),
+      de_eso_prima_doble: Number(totalDoble.toFixed(2)),
+      de_eso_prima_triple: Number(totalTriple.toFixed(2)),
+      de_eso_costo_espera: Number(totalEsperaCosto.toFixed(2)),
+      cuadre_operacion_mas_primas: Number((totalOperacion + totalDoble + totalTriple + totalEsperaCosto).toFixed(2)),
+      costo_promedio_por_instancia: this.completedInstances > 0
+        ? Number((totalCosto / this.completedInstances).toFixed(2))
+        : 0,
+      espera_total_min: Math.round(suma('totalWaitTime')),
+      fallos_totales: suma('failureCount')
+    });
+
+    console.groupEnd();
   }
 }
 
