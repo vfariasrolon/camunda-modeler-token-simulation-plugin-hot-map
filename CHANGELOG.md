@@ -4,6 +4,17 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `CHORE`: **los arneses de verificación se versionan** en `verificacion/` (10 ficheros, **352
+  comprobaciones**) con un comando único: `pnpm run verificar`. Estaban fuera del repositorio y se
+  habrían perdido al reiniciar la máquina, que es justo lo contrario de lo que hace falta para
+  validar durante semanas. Los arneses **no reimplementan nada**: copian el código del plugin y lo
+  corren, con un stub mínimo en las fronteras que dependen de `bpmn-js`. La comprobación de que
+  `docs/ejemplo-validacion.bpmn` es válido incluye **correrlo con el motor de verdad**.
+* `DOCS`: **esquema de arranque para validar a mano** (`docs/ejemplo-validacion.bpmn`). Ya está
+  configurado, así que se puede simular y comparar con papel en cuanto se abre: jornada con
+  descanso, 200 instancias, compuerta 80/20, recurso con 2 unidades y tarifa. El propio fichero trae
+  documentados los números para que cuadren a mano, y la receta para empezar por lo fácil (poner la
+  inspección fija y sin fallos, y así cada pieza son 35 min exactos).
 * `FIX`: **fuera el suavizado de las líneas.** Las líneas venían con `tension` puesta y eso **miente**:
   el suavizado dibuja subidas y bajadas graduales que no existieron (un día se produjeron 5 y el
   siguiente 8: no hubo un 6,5 a media tarde) y oculta justo lo que se mira, que es si un día

@@ -4,3 +4,14 @@
 # Directorio de trabajo del agente (verificaciones, temporales). No es codigo
 # del plugin; se ignora como se hace con .idea/ o .vscode/.
 .qwen/
+
+# Derivados de verificacion/build.mjs: se regeneran con `pnpm run verificar`.
+# Se versionan los arneses (verificacion/0*.mjs) y NO lo que se copia de ellos.
+verificacion/SimulationEngine.mjs
+verificacion/BusinessCalendar.mjs
+verificacion/WarmupCurve.mjs
+verificacion/LaborRules.mjs
+verificacion/Workload.mjs
+verificacion/DataAudit.mjs
+verificacion/ModelUtil.mjs
+verificacion/util.mjs

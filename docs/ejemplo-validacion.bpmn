@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Esquema de arranque para validar a mano.
+
+  Es el caso minimo que ejercita TODO lo que el motor sabe hacer:
+    inicio -> inspeccion (triangular, con fallo y recurso) -> compuerta -> aprobado / reproceso -> fin
+
+  Los datos ya estan puestos y documentados en el propio XML, asi que se puede
+  simular y comparar con papel en cuanto se abra. Los numeros estan elegidos para
+  que cuadren a mano facilmente:
+
+    - Jornada 09:00-17:00 con descanso de 13:00 a 14:00 (2 tramos de 4 h y 3 h).
+    - Inspeccion: triangular 5/10/20 min. Procesado: 25 min fijos con 1 unidad de
+      "Operarios" (2 unidades). Reparacion: 15 min fijos.
+    - Compuerta: 80 % aprobado / 20 % reparacion.
+    - Coste: 50 $/h. Sin coste de espera, para que el cuadre salga limpio.
+    - 200 instancias, una llegada por minuto.
+
+  Comprobacion rapida (con distribucion FIJA y sin fallos, que es como se valida):
+  desmarca la triangular y pon 10 min fijos, y el ciclo sera exactamente
+    inspeccion + procesado = 35 min de trabajo por pieza.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  id="Definitions_1"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_Validacion" name="Validacion a mano" isExecutable="true">
+
+    <!-- El evento de inicio guarda la configuracion GLOBAL (isRoot: true). -->
+    <bpmn:startEvent id="Inicio" name="Llegada de pedido">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&quot;isRoot&quot;:true,&quot;simulationConfig&quot;:{&quot;runValue&quot;:200},&quot;arrivalRate&quot;:{&quot;value&quot;:1,&quot;unit&quot;:&quot;minute&quot;},&quot;startDate&quot;:&quot;&quot;,&quot;calendar&quot;:{&quot;workingDays&quot;:[1,2,3,4,5],&quot;workingHours&quot;:{&quot;start&quot;:{&quot;hour&quot;:9,&quot;minute&quot;:0},&quot;end&quot;:{&quot;hour&quot;:17,&quot;minute&quot;:0}},&quot;breaks&quot;:[{&quot;start&quot;:{&quot;hour&quot;:13,&quot;minute&quot;:0},&quot;end&quot;:{&quot;hour&quot;:14,&quot;minute&quot;:0},&quot;cuentaComoJornada&quot;:false,&quot;existeEnExtra&quot;:true}],&quot;holidays&quot;:[]},&quot;cost&quot;:{&quot;baseRatePerHour&quot;:50,&quot;waitCostPerHour&quot;:0},&quot;overtime&quot;:{&quot;limitHours&quot;:9,&quot;payMultiplier&quot;:2,&quot;excessPayMultiplier&quot;:3},&quot;warmup&quot;:{&quot;shape&quot;:&quot;none&quot;,&quot;initialEfficiency&quot;:0.7,&quot;recoveryMinutes&quot;:30,&quot;onShiftStart&quot;:true,&quot;onBreakReturn&quot;:true},&quot;lots&quot;:{&quot;enabled&quot;:false,&quot;sizeMode&quot;:&quot;fixed&quot;,&quot;size&quot;:20,&quot;min&quot;:10,&quot;mode&quot;:20,&quot;max&quot;:30,&quot;stopMinutes&quot;:0,&quot;table&quot;:[]},&quot;labor&quot;:{&quot;shiftType&quot;:&quot;diurna&quot;,&quot;dailyOvertimeLimitHours&quot;:3,&quot;maxOvertimeDaysPerWeek&quot;:3,&quot;sundayPremiumPercent&quot;:25,&quot;holidayPremiumPercent&quot;:0,&quot;rules&quot;:[]},&quot;seed&quot;:&quot;&quot;}"/>
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>Flujo_1</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="Flujo_1" sourceRef="Inicio" targetRef="Inspeccion"/>
+
+    <!-- Triangular 5/10/20 min, 10 % de fallo, recurso "Operarios" (1 unidad). -->
+    <bpmn:task id="Inspeccion" name="Inspeccion">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&quot;processingTime&quot;:{&quot;distribution&quot;:&quot;triangular&quot;,&quot;min&quot;:5,&quot;mode&quot;:10,&quot;max&quot;:20,&quot;unit&quot;:&quot;minutes&quot;},&quot;failureRate&quot;:0,&quot;reworkTime&quot;:{&quot;distribution&quot;:&quot;fixed&quot;,&quot;value&quot;:15,&quot;unit&quot;:&quot;minutes&quot;},&quot;resources&quot;:{&quot;pool&quot;:&quot;Operarios&quot;,&quot;quantityRequired&quot;:1}}"/>
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flujo_1</bpmn:incoming>
+      <bpmn:outgoing>Flujo_2</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:sequenceFlow id="Flujo_2" sourceRef="Inspeccion" targetRef="Compuerta"/>
+
+    <!-- Compuerta EXCLUSIVA: su reparto es el de la pestana Flujos y suma 100 %. -->
+    <bpmn:exclusiveGateway id="Compuerta" name="¿Aprobado?">
+      <bpmn:incoming>Flujo_2</bpmn:incoming>
+      <bpmn:outgoing>Flujo_Aprobado</bpmn:outgoing>
+      <bpmn:outgoing>Flujo_Reproceso</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="Flujo_Aprobado" name="Aprobado" sourceRef="Compuerta" targetRef="Procesado">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&quot;branchingProbability&quot;:0.8}"/>
+        </camunda:properties>
+      </bpmn:extensionElements>
+    </bpmn:sequenceFlow>
+
+    <bpmn:sequenceFlow id="Flujo_Reproceso" name="Reproceso" sourceRef="Compuerta" targetRef="Reparacion">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&quot;branchingProbability&quot;:0.2}"/>
+        </camunda:properties>
+      </bpmn:extensionElements>
+    </bpmn:sequenceFlow>
+
+    <!-- 25 min fijos, recurso "Operarios". -->
+    <bpmn:task id="Procesado" name="Procesado">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&quot;processingTime&quot;:{&quot;distribution&quot;:&quot;fixed&quot;,&quot;value&quot;:25,&quot;unit&quot;:&quot;minutes&quot;},&quot;failureRate&quot;:0,&quot;reworkTime&quot;:{&quot;distribution&quot;:&quot;fixed&quot;,&quot;value&quot;:15,&quot;unit&quot;:&quot;minutes&quot;},&quot;resources&quot;:{&quot;pool&quot;:&quot;Operarios&quot;,&quot;quantityRequired&quot;:1}}"/>
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flujo_Aprobado</bpmn:incoming>
+      <bpmn:outgoing>Flujo_3</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:sequenceFlow id="Flujo_3" sourceRef="Procesado" targetRef="Fin"/>
+
+    <!-- 15 min fijos, y vuelve a la compuerta para reintentar la aprobacion. -->
+    <bpmn:task id="Reparacion" name="Reparacion">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&quot;processingTime&quot;:{&quot;distribution&quot;:&quot;fixed&quot;,&quot;value&quot;:15,&quot;unit&quot;:&quot;minutes&quot;},&quot;failureRate&quot;:0,&quot;reworkTime&quot;:{&quot;distribution&quot;:&quot;fixed&quot;,&quot;value&quot;:15,&quot;unit&quot;:&quot;minutes&quot;}}"/>
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flujo_Reproceso</bpmn:incoming>
+      <bpmn:outgoing>Flujo_4</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:sequenceFlow id="Flujo_4" sourceRef="Reparacion" targetRef="Compuerta"/>
+
+    <bpmn:endEvent id="Fin" name="Pedido entregado">
+      <bpmn:incoming>Flujo_3</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- Piscina de recursos. Con "members" cada unidad seria una persona con
+         nombre, con su tarifa, habilidades y carga maxima; sin ellos, la piscina
+         se comporta igual que siempre. -->
+    <bpmn:extensionElements>
+      <camunda:properties>
+        <camunda:property name="simulationData" value="{&quot;resourcePools&quot;:[{&quot;name&quot;:&quot;Operarios&quot;,&quot;quantity&quot;:2}]}"/>
+      </camunda:properties>
+    </bpmn:extensionElements>
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_Validacion">
+      <bpmndi:BPMNShape id="Inicio_di" bpmnElement="Inicio">
+        <dc:Bounds x="152" y="102" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="131" y="145" width="79" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inspeccion_di" bpmnElement="Inspeccion">
+        <dc:Bounds x="240" y="80" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Compuerta_di" bpmnElement="Compuerta" isMarkerVisible="true">
+        <dc:Bounds x="390" y="95" width="50" height="50"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="378" y="65" width="74" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Procesado_di" bpmnElement="Procesado">
+        <dc:Bounds x="490" y="80" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Reparacion_di" bpmnElement="Reparacion">
+        <dc:Bounds x="490" y="220" width="100" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Fin_di" bpmnElement="Fin">
+        <dc:Bounds x="652" y="102" width="36" height="36"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="630" y="145" width="82" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flujo_1_di" bpmnElement="Flujo_1">
+        <di:waypoint x="188" y="120"/>
+        <di:waypoint x="240" y="120"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flujo_2_di" bpmnElement="Flujo_2">
+        <di:waypoint x="340" y="120"/>
+        <di:waypoint x="390" y="120"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flujo_Aprobado_di" bpmnElement="Flujo_Aprobado">
+        <di:waypoint x="440" y="120"/>
+        <di:waypoint x="490" y="120"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="446" y="96" width="50" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flujo_Reproceso_di" bpmnElement="Flujo_Reproceso">
+        <di:waypoint x="415" y="145"/>
+        <di:waypoint x="415" y="260"/>
+        <di:waypoint x="490" y="260"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="420" y="196" width="56" height="14"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flujo_3_di" bpmnElement="Flujo_3">
+        <di:waypoint x="590" y="120"/>
+        <di:waypoint x="652" y="120"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flujo_4_di" bpmnElement="Flujo_4">
+        <di:waypoint x="540" y="220"/>
+        <di:waypoint x="540" y="180"/>
+        <di:waypoint x="415" y="180"/>
+        <di:waypoint x="415" y="145"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
