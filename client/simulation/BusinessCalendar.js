@@ -207,6 +207,26 @@ export default class BusinessCalendar {
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   }
 
+  /**
+   * Clave unica de la semana ISO: "AAAA-Wnn" (p. ej. "2026-W03").
+   *
+   * getWeekNumber() devuelve SOLO el numero de semana, asi que la semana 1 de
+   * 2026 y la semana 1 de 2027 compartian contador. Quien use el numero como
+   * clave (el cupo semanal de horas extra del motor) sumaba entre si dos
+   * semanas separadas por un año, y la segunda heredaba el cupo ya agotado de
+   * la primera.
+   *
+   * El año que acompaña es el año ISO (el de la semana), no el natural: el 1 de
+   * enero puede pertenecer a la ultima semana de diciembre del año anterior.
+   */
+  getWeekKey(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const isoYear = d.getUTCFullYear();
+    return `${isoYear}-W${String(this.getWeekNumber(date)).padStart(2, '0')}`;
+  }
+
   calculateWorkingDays(startDate, endDate) {
     let workingDaysCount = 0;
     let currentDate = new Date(startDate.getTime());

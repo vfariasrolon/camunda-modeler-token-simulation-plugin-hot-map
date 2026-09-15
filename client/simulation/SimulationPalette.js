@@ -17,19 +17,16 @@ const TotalWaitTimeIcon = '<path d="M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v
 const ProcessTimeIcon = '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>';
 const CycleTimeIcon = '<path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8A5.87 5.87 0 0 1 6 12c0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/>';
 
-// --- Costos (tres iconos distintos, antes eran tres dólares iguales) ---
+// --- Costos (iconos distintos, antes eran tres dólares iguales) ---
 const CostIcon = '<path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>';
-const ReworkCostIcon = '<path d="M14 6.2c-.84-.28-1.63-.51-2.36-.7-1.45-.38-2.01-.65-2.01-1.36 0-.62.57-1.1 1.65-1.1 1.02 0 1.5.42 1.57 1.13h2.06C14.85 2.62 13.98 1.72 12.5 1.4V0h-2.5v1.37C8.4 1.66 7.2 2.53 7.2 3.99c0 1.75 1.4 2.62 3.5 3.13 1.9.46 2.3 1.01 2.3 1.87 0 .72-.6 1.3-1.75 1.3-1.5 0-2.1-.7-2.2-1.6H7.05c.1 1.7 1.35 2.6 2.9 2.9V13h2.5v-1.4c1.75-.28 2.9-1.13 2.9-2.83 0-2.1-1.8-2.82-3.35-3.2zM4 19l3 3h10l3-3-3-3H7l-3 3z"/>';
 const IdleCostIcon = '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>';
 
 // --- Calidad y fallos (dos iconos distintos, antes eran dos bichos iguales) ---
 const FailureRateIcon = '<path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5s-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/>';
 const ReworkTimeIcon = '<path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/>';
 
-// --- Tiempo extra y logística ---
+// --- Tiempo extra ---
 const OvertimeIcon = '<path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>';
-const TruckIcon = '<path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM15 11V6h3.5l1.96 2.5H15z"/>';
-const WarningIcon = '<path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>';
 
 // --- Otros ---
 const FrequencyIcon = '<path d="M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z"/>';
@@ -69,8 +66,6 @@ const HELP_SECTIONS = [
     items: [
       [ CostIcon, 'Costo total',
         'Coste acumulado en cada tarea: operación + primas de horas extra + espera. <em>Piensa en él como lo que cuesta producir ahí.</em>' ],
-      [ ReworkCostIcon, 'Costo de reparación',
-        'Lo que cuesta el tiempo dedicado a <strong>rehacer trabajo</strong> tras un fallo.' ],
       [ IdleCostIcon, 'Costo de tiempos muertos',
         'Lo que <strong>pagas mientras nadie trabaja</strong>: recursos ociosos esperando. Dinero que se va sin producir nada.' ]
     ]
@@ -85,14 +80,10 @@ const HELP_SECTIONS = [
     ]
   },
   {
-    title: 'Tiempo extra y logística',
+    title: 'Tiempo extra',
     items: [
       [ OvertimeIcon, 'Horas extras',
-        'Horas trabajadas fuera de la jornada, dentro de las franjas de <strong>pago doble o triple</strong>.' ],
-      [ TruckIcon, 'Espera de transporte',
-        'Tiempo perdido esperando un vehículo o un lote antes de poder mover el material.' ],
-      [ WarningIcon, 'Despachos ineficientes',
-        'Viajes que <strong>no se aprovecharon</strong>. Ejemplo: un camión que sale medio vacío. Cada uno es un costo evitable.' ]
+        'Horas trabajadas fuera de la jornada, dentro de las franjas de <strong>pago doble o triple</strong>.' ]
     ]
   },
   {
@@ -205,12 +196,6 @@ export default class SimulationPalette {
         metric: 'reworkTime'
     });
     this.addEntry({
-        title: 'Visualizar Costo de Reparación por Fallo',
-        tooltip: 'Costo acumulado del tiempo de reparación tras fallos',
-        icon: ReworkCostIcon,
-        metric: 'reworkCost'
-    });
-    this.addEntry({
         title: 'Visualizar Horas Extras',
         tooltip: 'Horas trabajadas dentro de las franjas de pago doble y triple',
         icon: OvertimeIcon,
@@ -221,18 +206,6 @@ export default class SimulationPalette {
         tooltip: 'Costo del tiempo en que los recursos estuvieron ociosos esperando',
         icon: IdleCostIcon,
         metric: 'waitTimeCost'
-    });
-    this.addEntry({
-        title: 'Visualizar Espera de Transporte',
-        tooltip: 'Tiempo perdido esperando por un vehículo o lote',
-        icon: TruckIcon,
-        metric: 'transportWaitTime'
-    });
-    this.addEntry({
-        title: 'Visualizar Despachos Ineficientes',
-        tooltip: 'Despachos de transporte ineficientes (p. ej. un vehículo que sale sin llenarse)',
-        icon: WarningIcon,
-        metric: 'inefficientDispatch'
     });
     this.addEntry({
         title: 'Visualizar Cantidad de Recursos Asignados',

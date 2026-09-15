@@ -57,6 +57,12 @@ const MAX_BLOB_RADIUS = 240;
 const HEATMAP_TYPES = [ 'bpmn:Task', 'bpmn:Gateway' ];
 
 // Nombre legible de cada metrica, para el nombre del archivo exportado.
+//
+// Se listan SOLO las metricas que el motor puede calcular de verdad. Antes
+// estaban tambien `reworkCost`, `transportWaitTime` e `inefficientDispatch`,
+// pero el motor no acumula `totalReworkCost`, `totalTransportWaitTime` ni
+// `inefficientDispatchCount`: el mapa de calor pintaba NaN y los graficos
+// salian vacios. Una metrica que nunca puede dar dato es peor que no tenerla.
 const NOMBRES_METRICA = {
   cost: 'costo',
   waitTime: 'espera-promedio',
@@ -66,12 +72,31 @@ const NOMBRES_METRICA = {
   processTime: 'tiempo-de-proceso',
   failureRate: 'tasa-de-fallos',
   reworkTime: 'tiempo-de-reparacion',
-  reworkCost: 'costo-de-reparacion',
   overtime: 'horas-extras',
   waitTimeCost: 'costo-tiempos-muertos',
-  transportWaitTime: 'espera-de-transporte',
-  inefficientDispatch: 'despachos-ineficientes',
   resourceQuantity: 'cantidad-de-recursos'
+};
+
+// Los resultados del motor mezclan DOS unidades de tiempo y hay que
+// normalizarlas antes de dibujar:
+//   - totalProcessingTime / totalOvertime / totalReworkTime -> MILISEGUNDOS
+//   - totalWaitTime / totalCycleTime -> MINUTOS
+//     (los acumula calculateBusinessDurationInMinutes, que cuenta minutos)
+//
+// Los graficos pintaban el valor CRUDO con el eje rotulado "(s)": las barras
+// mostraban milisegundos bajo una etiqueta de segundos, y el tiempo de espera
+// —que viene en minutos— se formateaba con formatMilliseconds(), un error de
+// 60.000x. Se normaliza TODO a MINUTOS, que es la unidad con la que el usuario
+// configura el simulador, y se formatea con formatMinutes().
+//
+// `factor` convierte el campo crudo a minutos.
+const METRICAS_TIEMPO = {
+  processTime: { campo: 'totalProcessingTime', factor: 1 / 60000 },
+  paretoTime: { campo: 'totalProcessingTime', factor: 1 / 60000 },
+  waitTime: { campo: 'totalWaitTime', factor: 1 },
+  allWaitTimes: { campo: 'totalWaitTime', factor: 1 },
+  overtime: { campo: 'totalOvertime', factor: 1 / 60000 },
+  reworkTime: { campo: 'totalReworkTime', factor: 1 / 60000 }
 };
 
 // Quita caracteres que no son validos en un nombre de archivo.
@@ -656,11 +681,8 @@ export default class SimulationController {
           else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1);
           else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1);
           else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
-          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1);
-          else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
           else if (metric === 'overtime') value = result.totalOvertime;
           else if (metric === 'reworkTime') value = result.totalReworkTime;
-          else if (metric === 'reworkCost') value = result.totalReworkCost;
           else if (metric === 'waitTimeCost') value = result.totalWaitTimeCost;
 
 
@@ -699,15 +721,8 @@ export default class SimulationController {
                     const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
                     overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
                 }
-                else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
-                  overlayText = `E.Carro: ${formatMilliseconds(result.totalTransportWaitTime / (result.executionCount || 1))}`;
-                }
-                else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
-                  overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
-                }
                 else if (metric === 'overtime') overlayText = `H. Extras: ${formatMilliseconds(result.totalOvertime)}`;
                 else if (metric === 'reworkTime') overlayText = `T. Reparación: ${formatMilliseconds(result.totalReworkTime)}`;
-                else if (metric === 'reworkCost') overlayText = `Costo Reparación: ${formatCurrency(result.totalReworkCost, 'MXN')}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${formatCurrency(result.totalWaitTimeCost, 'MXN')}`;
             } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${formatMinutes(result.totalCycleTime / (result.executionCount || 1))}`;
@@ -843,17 +858,19 @@ export default class SimulationController {
         }
     };
 
+    // Los ejes de tiempo se rotulan en MINUTOS porque getChartData() ya ha
+    // convertido la serie a minutos (ver METRICAS_TIEMPO). Antes decian "(s)"
+    // sobre valores en milisegundos.
     const yAxisTitle =
         metric === 'cost' ? 'Costo Total ($)' :
-        metric === 'processTime' ? 'Tiempo de Proceso Total (s)' :
-        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
+        metric === 'processTime' ? 'Tiempo de Proceso Total (min)' :
+        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (min)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
         metric === 'pareto' ? 'Número de Fallos' :
-        metric === 'paretoTime' ? 'Tiempo de Proceso Total' :
+        metric === 'paretoTime' ? 'Tiempo de Proceso Total (min)' :
         metric === 'paretoCost' ? 'Costo Total ($)' :
-        metric === 'overtime' ? 'Tiempo Extra Total (s)' :
-        metric === 'reworkTime' ? 'Tiempo de Reparación Total (s)' :
-        metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
+        metric === 'overtime' ? 'Tiempo Extra Total (min)' :
+        metric === 'reworkTime' ? 'Tiempo de Reparación Total (min)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         metric === 'dailyProduction' ? 'Piezas Completadas' :
         'Valor';
@@ -878,7 +895,7 @@ export default class SimulationController {
         options.scales.x = {
             type: 'linear',
             position: 'bottom',
-            title: { display: true, text: 'Tiempo de Proceso Promedio (s)' }
+            title: { display: true, text: 'Tiempo de Proceso Promedio (min)' }
         };
         options.scales.y.title = { display: true, text: 'Costo Total ($)' };
     }
@@ -891,8 +908,9 @@ export default class SimulationController {
         borderWidth: 1
     }];
 
-    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes', 'overtime', 'reworkTime'];
-    if (timeMetrics.includes(metric) || metric === 'paretoTime') {
+    // Series de tiempo: se formatean con formatMinutes() porque la serie ya
+    // viene en minutos, no en milisegundos.
+    if (METRICAS_TIEMPO[metric]) {
         options.plugins = {
             tooltip: {
                 callbacks: {
@@ -903,7 +921,7 @@ export default class SimulationController {
                           if (context.dataset.yAxisID === 'y1') {
                             label += context.parsed.y.toFixed(1) + '%';
                           } else {
-                            label += formatMilliseconds(context.parsed.y);
+                            label += formatMinutes(context.parsed.y);
                           }
                         }
                         return label;
@@ -940,7 +958,7 @@ export default class SimulationController {
                 callbacks: {
                     label: function(context) {
                         const label = context.dataset.label || '';
-                        const time = formatMilliseconds(context.parsed.x * 1000);
+                        const time = formatMinutes(context.parsed.x);
                         const cost = formatCurrency(context.parsed.y, 'MXN');
                         return `${context.chart.data.labels[context.dataIndex]}: (${time}, ${cost})`;
                     }
@@ -1035,10 +1053,13 @@ export default class SimulationController {
   }
 
   createOverallSummary(report, normalReport) {
-    let totalCost = 0, totalReworkCost = 0, totalOvertimeCost = 0,
-        totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
+    // Solo se acumulan campos que el motor ESCRIBE de verdad. Antes se leian
+    // aqui `totalReworkCost`, `totalOvertimeCost` y `totalNormalTimeCost`, que
+    // SimulationEngine.initialize no crea y nadie acumula: el `|| 0` los
+    // convertia en tres tarjetas que mostraban siempre $0.00.
+    let totalCost = 0, totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
         totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0,
-        totalNormalTimeCost = 0;
+        totalOperationCost = 0, totalWaitTimeCost = 0;
 
     // console.log('--- SUMMARY DATA ---');
     // console.log('Overtime Report:', report);
@@ -1047,15 +1068,17 @@ export default class SimulationController {
 
     report.results.forEach(result => {
       totalCost += result.totalCost || 0;
-      totalReworkCost += result.totalReworkCost || 0;
-      totalOvertimeCost += result.totalOvertimeCost || 0;
       totalFailures += result.failureCount || 0;
       totalReworkTime += result.totalReworkTime || 0;
       totalOvertimeMs += result.totalOvertime || 0;
       totalDoubleOvertimeCost += result.totalDoubleOvertimeCost || 0;
       totalTripleOvertimeCost += result.totalTripleOvertimeCost || 0;
-      totalNormalTimeCost += result.totalNormalTimeCost || 0;
+      totalOperationCost += result.totalOperationCost || 0;
+      totalWaitTimeCost += result.totalWaitTimeCost || 0;
     });
+
+    const totalPrimasExtra = totalDoubleOvertimeCost + totalTripleOvertimeCost;
+    const sumaComponentes = totalOperationCost + totalPrimasExtra + totalWaitTimeCost;
 
     const totalTimeDays = report.totalWorkingDays;
     const totalTimeHours = (report.calendarDuration / (1000 * 60 * 60)).toFixed(2);
@@ -1096,12 +1119,12 @@ export default class SimulationController {
             <span class="value">${formatCurrency(totalCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Costo del Tiempo de Reparación:</span>
-            <span class="value">${formatCurrency(totalReworkCost, 'MXN')}</span>
+            <span class="label">Costo de Operación (base):</span>
+            <span class="value">${formatCurrency(totalOperationCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Costo Total Horas Extras:</span>
-            <span class="value">${formatCurrency(totalOvertimeCost, 'MXN')}</span>
+            <span class="label">Primas de Horas Extra (doble + triple):</span>
+            <span class="value">${formatCurrency(totalPrimasExtra, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Costo Horas Extras Dobles:</span>
@@ -1112,14 +1135,21 @@ export default class SimulationController {
             <span class="value">${formatCurrency(totalTripleOvertimeCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Costo Horas Normales:</span>
-            <span class="value">${formatCurrency(totalNormalTimeCost, 'MXN')}</span>
+            <span class="label">Costo de Espera de Recursos:</span>
+            <span class="value">${formatCurrency(totalWaitTimeCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Porcentaje de Tiempo Extra:</span>
             <span class="value">${overtimePercentage}%</span>
           </div>
         </div>
+        <p class="sim-summary-note">
+          Comprobación: operación + primas + espera =
+          <strong>${formatCurrency(sumaComponentes, 'MXN')}</strong>
+          ${Math.abs(sumaComponentes - totalCost) < 0.01
+            ? '— coincide con el Costo Total.'
+            : `— NO coincide con el Costo Total (${formatCurrency(totalCost, 'MXN')}).`}
+        </p>
       </div>
     `;
   }
@@ -1212,7 +1242,8 @@ export default class SimulationController {
 
     if (metric === 'scatter') {
         const scatterData = tasks.map(t => ({
-            x: t.totalProcessingTime / (t.executionCount || 1) / 1000,
+            // /60000: de milisegundos a minutos, la unidad del eje.
+            x: t.totalProcessingTime / (t.executionCount || 1) / 60000,
             y: t.totalCost
         }));
         return { data: scatterData, labels: tasks.map(t => t.name), label: 'Tiempo de Proceso vs. Costo' };
@@ -1299,7 +1330,9 @@ export default class SimulationController {
         timedTasks.sort((a, b) => b.totalProcessingTime - a.totalProcessingTime);
 
         const labels = timedTasks.map(t => t.name);
-        const timeData = timedTasks.map(t => t.totalProcessingTime);
+        // totalProcessingTime esta en MILISEGUNDOS; el eje del Pareto de tiempos
+        // esta rotulado en minutos, asi que se convierte aqui.
+        const timeData = timedTasks.map(t => t.totalProcessingTime / 60000);
         const totalTime = timeData.reduce((sum, count) => sum + count, 0);
 
         let cumulative = 0;
@@ -1337,12 +1370,9 @@ export default class SimulationController {
     else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
     else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'allWaitTimes') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
-    else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
-    else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
     else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
     else if (metric === 'overtime') { dataProperty = 'totalOvertime'; label = 'Tiempo Extra Total'; }
     else if (metric === 'reworkTime') { dataProperty = 'totalReworkTime'; label = 'Tiempo de Reparación Total'; }
-    else if (metric === 'reworkCost') { dataProperty = 'totalReworkCost'; label = 'Costo de Reparación Total'; }
     else if (metric === 'waitTimeCost') { dataProperty = 'totalWaitTimeCost'; label = 'Costo de Espera Total'; }
 
     tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
@@ -1352,7 +1382,11 @@ export default class SimulationController {
         : tasks.filter(t => t[dataProperty] > 0).slice(0, 5);
 
     const labels = chartTasks.map(t => t.name);
-    const data = chartTasks.map(t => t[dataProperty]);
+
+    // Normalizacion de unidades: las metricas de tiempo se pasan a MINUTOS para
+    // que coincidan con el rotulo del eje. El resto se deja tal cual.
+    const tiempo = METRICAS_TIEMPO[metric];
+    const data = chartTasks.map(t => (tiempo ? t[dataProperty] * tiempo.factor : t[dataProperty]));
 
     return { data, labels, label };
   }

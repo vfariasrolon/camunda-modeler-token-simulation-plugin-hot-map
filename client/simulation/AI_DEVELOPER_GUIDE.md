@@ -2,15 +2,33 @@
 
 Este documento es una guía técnica para agentes de IA. Describe cómo interactuar con los datos de simulación (`simulationData`) almacenados dentro de los diagramas BPMN en este proyecto. El objetivo es permitir que un agente pueda construir nuevas herramientas, como un panel de propiedades, para editar estos datos.
 
-> **Estado de este documento (auditado el 2026-09-14):** el contenido se verificó línea a
-> línea contra el código fuente. Se corrigieron tres afirmaciones que contradecían la
-> implementación real (el rendimiento de `addWorkingTime`, el fallback inexistente cuando
+> **Estado de este documento (revisado el 2026-09-15):** el contenido se verificó
+> línea a línea contra el código fuente. Se corrigieron tres afirmaciones que contradecían
+> la implementación real (el rendimiento de `addWorkingTime`, el fallback inexistente cuando
 > falta el evento raíz, y la fórmula de `totalCost`), se completaron cuatro métricas de la
 > paleta de análisis que faltaban y se documentaron los módulos del cliente que no
 > aparecían. Los bloques marcados con ⚠️ señalan **discrepancias reales entre lo
 > documentado y el código**, no simples matices de redacción: léelos antes de confiar en
 > la sección que los contiene. Lo que no se pudo verificar se marca explícitamente como no
 > verificado en lugar de omitirse.
+>
+> **Cambios estructurales de esta revisión** (afectan a cómo se edita y a qué módulos
+> existen; el detalle está en cada sección):
+>
+> - Se **eliminó** `client/editor/` (`DataEditor.js`, `data-editor.css`, `index.js`) y el
+>   módulo `RandomDataGenerator.js`. **El único editor de datos es el panel de tabla**
+>   (`client/simulation/DataTablePanel.js`). El icono del lápiz sobre cada figura ya no
+>   abre un modal propio: abre esa tabla centrada en el elemento.
+> - Se añadió la pestaña **Recursos** (`resourcePools`) y las columnas **Recurso** /
+>   **Cant.** en la pestaña Tareas: el campo `resources` del motor ya se puede escribir
+>   desde la interfaz.
+> - Se **eliminaron** tres métricas fantasma de la paleta y tres tarjetas siempre-cero del
+>   resumen (ver §3).
+> - Se corrigió el **cupo semanal de horas extra** para indexarlo por semana ISO completa
+>   (`2026-W03`), no solo por número.
+> - El valor por defecto de `arrivalRate` pasó de `{ value: 60, unit: "minute" }` (que
+>   significa *una llegada por segundo*) a `{ value: 1, unit: "minute" }`.
+> - Documentación de usuario extensa en **`docs/GUIA_SIMULACION.md`**.
 
 ## Análisis General del Plugin: ¿Qué Hace y Cómo Funciona?
 
@@ -38,13 +56,14 @@ El plugin añade varios controles a la interfaz de Camunda Modeler para ejecutar
 
 ### Barra de Herramientas Principal
 
-En la barra de herramientas principal (generalmente a la izquierda, junto a la paleta de elementos BPMN), se añaden tres nuevos botones:
+En la barra de herramientas principal (generalmente a la izquierda, junto a la paleta de elementos BPMN), se añaden cuatro nuevos botones:
 
 | Icono | Título | Función |
 | :--- | :--- | :--- |
-| **▶️** | **Ejecutar Simulación** | Inicia el motor de simulación. Lee los `simulationData` del diagrama, ejecuta la simulación completa en segundo plano y guarda los resultados agregados para su análisis. |
+| **▶️** | **Ejecutar Simulación** | Inicia el motor de simulación. Lee los `simulationData` del diagrama, ejecuta la simulación completa en segundo plano y guarda los resultados agregados para su análisis. Corre **dos planes**: normal y con horas extra. |
 | **☯️** | **Mostrar Análisis** | Abre la **Paleta de Análisis**. Esta paleta lateral permite visualizar diferentes métricas de la simulación directamente sobre el diagrama en forma de mapa de calor (heatmap). |
 | **📊** | **Mostrar Gráficos** | Abre el **Panel de Gráficos** en la parte inferior de la pantalla. Este panel ofrece un análisis más profundo con tablas de datos y diversos tipos de gráficos (barras, dispersión, Pareto). |
+| **▦** | **Editar Datos por Tabla** | Abre el **panel de edición por tabla**: la única vía de edición de datos. Cuatro pestañas (Tareas, Flujos, Recursos, Global), exportación e importación de CSV, botón de datos de prueba y validación bloqueante. |
 
 ### Paleta de Análisis (Heatmap)
 
@@ -61,18 +80,24 @@ Esta paleta se abre al hacer clic en el botón del Yin-Yang (☯️). Cada botó
 | **🕒** | **Tiempo de Proceso (Process Time)** | Muestra el **tiempo de trabajo activo** promedio en cada tarea. |
 | **🐞** | **Tasa de Fallos (Failure Rate)** | Visualiza las tareas donde ocurren más fallos. |
 | **🕒** | **Tiempo de Reparación por Fallo** | Tiempo medio dedicado a reparar (rework) tras un fallo. |
-| **$** | **Costo de Reparación por Fallo** | Costo acumulado del tiempo de reparación. |
 | **🕒** | **Horas Extras (Overtime)** | Horas trabajadas dentro de las franjas de pago doble/triple. |
 | **$** | **Costo de Tiempos Muertos** | Costo incurrido por espera de recursos, calculado con `cost.waitCostPerHour`. |
-| **🚚** | **Espera de Transporte** | Muestra el tiempo perdido esperando por un vehículo o lote (si la lógica está activada). |
-| **⚠️** | **Despachos Ineficientes** | Muestra el número de despachos de transporte ineficientes (ej. un vehículo que sale sin estar lleno). |
 | **👥** | **Cantidad de Recursos** | Muestra el **número de recursos configurados** para cada tarea. |
 
+> **Métricas retiradas (2026-09-15).** La paleta ofrecía también «Costo de Reparación por
+> Fallo», «Espera de Transporte» y «Despachos Ineficientes». **El motor nunca acumuló los
+> campos que las alimentaban** (`totalReworkCost`, `totalTransportWaitTime`,
+> `inefficientDispatchCount`): el mapa de calor recibía `NaN` y los gráficos salían vacíos.
+> Se eliminaron en lugar de documentarlas como si funcionaran. Si en el futuro se
+> implementa la logística, hay que **volver a añadirlas** en tres sitios a la vez:
+> `SimulationPalette.js` (entrada + ayuda), el `<select>` de `ChartPanel.js`, y el mapa
+> `NOMBRES_METRICA` y las ramas de `showMetric`/`getChartData` de `SimulationController.js`.
+
 > **Nota:** Las métricas se definen en `client/simulation/SimulationPalette.js`. Las claves
-> internas son `cost`, `waitTime`, `totalWaitTime`, `cycleTime`, `frequency`, `processTime`,
-> `failureRate`, `reworkTime`, `reworkCost`, `overtime`, `waitTimeCost`,
-> `transportWaitTime`, `inefficientDispatch` y `resourceQuantity`. Si añades una métrica,
-> regístrala ahí: el mapa de calor de `SimulationController.js` consume esas claves.
+> internas vigentes son `cost`, `waitTime`, `totalWaitTime`, `cycleTime`, `frequency`,
+> `processTime`, `failureRate`, `reworkTime`, `overtime`, `waitTimeCost` y
+> `resourceQuantity`. Si añades una métrica, regístrala ahí: el mapa de calor de
+> `SimulationController.js` consume esas claves.
 
 #### Controles de la Paleta
 
@@ -96,27 +121,41 @@ Esta sección detalla las funcionalidades avanzadas añadidas al motor de simula
     > alimenta el "Tiempo Total (Horas Netas)" del resumen — **sí itera minuto a minuto**.
     > La optimización de este módulo es **parcial y sigue pendiente**. No des por hecho que
     > el problema de rendimiento en simulaciones largas está resuelto.
-*   **`client/editor/DataEditor.js`**: Controla la interfaz de usuario del editor de datos de simulación. **Abre un modal** (clase `sim-data-editor-modal`), no el panel de propiedades nativo del modeler. La lógica para renderizar los formularios se encuentra en los métodos `render<ElementType>Form`. Fue modificado para centralizar toda la configuración global en el `StartEvent`.
-*   **`client/simulation/SimulationEngine.js`**: El motor principal. Fue refactorizado para usar el `BusinessCalendar` y para buscar su configuración en un "Evento de Inicio Raíz".
-*   **`client/simulation/SimulationController.js`**: El orquestador que conecta el motor con la UI. Fue actualizado para manejar y visualizar las nuevas métricas y el panel de resumen. También contiene la lógica del mapa de calor.
-*   **`client/simulation/ChartPanel.js`**: El panel de gráficos. Fue actualizado para incluir una opción de "Resumen General".
-
-Módulos que existen y conviene conocer (no documentados hasta ahora):
-
+*   **`client/simulation/SimulationEngine.js`**: El motor principal. Usa el `BusinessCalendar`
+    y busca su configuración en un "Evento de Inicio Raíz". Contiene además `_logReport()`,
+    el informe de validación que imprime entradas y salidas en consola (§Validación).
+*   **`client/simulation/SimulationController.js`**: El orquestador que conecta el motor con
+    la UI. Contiene la lógica del mapa de calor, la exportación a PNG y el resumen. También
+    normaliza las unidades de los gráficos (ver `METRICAS_TIEMPO`).
+*   **`client/simulation/ChartPanel.js`**: El panel de gráficos y tablas, con el resumen, el
+    comparativo de planes y la ayuda extensa.
+*   **`client/simulation/DataTablePanel.js`**: **La única interfaz de edición de datos.**
+    Cuatro pestañas (Tareas, Flujos, Recursos, Global), exportación/importación de CSV con
+    validación bloqueante, botón de datos de prueba y el icono de lápiz que abre la tabla
+    centrada en el elemento seleccionado (`openFor`). Cualquier campo nuevo de datos debe
+    añadirse aquí.
+    > **Historia:** antes existía además `client/editor/DataEditor.js`, un modal por
+    > elemento. Se retiró porque **destruía datos**: al guardar escribía
+    > `distribution: "fixed"` de forma incondicional, así que abrir y guardar el modal de
+    > una tarea con distribución triangular borraba su `min`/`mode`/`max` y la convertía en
+    > fija. Dos editores escribiendo la misma propiedad es, además, una fuente garantizada
+    > de inconsistencias.
 *   **`client/simulation/SimulationPalette.js`**: Registra las métricas de la paleta de análisis y sus controles (limpiar, radio, blur). **Es el punto de entrada para añadir una métrica nueva al mapa de calor.** El mapa de calor que ves en el diagrama se define aquí, aunque el renderizado ocurra en `SimulationController.js`.
+*   **`client/simulation/MatrixLoader.js`** (+ `matrix-loader.css`): aviso de carga durante la simulación. Anima con CSS sobre `transform` **a propósito**: la simulación es síncrona y bloquea el hilo principal, así que una animación en JavaScript se congelaría. Las animaciones de `transform`/`opacity` corren en el hilo de composición del navegador y siguen moviéndose aunque el JS esté bloqueado.
 *   **`client/simpleheat-svg.js`**: Implementación del mapa de calor sobre SVG. Es el motor de dibujo de las manchas de calor.
-*   **`client/simulation/RandomDataGenerator.js`**: Generador de datos de simulación aleatorios. Registra la acción `generateRandomSimulationData` (útil para demos y pruebas). **Ojo:** escribe un campo `cost` en las tareas que ya no se usa (el costo se calcula desde `baseRatePerHour`); es código heredado.
 *   **`client/TimeTracker.js`**: Rastreador de tiempos alternativo basado en eventos `TRACE_EVENT` del token-simulation original. **No forma parte del motor nuevo**: es una vía paralela que sigue el flujo de tokens del plugin original.
 *   **`client/HideModelerElements.js`**: Oculta elementos del panel del modeler.
-*   **`client/simulation/index.js`**, **`client/editor/index.js`**, **`client/client.js`**: Registro de servicios de inyección de dependencias y punto de entrada del cliente.
+*   **`client/simulation/index.js`**, **`client/client.js`**: Registro de servicios de inyección de dependencias y punto de entrada del cliente. (`client/editor/` **ya no existe**.)
 
 ### 2. Flujo de Configuración Global (MUY IMPORTANTE)
 
 La configuración de la simulación (calendario, costos, reglas de horas extras, número de instancias) ya no se encuentra en el elemento Proceso/Participante. El nuevo flujo es:
 
 1.  El usuario selecciona un `bpmn:StartEvent`.
-2.  En el editor de datos (`DataEditor.js`), marca la casilla **"Usar como Configuración Raíz (init_root)"**.
-3.  Todos los parámetros globales se configuran en este editor.
+2.  Abre el panel de tabla (`client/simulation/DataTablePanel.js`) y, en la pestaña **Global**,
+    pulsa **«Usar … como configuración raíz»** si no existe ninguna. Eso escribe los valores
+    por defecto y marca `isRoot: true`.
+3.  Todos los parámetros globales se editan en esa pestaña Global.
 4.  Al ejecutar la simulación, `SimulationEngine.js` llama a `_findRootConfig()` para escanear todos los eventos de inicio y encontrar el que tiene la bandera `isRoot: true`.
 5.  Toda la simulación se ejecuta con base en la configuración de ese evento de inicio raíz.
 6.  **Si no hay ningún evento raíz (o hay más de uno), la simulación FALLA.** No existe
@@ -148,12 +187,44 @@ El sistema de costos fue refactorizado para proveer un desglose más claro y út
   y el costo de espera del caso en curso se acumula **aparte**. Si necesitas el desglose
   exacto, lee `SimulationEngine.js` alrededor de la línea 384; no lo reconstruyas desde el MD.
 
-*   ⚠️ **Bug conocido (campos fantasma):** `SimulationController.js` lee
-  `result.totalReworkCost` y `result.totalNormalTimeCost` al construir el resumen, pero
-  **`SimulationEngine.initialize` no los crea ni el motor los acumula en ningún punto**.
-  Con el `|| 0` del consumidor, esos valores son **siempre cero**. No documentes su valor
-  como si fuera real; o se calculan en el motor, o se eliminan de la UI. Existen además
-  `totalReworkTime` y `totalOvertimeCost`, que sí se usan en el resumen.
+*   ✅ **Campos fantasma (corregidos el 2026-09-15).** `SimulationController.js` leía
+    `result.totalReworkCost`, `result.totalOvertimeCost` y `result.totalNormalTimeCost` al
+    construir el resumen, pero **`SimulationEngine.initialize` no los crea ni el motor los
+    acumula en ningún punto**. El `|| 0` del consumidor los convertía en tres tarjetas que
+    mostraban **siempre `$0.00`**. Se sustituyeron por valores reales:
+    `totalOperationCost` (costo base), `totalDoubleOvertimeCost + totalTripleOvertimeCost`
+    (primas) y `totalWaitTimeCost` (espera). El resumen incluye ahora una línea de
+    **comprobación** que recalcula `operación + primas + espera` y la compara con `totalCost`.
+    Si vuelves a añadir una tarjeta, comprueba que el campo existe de verdad en
+    `initialize()`.
+
+*   **Campos que el motor sí acumula** (lista completa, en `initialize()`):
+    `executionCount`, `failureCount`, `totalWaitTime` *(minutos)*, `totalProcessingTime`
+    *(ms)*, `totalCost`, `totalCycleTime` *(minutos)*, `totalOvertime` *(ms)*,
+    `totalReworkTime` *(ms)*, `totalWaitTimeCost`, `totalOperationCost`,
+    `totalDoubleOvertimeCost`, `totalTripleOvertimeCost`, `name`.
+
+    > ⚠️ **Dos unidades de tiempo conviven en el mismo objeto de resultados.**
+    > `totalWaitTime` y `totalCycleTime` están en **minutos** (los acumula
+    > `calculateBusinessDurationInMinutes`); el resto de campos de tiempo están en
+    > **milisegundos**. Formatear un campo de minutos con `formatMilliseconds()` da un error
+    > de 60 000×. Usa `formatMinutes()` para los dos primeros. En los gráficos, el mapa
+    > `METRICAS_TIEMPO` de `SimulationController.js` centraliza esa conversión: **añade ahí
+    > cualquier métrica de tiempo nueva** en lugar de dividir a mano por 60000.
+
+*   **`this.overtimeBreakdown` y `this.weeklyStats`**: el primero acumula el tiempo extra
+  repartido por tramo (`normalMs` / `excessMs`); el segundo, el cupo consumido por semana
+  ISO. Ambos los imprime `_logReport()`. El cupo se indexa con
+  `BusinessCalendar.getWeekKey()` (clave `AAAA-Wnn`, año ISO incluido): indexarlo con
+  `getWeekNumber()` a secas hacía que la semana 1 de dos años distintos compartiera contador,
+  y la segunda heredaba el cupo ya agotado de la primera.
+
+*   ⚠️ **`executionCount` y el elemento terminal.** `INSTANCE_COMPLETE` se emite llevando el
+  elemento terminal como transporte para cerrar el caso, y **no** debe contar como ejecución
+  suya. Contarlo (como se hacía) sumaba 2 ejecuciones por caso al último elemento del
+  diagrama, duplicando su «Frecuencia» y **partiendo a la mitad** su tiempo de ciclo medio
+  (que se acumula justo en ese punto). El incremento de `executionCount` va **después** del
+  `return` de `INSTANCE_COMPLETE`: no lo muevas hacia arriba.
 
 ---
 
@@ -164,10 +235,10 @@ La estructura del JSON varía según el tipo de elemento.
 **A. Para un `bpmn:StartEvent` (cuando es `isRoot: true`):**
 ```json
 {
-  "arrivalRate": { "value": 60, "unit": "minute" },
+  "arrivalRate": { "value": 1, "unit": "minute" },
   "simulationConfig": { "runValue": 10 },
   "isRoot": true,
-  "startDate": "2026-01-15T09:00",
+  "startDate": "2026-01-15",
   "calendar": {
     "workingDays": [1, 2, 3, 4, 5],
     "workingHours": {
@@ -190,9 +261,16 @@ La estructura del JSON varía según el tipo de elemento.
 
 > ⚠️ **Unidades: hay DOS convenciones distintas. No las mezcles.**
 >
-> - **`arrivalRate.unit`** → singular: `"second"` o `"hour"`. *Cualquier otro valor*
->   (incluido `"minute"`) se trata como **minutos**. El default del editor es
->   `{ value: 60, unit: "minute" }`.
+> - **`arrivalRate.unit`** → singular: `"second"`, `"minute"` o `"hour"`. *Cualquier otro
+>   valor* se trata como **minutos**. El default de la interfaz es
+>   `{ value: 1, unit: "minute" }` (una llegada por minuto).
+>   ⚠️ **`arrivalRate` es una TASA (llegadas por unidad de tiempo), no un intervalo.**
+>   `{ value: 60, unit: "minute" }` **no** es «una cada 60 minutos»: son 60 llegadas por
+>   minuto, es decir **una cada segundo**. Es el error más fácil de cometer y no produce
+>   ningún aviso; el informe de consola imprime la tasa resuelta («una cada 1.0 s») para
+>   hacerlo visible. El default era `60/minute` y producía ese efecto: 1 000 instancias
+>   entraban en la primera jornada y agotaban el cupo semanal de horas extra en una sola
+>   semana. Se cambió a `1/minute`.
 > - **`processingTime.unit` y `reworkTime.unit`** (tareas) → **plural**:
 >   `"seconds"`, `"minutes"` o `"hours"`. *Cualquier otro valor*, incluido el singular
 >   `"minute"`, cae al fallback de `timeToMilliseconds` (`SimulationEngine.js:11-16`),
@@ -202,15 +280,21 @@ La estructura del JSON varía según el tipo de elemento.
 > interpreta como 10 ms en lugar de 10 minutos — un factor de 60.000 — y no aparece
 > ningún aviso en consola. Escribe siempre la unidad exacta que espera cada campo.
 
+> ⚠️ **`startDate` debe ser exactamente `YYYY-MM-DD`.** `SimulationEngine.initialize` lo
+> valida con `/^\d{4}-\d{2}-\d{2}$/` y, si no encaja, **usa la fecha actual y no avisa**.
+> Un `"2026-01-15T09:00"` (con hora) es un valor silenciosamente ignorado. La hora de
+> arranque no se toma de aquí, sino de `calendar.workingHours.start`.
+> Déjalo vacío (`""`) para simular desde hoy.
+
 **B. Para un `bpmn:Task` (o UserTask, ScriptTask, etc.):**
 ```json
 {
   "processingTime": {
-    "distribution": "fixed", "value": 3, "unit": "minute"
+    "distribution": "fixed", "value": 3, "unit": "minutes"
   },
   "failureRate": 0.11,
   "reworkTime": {
-    "value": 3, "unit": "minute"
+    "distribution": "fixed", "value": 3, "unit": "minutes"
   },
   "resources": {
     "pool": "Analistas", "quantityRequired": 1
@@ -218,17 +302,26 @@ La estructura del JSON varía según el tipo de elemento.
 }
 ```
 
-Para una distribución **triangular** (`distribution: "triangular"`), `processingTime` usa
-`min`, `mode` y `max` en lugar de `value`:
+Las dos formas de `processingTime`:
+
 ```json
-{
-  "processingTime": {
-    "distribution": "triangular", "min": 2, "mode": 4, "max": 9, "unit": "minute"
-  }
-}
+{ "distribution": "fixed", "value": 3, "unit": "minutes" }
+
+{ "distribution": "triangular", "min": 2, "mode": 4, "max": 9, "unit": "minutes" }
 ```
 
-**Nota:** El costo de la tarea ya no se define aquí, se calcula a partir del `baseRatePerHour` de la configuración raíz. (`RandomDataGenerator.js` sigue escribiendo un campo `cost` en las tareas: es código heredado, ignóralo.)
+Con `triangular` debe cumplirse `min <= mode <= max`; **`value` se ignora por completo**.
+Cuando `distribution` está ausente se trata como `fixed`.
+
+`resources` es **opcional**. Si está ausente, o si `pool` no coincide **exactamente** con el
+nombre de una piscina declarada en el proceso, el motor **ignora el recurso en silencio**
+(no avisa). `quantityRequired` por defecto vale 1. Es la razón de que la columna «Recurso» de
+la tabla sea un desplegable y no un campo de texto: una errata desactivaría la restricción
+sin que nada lo indicara.
+
+**Nota:** El costo de la tarea **no** se define aquí; se calcula a partir de
+`cost.baseRatePerHour` de la configuración raíz. Cualquier campo `cost` dentro de una tarea
+es código heredado y se ignora.
 
 **C. Para un Flujo de Secuencia (`bpmn:SequenceFlow`) saliente de una Compuerta Exclusiva:**
 ```json
@@ -322,3 +415,59 @@ Para modificar o crear los datos, el proceso es similar pero a la inversa. Se ne
       extensionElements: extensionElements
     });
     ```
+
+**Preferir el helper.** `client/simulation/util.js` ya expone
+`setSimulationData(element, data, { modeling, bpmnFactory })`, que hace los cinco pasos y
+crea la jerarquía de extension elements si falta. Todos los módulos del proyecto lo usan;
+no dupliques la lógica.
+
+**Modo Token Simulation = solo lectura.** La feature `DisableModeling` del plugin
+token-simulation intercepta los métodos de `modeling` y lanza `new Error('model is
+read-only')` (`DisableModeling.js:51`). **Cualquier escritura debe capturar ese error** y
+ofrecer una salida, no dejarlo escapar como error críptico de un plugin ajeno. Ese es el
+patrón que sigue `DataTablePanel`: al detectar `/read-only/i` guarda los valores en pantalla,
+ofrece un botón que dispara `editorActions.trigger('toggleTokenSimulation')` y reintenta.
+(`toggleTokenSimulation` está en la **lista blanca** de `DisableModeling`, así que funciona
+con el modo activo — es su propósito.)
+
+---
+
+## 4. Validación: cómo comprobar que el motor es correcto
+
+Dos herramientas, y conviene usar las dos.
+
+### 4.1 El informe de consola (`SimulationEngine._logReport`)
+
+Imprime cuatro bloques: `ENTRADAS · configuración global`, `ENTRADAS · por tarea`,
+`SALIDAS · por tarea` y `SALIDAS · totales`. Con distribución **fija** y sin fallos, cada
+número se recalcula a mano. En `SALIDAS · totales` destacan tres campos que existen
+**específicamente** para poder auditar el reparto de horas extra:
+
+| Campo | Por qué está |
+|---|---|
+| `semanas_con_horas_extra` | Si vale 1, el tramo doble **no puede** pasar del límite semanal, por muchas horas extra que haya. Explica de un vistazo un reparto 9 h / N h que de otro modo parece un error. |
+| `horas_extra_en_tramo_doble_h` | Las horas reales del tramo doble, para contrastar con `de_eso_prima_doble` (prima = horas × tarifa × (mult − 1)). |
+| `horas_extra_en_tramo_triple_h` | Ídem para el triple. Doble + triple debe ser el total de horas extra. |
+
+`cuadre_operacion_mas_primas` debe coincidir con `costo_total`.
+
+### 4.2 El arnés fuera del navegador
+
+`BusinessCalendar.js` **no tiene dependencias**: se puede copiar a un `.mjs` y ejecutarlo en
+Node directamente. Es la forma más rápida de comprobar la aritmética de calendario y de
+cupo semanal sin abrir Camunda Modeler — así se verificó, por ejemplo, que
+`{ value: 60, unit: "minute" }` agota el cupo una sola vez mientras que
+`{ value: 1, unit: "hour" }` lo agota una vez por semana (189 h en tramo doble en 21
+semanas, exactamente 21 × 9).
+
+Cuando escribas un arnés así, **revisa las unidades de tu propio código de comprobación**:
+un ayudante `horas(minutos)` aplicado a un valor ya en horas da un factor 60 y hace
+sospechar del motor cuando el error está en el test.
+
+### 4.3 Documentación de usuario
+
+`docs/GUIA_SIMULACION.md` es la guía extensa para el analista: teoría de colas, matemática de
+la triangular, cupo semanal, fórmula exacta de costos, método de validación y una sección
+explícita de lo que el plugin **no** hace (sin semilla, sin réplicas, sin intervalos de
+confianza, sin periodo de calentamiento). Si cambias la semántica del motor, **actualiza ese
+documento**: es lo que lee quien va a decidir con los números.

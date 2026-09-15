@@ -61,7 +61,68 @@ export default class ChartPanel {
         </div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
-          <p><strong>Resumen General:</strong> Muestra las métricas totales más importantes de toda la simulación.</p>
+
+          <p>
+            <strong>El documento completo está en</strong>
+            <code>docs/GUIA_SIMULACION.md</code>: teoría, fórmulas, ejemplos numéricos
+            resueltos y método de validación. Aquí va lo esencial.
+          </p>
+
+          <h5>Cómo se lee un panel</h5>
+          <ul>
+            <li><strong>Resumen General:</strong> métricas totales de la simulación, con una
+              línea de <em>comprobación</em> que verifica que operación + primas + espera
+              cuadra con el coste total.</li>
+            <li><strong>Top 5 por…:</strong> las cinco tareas con el valor más alto. Las
+              métricas de tiempo se miden en <strong>minutos</strong>.</li>
+            <li><strong>Pareto:</strong> ordena de mayor a menor y añade el porcentaje
+              acumulado, para aplicar el principio 80/20.</li>
+            <li><strong>Dispersión:</strong> tiempo de proceso medio frente a coste, para
+              ver qué tareas caras lo son por durar o por otra cosa.</li>
+            <li><strong>Producción Diaria / Comparativa:</strong> piezas terminadas por día,
+              plan normal frente a plan con horas extra.</li>
+          </ul>
+
+          <h5>Tres cosas que conviene tener claras</h5>
+          <ol>
+            <li>
+              <strong>La tasa de llegada es una tasa, no un intervalo.</strong>
+              <code>60</code> con unidad <code>minute</code> son <em>60 por minuto</em>,
+              o sea una cada segundo — no una cada 60 minutos. El informe de la consola
+              la imprime ya resuelta («una cada 1.0 s»).
+            </li>
+            <li>
+              <strong>Tiempo de reloj ≠ tiempo de trabajo.</strong> Una tarea de 2 h que
+              empieza un lunes a las 16:00 termina el martes a las 10:00: 2 h de trabajo y
+              18 h de reloj. El mapa de calor muestra <em>trabajo</em>; la fecha de fin es
+              de <em>reloj</em>.
+            </li>
+            <li>
+              <strong>La utilidad de horas extra depende del cupo semanal.</strong>
+              El límite de horas antes de recargo se aplica <em>por semana ISO</em>. Repartir
+              la carga entre semanas paga menos prima que concentrarla, aunque sean las
+              mismas horas.
+            </li>
+          </ol>
+
+          <h5>Interpretar el mapa de calor</h5>
+          <ul>
+            <li><strong>Tiempo de espera</strong> es la métrica que localiza el cuello de
+              botella: la tarea que brilla ahí son recursos que no dan abasto.</li>
+            <li>Una mancha con la opacidad mínima significa <strong>valor cero</strong>, no
+              «sin analizar»: se contabilizó y dio cero.</li>
+            <li>Solo se colorean <strong>tareas y compuertas</strong>.</li>
+          </ul>
+
+          <h5>Antes de decidir con estos números</h5>
+          <p>
+            Con distribución <em>fija</em> y sin fallos el modelo es <strong>determinista</strong>
+            y los resultados se pueden recalcular a mano: valide así primero. Con
+            distribuciones aleatorias, cada corrida es <strong>una sola réplica</strong>: el
+            plugin no usa semilla fija, ni réplicas, ni intervalos de confianza, así que una
+            diferencia entre escenarios puede ser ruido. Repita la corrida varias veces antes
+            de dar por buena una diferencia.
+          </p>
         </div>
         <div class="generic-modal-overlay hidden">
             <div class="generic-modal">

@@ -334,6 +334,45 @@
   overflow-y: auto;
 }
 
+/* La ayuda es texto largo: se limita la medida de linea para que sea legible y
+   se le da jerarquia a los apartados. */
+.simulation-chart-panel .help-content h4 {
+  margin: 0 0 10px;
+  color: #1565c0;
+}
+
+.simulation-chart-panel .help-content h5 {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 3px;
+}
+
+.simulation-chart-panel .help-content p,
+.simulation-chart-panel .help-content ul,
+.simulation-chart-panel .help-content ol {
+  max-width: 88ch;
+  line-height: 1.55;
+}
+
+.simulation-chart-panel .help-content ul,
+.simulation-chart-panel .help-content ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.simulation-chart-panel .help-content li {
+  margin-bottom: 5px;
+}
+
+.simulation-chart-panel .help-content code {
+  padding: 1px 4px;
+  font-size: 12px;
+  background: #eef;
+  border-radius: 3px;
+}
+
 .simulation-chart-panel .help-content.hidden,
 .simulation-chart-panel .content.hidden,
 .simulation-chart-panel .html-content.hidden {
@@ -584,4 +623,17 @@
   font-size: 1.2em;
   color: #1565c0;
   font-weight: bold;
+}
+
+/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.
+   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de
+   Intl.NumberFormat); el propio texto indica si coincide o no. */
+.sim-summary-note {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  font-size: 0.9em;
+  color: #444;
+  background: #f2f7fd;
+  border: 1px solid #d6e4f5;
+  border-radius: 5px;
 }

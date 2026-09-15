@@ -134,559 +134,6 @@ TimeTracker.$inject = [
 
 /***/ }),
 
-/***/ "./client/editor/DataEditor.js":
-/*!*************************************!*\
-  !*** ./client/editor/DataEditor.js ***!
-  \*************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (/* binding */ DataEditor)
-/* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var _simulation_util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simulation/util */ "./client/simulation/util.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
-/* harmony import */ var _data_editor_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./data-editor.css */ "./client/editor/data-editor.css");
-
-
-
-
-
-const EditIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <path fill="currentColor" d="M19.4,6.6l-3.9-3.9c-0.4-0.4-1-0.4-1.4,0l-11,11c-0.2,0.2-0.3,0.4-0.3,0.7v3.9c0,0.6,0.4,1,1,1h3.9c0.3,0,0.5-0.1,0.7-0.3l11-11C19.8,7.6,19.8,7,19.4,6.6z M7.5,17.5H5.1v-2.4l7.5-7.5l2.4,2.4L7.5,17.5z"/>
-</svg>`;
-
-const formatTime = (timeObj) => {
-  if (typeof timeObj === 'string') return timeObj;
-  if (typeof timeObj === 'object' && timeObj !== null) {
-    const hour = String(timeObj.hour).padStart(2, '0');
-    const minute = String(timeObj.minute).padStart(2, '0');
-    return `${hour}:${minute}`;
-  }
-  return '09:00'; // Fallback
-};
-
-class DataEditor {
-  constructor(eventBus, modeling, bpmnFactory, elementRegistry, notifications, selection, canvas, overlays) {
-    this._eventBus = eventBus;
-    this._modeling = modeling;
-    this._bpmnFactory = bpmnFactory;
-    this._elementRegistry = elementRegistry;
-    this._notifications = notifications;
-    this._selection = selection;
-    this._canvas = canvas;
-    this._overlays = overlays;
-
-    this._modal = null;
-    this._selectedElement = null;
-    this._currentOverlayId = null;
-
-    this._eventBus.on('canvas.init', () => {
-      this.init();
-    });
-  }
-
-  init() {
-    this.createModal();
-
-    this._eventBus.on('selection.changed', ({ newSelection }) => {
-      this.removeOverlay();
-      this.closeModal();
-
-      if (newSelection.length === 1) {
-        this.addOverlay(newSelection[0]);
-      }
-    });
-  }
-
-  createModal() {
-    this._modal = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
-      <div class="sim-data-editor-modal hidden">
-        <div class="sim-data-editor-content">
-          <div class="sim-data-editor-header">
-            <span id="data-editor-title">Editar Propiedades de Simulación</span>
-            <button class="close">×</button>
-          </div>
-          <div class="sim-data-editor-body"></div>
-          <div class="sim-data-editor-footer">
-            <button class="save">Guardar y Cerrar</button>
-          </div>
-        </div>
-      </div>
-    `);
-
-    this._canvas.getContainer().appendChild(this._modal);
-
-    const closeButton = this._modal.querySelector('button.close');
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(closeButton, 'click', () => this.closeModal());
-
-    const saveButton = this._modal.querySelector('button.save');
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(saveButton, 'click', () => this.save());
-
-    // Close modal on background click
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(this._modal, 'click', (e) => {
-      if (e.target === this._modal) {
-        this.closeModal();
-      }
-    });
-  }
-
-  openModal(element) {
-    this._selectedElement = element;
-    this.updateModalContent();
-    this._modal.classList.remove('hidden');
-  }
-
-  closeModal() {
-    this._modal.classList.add('hidden');
-    this._selectedElement = null;
-  }
-
-  addOverlay(element) {
-    const overlayHtml = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`<div class="sim-data-editor-overlay">${EditIcon}</div>`);
-
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(overlayHtml, 'click', () => {
-      this.openModal(element);
-    });
-
-    this._currentOverlayId = this._overlays.add(element, 'sim-data-editor', {
-      position: {
-        top: -12,
-        left: -12
-      },
-      html: overlayHtml
-    });
-  }
-
-  removeOverlay() {
-    if (this._currentOverlayId) {
-      this._overlays.remove(this._currentOverlayId);
-      this._currentOverlayId = null;
-    }
-  }
-
-  updateModalContent() {
-    const body = this._modal.querySelector('.sim-data-editor-body');
-    const title = this._modal.querySelector('#data-editor-title');
-    const footer = this._modal.querySelector('.sim-data-editor-footer');
-    body.innerHTML = '';
-
-    const rawData = (0,_simulation_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(this._selectedElement) || {};
-    title.textContent = `Propiedades de: ${this._selectedElement.businessObject.name || this._selectedElement.id}`;
-    footer.classList.remove('hidden');
-
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:Task')) {
-      const data = this._getTaskDefaults(rawData);
-      this.renderTaskForm(body, data);
-    } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:SequenceFlow') && this._selectedElement.source.type === 'bpmn:ExclusiveGateway') {
-      const data = this._getSequenceFlowDefaults(rawData);
-      this.renderSequenceFlowForm(body, data);
-    } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:StartEvent')) {
-      const data = this._getStartEventDefaults(rawData);
-      this.renderStartEventForm(body, data);
-    } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:Participant')) {
-      const data = this._getProcessDefaults(rawData);
-      this.renderProcessForm(body, data);
-    } else {
-      body.innerHTML = '<p>Propiedades de simulación no aplicables para este tipo de elemento.</p>';
-      footer.classList.add('hidden');
-    }
-  }
-
-  _getTaskDefaults(data = {}) {
-    const defaults = {
-      processingTime: { distribution: 'fixed', value: 10, unit: 'minutes' },
-      failureRate: 0.0,
-      reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' }
-    };
-    return {
-      ...defaults,
-      ...data,
-      processingTime: { ...defaults.processingTime, ...(data.processingTime || {}) },
-      reworkTime: { ...defaults.reworkTime, ...(data.reworkTime || {}) },
-    };
-  }
-
-  _getSequenceFlowDefaults(data = {}) {
-    const defaults = { branchingProbability: 0.5 };
-    return { ...defaults, ...data };
-  }
-
-  _getStartEventDefaults(data = {}) {
-    const defaults = {
-      startDate: '',
-      arrivalRate: { value: 60, unit: 'minute' },
-      simulationConfig: { runValue: 1000 },
-      isRoot: false,
-      calendar: {
-        workingDays: [1, 2, 3, 4, 5],
-        workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }
-      },
-      cost: {
-        waitCostPerHour: 0,
-        baseRatePerHour: 50
-      },
-      overtime: {
-        limitHours: 9,
-        payMultiplier: 2,
-        excessPayMultiplier: 3
-      }
-    };
-    return {
-      ...defaults,
-      ...data,
-      arrivalRate: { ...defaults.arrivalRate, ...(data.arrivalRate || {}) },
-      simulationConfig: { ...defaults.simulationConfig, ...(data.simulationConfig || {}) },
-      calendar: { ...defaults.calendar, ...(data.calendar || {}) },
-      cost: { ...defaults.cost, ...(data.cost || {}) },
-      overtime: { ...defaults.overtime, ...(data.overtime || {}) }
-    };
-  }
-
-  _getProcessDefaults(data = {}) {
-    const defaults = {
-      resourcePools: []
-    };
-    return {
-      ...defaults,
-      ...data
-    };
-  }
-
-  renderTaskForm(container, data) {
-    const { processingTime, failureRate, reworkTime } = data;
-    container.innerHTML = `
-      <div class="form-group">
-        <label>Tiempo de Proceso (processingTime)</label>
-        <input type="number" name="processingTime.value" value="${processingTime.value}">
-        <select name="processingTime.unit">
-          <option value="minutes" ${processingTime.unit === 'minutes' ? 'selected' : ''}>Minutos</option>
-          <option value="hours" ${processingTime.unit === 'hours' ? 'selected' : ''}>Horas</option>
-          <option value="seconds" ${processingTime.unit === 'seconds' ? 'selected' : ''}>Segundos</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Tasa de Fallo (failureRate)</label>
-        <input type="number" name="failureRate" value="${failureRate}" min="0" max="1" step="0.01">
-      </div>
-      <div class="form-group">
-        <label>Tiempo de Retrabajo (reworkTime)</label>
-        <input type="number" name="reworkTime.value" value="${reworkTime.value}">
-        <select name="reworkTime.unit">
-          <option value="minutes" ${reworkTime.unit === 'minutes' ? 'selected' : ''}>Minutos</option>
-          <option value="hours" ${reworkTime.unit === 'hours' ? 'selected' : ''}>Horas</option>
-          <option value="seconds" ${reworkTime.unit === 'seconds' ? 'selected' : ''}>Segundos</option>
-        </select>
-      </div>
-    `;
-  }
-
-  renderSequenceFlowForm(container, data) {
-    const { branchingProbability } = data;
-    container.innerHTML = `
-      <div class="form-group">
-        <label>Probabilidad de Ramificación (branchingProbability)</label>
-        <input type="number" name="branchingProbability" value="${branchingProbability}" min="0" max="1" step="0.01">
-      </div>
-    `;
-  }
-
-  renderStartEventForm(container, data) {
-    const { arrivalRate, isRoot, calendar, cost, overtime, simulationConfig, startDate } = data;
-
-    const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    const workingDaysCheckboxes = days.map((day, index) => `
-      <label>
-        <input type="checkbox" name="calendar.workingDays" value="${index}" ${calendar.workingDays.includes(index) ? 'checked' : ''}>
-        ${day}
-      </label>
-    `).join('');
-
-    const startTimeValue = formatTime(calendar.workingHours.start);
-    const endTimeValue = formatTime(calendar.workingHours.end);
-
-    container.innerHTML = `
-      <div class="form-group">
-        <label>Tasa de Llegada (arrivalRate)</label>
-        <input type="number" name="arrivalRate.value" value="${arrivalRate.value}">
-        <select name="arrivalRate.unit">
-          <option value="minute" ${arrivalRate.unit === 'minute' ? 'selected' : ''}>por Minuto</option>
-          <option value="hour" ${arrivalRate.unit === 'hour' ? 'selected' : ''}>por Hora</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Instancias a Simular (runValue)</label>
-        <input type="number" name="simulationConfig.runValue" value="${simulationConfig.runValue}">
-      </div>
-      <div class="form-group">
-        <label>Fecha de Inicio de Simulación</label>
-        <input type="date" name="startDate" value="${startDate || ''}">
-      </div>
-      <p class="helper-text">Si se deja en blanco, la simulación usará la fecha actual.</p>
-      <hr/>
-      <div class="form-group">
-        <label class="is-root-label">
-            <input type="checkbox" name="isRoot" ${isRoot ? 'checked' : ''}>
-            Usar como Configuración Raíz (init_root)
-        </label>
-      </div>
-      <p class="helper-text">Marque esta casilla para que las reglas de calendario y costos de este evento de inicio se apliquen a toda la simulación.</p>
-      <fieldset>
-        <legend>Calendario Laboral</legend>
-        <div class="form-group">
-          <label>Días Laborales</label>
-          <div class="checkbox-group">${workingDaysCheckboxes}</div>
-        </div>
-        <div class="form-group">
-          <label>Horario Laboral</label>
-          <input type="time" name="calendar.workingHours.start" value="${startTimeValue}">
-          <span>-</span>
-          <input type="time" name="calendar.workingHours.end" value="${endTimeValue}">
-        </div>
-      </fieldset>
-      <fieldset>
-          <legend>Reglas de Costos y Horas Extras</legend>
-          <div class="form-group">
-              <label>Costo Base por Hora ($)</label>
-              <input type="number" name="cost.baseRatePerHour" value="${cost.baseRatePerHour}" min="0">
-          </div>
-          <div class="form-group">
-              <label>Costo de Espera por Hora ($)</label>
-              <input type="number" name="cost.waitCostPerHour" value="${cost.waitCostPerHour}" min="0">
-          </div>
-          <div class="form-group">
-              <label>Límite Horas Extras Semanales</label>
-              <input type="number" name="overtime.limitHours" value="${overtime.limitHours}" min="0">
-          </div>
-          <div class="form-group">
-              <label>Multiplicador Pago Normal (e.g., 2 = Doble)</label>
-              <input type="number" name="overtime.payMultiplier" value="${overtime.payMultiplier}" min="1">
-          </div>
-          <div class="form-group">
-              <label>Multiplicador Pago Excedente (e.g., 3 = Triple)</label>
-              <input type="number" name="overtime.excessPayMultiplier" value="${overtime.excessPayMultiplier}" min="1">
-          </div>
-      </fieldset>
-    `;
-  }
-
-  renderProcessForm(container, data) {
-    const { resourcePools } = data;
-    const poolsHtml = resourcePools.map((pool, index) => `
-      <div class="resource-pool-row">
-        <input type="text" name="resourcePools[${index}].name" value="${pool.name}" placeholder="Nombre del Pool">
-        <input type="number" name="resourcePools[${index}].quantity" value="${pool.quantity}" placeholder="Cantidad">
-        <button class="remove-pool" data-index="${index}">-</button>
-      </div>
-    `).join('');
-
-    container.innerHTML = `
-      <fieldset>
-        <legend>Piscinas de Recursos (resourcePools)</legend>
-        <div id="resource-pools-container">${poolsHtml}</div>
-        <button id="add-pool" class="add-button">+</button>
-      </fieldset>
-    `;
-
-    const poolsContainer = container.querySelector('#resource-pools-container');
-
-    const addPoolButton = container.querySelector('#add-pool');
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(addPoolButton, 'click', (e) => {
-      e.preventDefault();
-      const newIndex = poolsContainer.children.length;
-      const newPoolRow = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
-        <div class="resource-pool-row">
-          <input type="text" name="resourcePools[${newIndex}].name" placeholder="Nombre del Pool">
-          <input type="number" name="resourcePools[${newIndex}].quantity" placeholder="Cantidad">
-          <button class="remove-pool" data-index="${newIndex}">-</button>
-        </div>
-      `);
-      poolsContainer.appendChild(newPoolRow);
-      this.bindRemoveButtons(poolsContainer);
-    });
-
-    this.bindRemoveButtons(poolsContainer);
-  }
-
-  bindRemoveButtons(container) {
-      const removeButtons = container.querySelectorAll('.remove-pool');
-      removeButtons.forEach(button => {
-          min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(button, 'click', (e) => {
-              e.preventDefault();
-              e.target.closest('.resource-pool-row').remove();
-          });
-      });
-  }
-
-  save() {
-    if (!this._selectedElement) return;
-
-    const body = this._modal.querySelector('.sim-data-editor-body');
-    const existingData = (0,_simulation_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(this._selectedElement) || {};
-    let newData = {};
-
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:Task')) {
-      newData = {
-        processingTime: {
-          distribution: 'fixed',
-          value: parseFloat(body.querySelector('[name="processingTime.value"]').value),
-          unit: body.querySelector('[name="processingTime.unit"]').value
-        },
-        failureRate: parseFloat(body.querySelector('[name="failureRate"]').value),
-        reworkTime: {
-          distribution: 'fixed',
-          value: parseFloat(body.querySelector('[name="reworkTime.value"]').value),
-          unit: body.querySelector('[name="reworkTime.unit"]').value
-        }
-      };
-    } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:SequenceFlow')) {
-      newData = {
-        branchingProbability: parseFloat(body.querySelector('[name="branchingProbability"]').value)
-      };
-    } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:StartEvent')) {
-      const workingDays = Array.from(body.querySelectorAll('[name="calendar.workingDays"]:checked'))
-                                 .map(input => parseInt(input.value, 10));
-      const workingHours = {
-        start: body.querySelector('[name="calendar.workingHours.start"]').value,
-        end: body.querySelector('[name="calendar.workingHours.end"]').value
-      };
-
-      newData = {
-        startDate: body.querySelector('[name="startDate"]').value,
-        arrivalRate: {
-          value: parseFloat(body.querySelector('[name="arrivalRate.value"]').value),
-          unit: body.querySelector('[name="arrivalRate.unit"]').value
-        },
-        simulationConfig: {
-          runValue: parseInt(body.querySelector('[name="simulationConfig.runValue"]').value, 10)
-        },
-        isRoot: body.querySelector('[name="isRoot"]').checked,
-        calendar: {
-          workingDays,
-          workingHours: {
-            start: {
-              hour: parseInt(workingHours.start.split(':')[0], 10),
-              minute: parseInt(workingHours.start.split(':')[1], 10)
-            },
-            end: {
-              hour: parseInt(workingHours.end.split(':')[0], 10),
-              minute: parseInt(workingHours.end.split(':')[1], 10)
-            }
-          }
-        },
-        cost: {
-          baseRatePerHour: parseFloat(body.querySelector('[name="cost.baseRatePerHour"]').value) || 0,
-          waitCostPerHour: parseFloat(body.querySelector('[name="cost.waitCostPerHour"]').value) || 0
-        },
-        overtime: {
-          limitHours: parseInt(body.querySelector('[name="overtime.limitHours"]').value, 10) || 0,
-          payMultiplier: parseFloat(body.querySelector('[name="overtime.payMultiplier"]').value) || 1,
-          excessPayMultiplier: parseFloat(body.querySelector('[name="overtime.excessPayMultiplier"]').value) || 1
-        }
-      };
-    } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(this._selectedElement, 'bpmn:Participant')) {
-      const resourcePools = [];
-      const poolRows = body.querySelectorAll('.resource-pool-row');
-      poolRows.forEach(row => {
-        const name = row.querySelector('input[name*="name"]').value;
-        const quantity = parseInt(row.querySelector('input[name*="quantity"]').value, 10);
-        if (name && quantity) {
-          resourcePools.push({ name, quantity });
-        }
-      });
-      newData = {
-        resourcePools
-      };
-    } else {
-      return;
-    }
-
-    const finalData = { ...existingData, ...newData };
-    const simulationDataString = JSON.stringify(finalData, null, 2);
-
-    const businessObject = this._selectedElement.businessObject;
-    let extensionElements = businessObject.get('extensionElements');
-    if (!extensionElements) {
-      extensionElements = this._bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
-    }
-
-    let properties = extensionElements.get('values').find(v => v.$type === 'camunda:Properties');
-    if (!properties) {
-      properties = this._bpmnFactory.create('camunda:Properties', { values: [] });
-      extensionElements.get('values').push(properties);
-    }
-
-    let simProperty = properties.get('values').find(p => p.name === 'simulationData');
-    if (!simProperty) {
-      simProperty = this._bpmnFactory.create('camunda:Property', { name: 'simulationData' });
-      properties.get('values').push(simProperty);
-    }
-
-    simProperty.value = simulationDataString;
-
-    // El modo Token Simulation deja el diagrama en SOLO LECTURA (su feature
-    // DisableModeling lanza "model is read-only"). Sin capturarlo, el usuario
-    // ve un error criptico de un plugin ajeno y no sabe que basta con
-    // desactivar el modo. Mismo tratamiento que en el editor por tabla.
-    try {
-      this._modeling.updateProperties(this._selectedElement, {
-        extensionElements: extensionElements
-      });
-    } catch (err) {
-      const soloLectura = /read-only/i.test(String(err && err.message));
-
-      const texto = soloLectura
-        ? 'No se guardó: el diagrama está en solo lectura porque el modo Token Simulation '
-          + 'está activo. Desactívalo (menú «Toggle Token Simulation» o la tecla T).'
-        : `No se pudieron guardar las propiedades: ${err.message || err}`;
-
-      this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
-      return;
-    }
-
-    this._notifications.showNotification({ text: 'Propiedades de simulación guardadas.', type: 'info', duration: 3000 });
-    this.closeModal();
-  }
-}
-
-DataEditor.$inject = [
-  'eventBus',
-  'modeling',
-  'bpmnFactory',
-  'elementRegistry',
-  'notifications',
-  'selection',
-  'canvas',
-  'overlays'
-];
-
-
-/***/ }),
-
-/***/ "./client/editor/index.js":
-/*!********************************!*\
-  !*** ./client/editor/index.js ***!
-  \********************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
-/* harmony export */ });
-/* harmony import */ var _DataEditor__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./DataEditor */ "./client/editor/DataEditor.js");
-
-
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = ({
-  __init__: [ 'dataEditor' ],
-  dataEditor: [ 'type', _DataEditor__WEBPACK_IMPORTED_MODULE_0__["default"] ]
-});
-
-
-/***/ }),
-
 /***/ "./client/simpleheat-svg.js":
 /*!**********************************!*\
   !*** ./client/simpleheat-svg.js ***!
@@ -1175,6 +622,26 @@ class BusinessCalendar {
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   }
 
+  /**
+   * Clave unica de la semana ISO: "AAAA-Wnn" (p. ej. "2026-W03").
+   *
+   * getWeekNumber() devuelve SOLO el numero de semana, asi que la semana 1 de
+   * 2026 y la semana 1 de 2027 compartian contador. Quien use el numero como
+   * clave (el cupo semanal de horas extra del motor) sumaba entre si dos
+   * semanas separadas por un año, y la segunda heredaba el cupo ya agotado de
+   * la primera.
+   *
+   * El año que acompaña es el año ISO (el de la semana), no el natural: el 1 de
+   * enero puede pertenecer a la ultima semana de diciembre del año anterior.
+   */
+  getWeekKey(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const isoYear = d.getUTCFullYear();
+    return `${isoYear}-W${String(this.getWeekNumber(date)).padStart(2, '0')}`;
+  }
+
   calculateWorkingDays(startDate, endDate) {
     let workingDaysCount = 0;
     let currentDate = new Date(startDate.getTime());
@@ -1271,7 +738,68 @@ class ChartPanel {
         </div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
-          <p><strong>Resumen General:</strong> Muestra las métricas totales más importantes de toda la simulación.</p>
+
+          <p>
+            <strong>El documento completo está en</strong>
+            <code>docs/GUIA_SIMULACION.md</code>: teoría, fórmulas, ejemplos numéricos
+            resueltos y método de validación. Aquí va lo esencial.
+          </p>
+
+          <h5>Cómo se lee un panel</h5>
+          <ul>
+            <li><strong>Resumen General:</strong> métricas totales de la simulación, con una
+              línea de <em>comprobación</em> que verifica que operación + primas + espera
+              cuadra con el coste total.</li>
+            <li><strong>Top 5 por…:</strong> las cinco tareas con el valor más alto. Las
+              métricas de tiempo se miden en <strong>minutos</strong>.</li>
+            <li><strong>Pareto:</strong> ordena de mayor a menor y añade el porcentaje
+              acumulado, para aplicar el principio 80/20.</li>
+            <li><strong>Dispersión:</strong> tiempo de proceso medio frente a coste, para
+              ver qué tareas caras lo son por durar o por otra cosa.</li>
+            <li><strong>Producción Diaria / Comparativa:</strong> piezas terminadas por día,
+              plan normal frente a plan con horas extra.</li>
+          </ul>
+
+          <h5>Tres cosas que conviene tener claras</h5>
+          <ol>
+            <li>
+              <strong>La tasa de llegada es una tasa, no un intervalo.</strong>
+              <code>60</code> con unidad <code>minute</code> son <em>60 por minuto</em>,
+              o sea una cada segundo — no una cada 60 minutos. El informe de la consola
+              la imprime ya resuelta («una cada 1.0 s»).
+            </li>
+            <li>
+              <strong>Tiempo de reloj ≠ tiempo de trabajo.</strong> Una tarea de 2 h que
+              empieza un lunes a las 16:00 termina el martes a las 10:00: 2 h de trabajo y
+              18 h de reloj. El mapa de calor muestra <em>trabajo</em>; la fecha de fin es
+              de <em>reloj</em>.
+            </li>
+            <li>
+              <strong>La utilidad de horas extra depende del cupo semanal.</strong>
+              El límite de horas antes de recargo se aplica <em>por semana ISO</em>. Repartir
+              la carga entre semanas paga menos prima que concentrarla, aunque sean las
+              mismas horas.
+            </li>
+          </ol>
+
+          <h5>Interpretar el mapa de calor</h5>
+          <ul>
+            <li><strong>Tiempo de espera</strong> es la métrica que localiza el cuello de
+              botella: la tarea que brilla ahí son recursos que no dan abasto.</li>
+            <li>Una mancha con la opacidad mínima significa <strong>valor cero</strong>, no
+              «sin analizar»: se contabilizó y dio cero.</li>
+            <li>Solo se colorean <strong>tareas y compuertas</strong>.</li>
+          </ul>
+
+          <h5>Antes de decidir con estos números</h5>
+          <p>
+            Con distribución <em>fija</em> y sin fallos el modelo es <strong>determinista</strong>
+            y los resultados se pueden recalcular a mano: valide así primero. Con
+            distribuciones aleatorias, cada corrida es <strong>una sola réplica</strong>: el
+            plugin no usa semilla fija, ni réplicas, ni intervalos de confianza, así que una
+            diferencia entre escenarios puede ser ruido. Repita la corrida varias veces antes
+            de dar por buena una diferencia.
+          </p>
         </div>
         <div class="generic-modal-overlay hidden">
             <div class="generic-modal">
@@ -1397,8 +925,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ DataTablePanel)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
 
@@ -1444,8 +972,8 @@ const pad = (n) => String(n).padStart(2, '0');
 const GLOBAL_FIELDS = [
   { key: 'startDate', label: 'Fecha de inicio de la simulación', kind: 'text', path: [ 'startDate' ] },
   { key: 'simulationConfig.runValue', label: 'Instancias a simular', kind: 'number', path: [ 'simulationConfig', 'runValue' ], min: 1 },
-  { key: 'arrivalRate.value', label: 'Tasa de llegada (valor)', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0 },
-  { key: 'arrivalRate.unit', label: 'Tasa de llegada (unidad)', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ] },
+  { key: 'arrivalRate.value', label: 'Tasa de llegada: cuántas llegadas por unidad', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0 },
+  { key: 'arrivalRate.unit', label: 'Tasa de llegada: unidad de tiempo', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ] },
   { key: 'cost.baseRatePerHour', label: 'Tarifa base por hora', kind: 'number', path: [ 'cost', 'baseRatePerHour' ], min: 0 },
   { key: 'cost.waitCostPerHour', label: 'Costo de espera por hora', kind: 'number', path: [ 'cost', 'waitCostPerHour' ], min: 0 },
   { key: 'overtime.limitHours', label: 'Límite de horas antes de recargo', kind: 'number', path: [ 'overtime', 'limitHours' ], min: 0 },
@@ -1458,7 +986,12 @@ const GLOBAL_FIELDS = [
 
 const DEFAULT_GLOBAL = () => ({
   startDate: '',
-  arrivalRate: { value: 60, unit: 'minute' },
+  // CORREGIDO: antes era `{ value: 60, unit: 'minute' }`, que NO significa «una
+  // llegada cada 60 minutos» sino 60 llegadas por minuto, o sea una por SEGUNDO:
+  // las 1000 instancias entraban en la primera jornada y el cupo semanal de
+  // horas extra se agotaba de una vez. Es una tasa, y el valor por defecto debe
+  // ser una tasa razonable: una llegada por minuto.
+  arrivalRate: { value: 1, unit: 'minute' },
   simulationConfig: { runValue: 1000 },
   isRoot: true,
   calendar: {
@@ -1555,24 +1088,81 @@ const TestDataIcon = '<path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.
 const ExportIcon = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
 const ImportIcon = '<path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/>';
 const CloseIcon = '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>';
+// Lapiz del acceso directo sobre la figura seleccionada.
+const EditIcon = '<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>';
 
 const svg = (path) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">${path}</svg>`;
 
 class DataTablePanel {
 
-  constructor(canvas, eventBus, elementRegistry, modeling, bpmnFactory, notifications) {
+  constructor(canvas, eventBus, elementRegistry, modeling, bpmnFactory, notifications, editorActions, overlays, selection) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
     this._modeling = modeling;
     this._bpmnFactory = bpmnFactory;
     this._notifications = notifications;
+    // Sirve para disparar 'toggleTokenSimulation' (esta en la lista blanca de
+    // DisableModeling, asi que funciona con el modo activo) y resolver el
+    // bloqueo de solo lectura sin mandar al usuario al menu.
+    this._editorActions = editorActions;
+    // El acceso directo por elemento (el lapiz) vive aqui y no en un modulo
+    // aparte: abre ESTA tabla, asi que mantenerlo separado solo servia para
+    // duplicar la logica de guardado (y para perderla: el modal antiguo forzaba
+    // `distribution: "fixed"` y destruia un triangular configurado).
+    this._overlays = overlays;
+    this._selection = selection;
 
     this._panel = null;
     this._activeTab = 'tasks';
+    this._focusId = null;
+    this._btnDesactivar = null;
+    this._overlayId = null;
 
     this._eventBus.on('canvas.init', () => this._init());
     this._eventBus.on('diagram.destroy', () => this.destroy());
+
+    // Lapiz sobre la figura seleccionada, para llegar a su fila de un clic.
+    this._eventBus.on('selection.changed', ({ newSelection }) => {
+      this._quitarLapiz();
+      if (newSelection.length === 1 && this._esEditable(newSelection[0])) {
+        this._ponerLapiz(newSelection[0]);
+      }
+    });
+  }
+
+  /**
+   * Indica si la tabla tiene algo que editar para ese elemento.
+   *
+   * Evita poner el lapiz sobre figuras que no aparecen en ninguna pestaña: al
+   * pulsarlo no habria a donde llevar al usuario.
+   */
+  _esEditable(element) {
+    if (!element || (0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(element)) return false;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Task')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:StartEvent')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Participant')) return true;
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:SequenceFlow')
+      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element.source, 'bpmn:ExclusiveGateway'));
+  }
+
+  _ponerLapiz(element) {
+    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(
+      `<div class="sim-data-table-overlay" title="Editar los datos de simulación de este elemento"`
+      + ` data-tip="Editar en la tabla de datos">${svg(EditIcon)}</div>`
+    );
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(nodo, 'click', () => this.openFor(element));
+    this._overlayId = this._overlays.add(element, 'sim-data-table', {
+      position: { top: -12, left: -12 },
+      html: nodo
+    });
+  }
+
+  _quitarLapiz() {
+    if (this._overlayId) {
+      this._overlays.remove(this._overlayId);
+      this._overlayId = null;
+    }
   }
 
   // -- infraestructura ------------------------------------------------------
@@ -1580,7 +1170,7 @@ class DataTablePanel {
   _init() {
     if (this._panel) return;
 
-    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(`
+    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`
       <div class="${PANEL_CLS}">
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
@@ -1594,6 +1184,7 @@ class DataTablePanel {
         <div class="panel-tabs">
           <button data-tab="tasks" class="${TAB_ACTIVE_CLS}">Tareas</button>
           <button data-tab="flows">Flujos</button>
+          <button data-tab="resources">Recursos</button>
           <button data-tab="global">Global</button>
         </div>
         <div class="panel-body"></div>
@@ -1611,33 +1202,71 @@ class DataTablePanel {
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
-    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
 
     panel.querySelectorAll('.panel-tabs button').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(btn, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
-        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
         this._render();
       });
     });
   }
 
-  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._panel).has(OPEN_CLS); }
+  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).has(OPEN_CLS); }
   toggle() { this.isOpen() ? this.close() : this.open(); }
   open() {
     if (!this._panel) this._init();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._panel).add(OPEN_CLS);
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).add(OPEN_CLS);
     this._render();
   }
+
+  /**
+   * Abre la tabla centrada en un elemento concreto.
+   *
+   * Sustituye al modal del lapiz: en vez de mantener un formulario aparte que
+   * solo editaba un elemento a la vez (y que forzaba `distribution: "fixed"` al
+   * guardar, destruyendo un triangular configurado), lleva al panel de tabla
+   * —la unica fuente de verdad— a la pestaña que corresponde al elemento y
+   * marca su fila para que se vea cual se va a editar.
+   */
+  openFor(element) {
+    if (!element) return this.open();
+
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
+    else this._activeTab = 'tasks';
+
+    this._focusId = element.id;
+    this.open();
+
+    // _render() reconstruye las pestañas sin conservar cual estaba activa, asi
+    // que se marca aqui.
+    this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+
+    const fila = this._panel.querySelector(`tbody tr[data-el-id="${element.id}"]`);
+    if (fila) {
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(fila).add('fila-foco');
+      if (fila.scrollIntoView) fila.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  }
+
   close() {
-    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.classes)(this._panel).remove(OPEN_CLS);
+    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).remove(OPEN_CLS);
+    this._focusId = null;
+    this._quitarOferta();
   }
   destroy() {
+    this._quitarLapiz();
+    this._quitarOferta();
     if (this._panel && this._panel.parentNode) {
       this._panel.parentNode.removeChild(this._panel);
       this._panel = null;
@@ -1650,24 +1279,91 @@ class DataTablePanel {
     this._status.className = 'status' + (kind ? ' ' + kind : '');
   }
 
+  /**
+   * Ofrece desactivar el modo Token Simulation y reintentar la operacion.
+   *
+   * Antes solo se mostraba un aviso y el usuario tenia que ir al menu, pulsar
+   * «Toggle Token Simulation» y volver a empezar. Peor: el aviso venia seguido de
+   * un `_render()` que reconstruia la tabla desde el diagrama, asi que TODO lo
+   * que el usuario acababa de teclear se perdia — justo el escenario donde mas
+   * molesta. Aqui no se re-renderiza (los valores siguen en pantalla) y se
+   * ofrece un boton que dispara 'toggleTokenSimulation' y reintenta tal cual.
+   *
+   * `toggleTokenSimulation` esta en la lista blanca de DisableModeling, asi que
+   * funciona aunque el modo este activo (es su proposito).
+   *
+   * @param {string}   mensaje      texto del estado (el motivo del bloqueo)
+   * @param {Function} alReintentar accion a repetir tras desactivar el modo
+   */
+  _ofrecerDesactivarModo(mensaje, alReintentar) {
+    this._quitarOferta();
+    if (!this._panel) return;
+
+    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(
+      '<button class="btn-desactivar" type="button">Desactivar modo y reintentar</button>'
+    );
+
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(boton, 'click', () => {
+      this._quitarOferta();
+      try {
+        this._editorActions.trigger('toggleTokenSimulation');
+      } catch (err) {
+        this._setStatus(`No se pudo desactivar el modo Token Simulation: ${err.message || err}`, 'error');
+        return;
+      }
+      alReintentar();
+    });
+
+    const footer = this._panel.querySelector('.panel-footer');
+    footer.insertBefore(boton, footer.querySelector('.btn-save'));
+    this._setStatus(mensaje, 'error');
+  }
+
+  _quitarOferta() {
+    if (this._btnDesactivar && this._btnDesactivar.parentNode) {
+      this._btnDesactivar.parentNode.removeChild(this._btnDesactivar);
+    }
+    this._btnDesactivar = null;
+  }
+
   // -- acceso a datos -------------------------------------------------------
 
   _getTasks() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Task'));
   }
 
   _getFlows() {
     return this._elementRegistry.filter(
-      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el.source, 'bpmn:ExclusiveGateway')
+      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el.source, 'bpmn:ExclusiveGateway')
     );
   }
 
   _getRootStartEvent() {
-    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
+    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:StartEvent'));
     return starts.find((el) => {
       const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el);
       return d && d.isRoot;
     }) || null;
+  }
+
+  /**
+   * Elemento que guarda las piscinas de recursos: el proceso o el participante.
+   *
+   * Se replica el MISMO criterio que usa el motor (`_elementRegistry.find(...)`)
+   * para que lo que se edita aqui sea exactamente lo que el motor lee. En un
+   * diagrama con varios participantes el motor toma el primero; si eso cambia
+   * algun dia, tiene que cambiar en los dos sitios a la vez.
+   */
+  _getProcessRoot() {
+    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Participant')) || null;
+  }
+
+  /** Piscinas de recursos declaradas en el proceso. */
+  _getPools() {
+    const root = this._getProcessRoot();
+    if (!root) return [];
+    const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(root) || {};
+    return Array.isArray(d.resourcePools) ? d.resourcePools : [];
   }
 
   _label(element) {
@@ -1704,9 +1400,11 @@ class DataTablePanel {
   _render() {
     if (!this._panel) return;
     this._setStatus('');
+    this._quitarOferta();
 
     if (this._activeTab === 'tasks') this._renderTasks();
     else if (this._activeTab === 'flows') this._renderFlows();
+    else if (this._activeTab === 'resources') this._renderResources();
     else this._renderGlobal();
 
     this._avisarSinRaiz();
@@ -1724,7 +1422,7 @@ class DataTablePanel {
     if (this._getRootStartEvent()) return;
     if (!this._body) return;
 
-    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_2__.domify)(
+    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(
       '<p class="aviso-raiz">Sin evento raíz configurado la simulación no se ejecutará. '
       + 'Ve a la pestaña <strong>Global</strong> para crearlo.</p>'
     );
@@ -1738,6 +1436,8 @@ class DataTablePanel {
       this._body.innerHTML = '<p class="empty">No hay tareas en el diagrama.</p>';
       return;
     }
+
+    const nombresPool = this._getPools().map((p) => p.name).filter(Boolean);
 
     this._body.innerHTML = `
       <table class="data-table">
@@ -1753,6 +1453,8 @@ class DataTablePanel {
             <th>Tasa de fallo</th>
             <th>Retrabajo</th>
             <th>Unidad</th>
+            <th>Recurso</th>
+            <th>Cant.</th>
           </tr>
         </thead>
         <tbody>
@@ -1767,6 +1469,19 @@ class DataTablePanel {
             const p = (campo, valor, marcador) =>
               `<input type="number" step="any" min="0" class="cell mini" `
               + `data-field="${campo}" value="${valor == null ? '' : valor}" placeholder="${marcador}">`;
+
+            // Selector en vez de texto libre: el motor busca la piscina por
+            // nombre exacto y, si no la encuentra, IGNORA el recurso en silencio.
+            // Una errata desactivaria la restriccion sin avisar.
+            const actual = (d.resources && d.resources.pool) || '';
+            const opciones = [ '' ].concat(nombresPool);
+            // Si la tarea apunta a una piscina que ya no existe, se conserva
+            // como opcion para no borrarla sin querer al guardar.
+            if (actual && !nombresPool.includes(actual)) opciones.push(actual);
+            const selectPool = opciones.map((n) =>
+              `<option value="${esc(n)}" ${actual === n ? 'selected' : ''}>${n === '' ? '(ninguno)' : esc(n)}</option>`
+            ).join('');
+
             return `
               <tr data-el-id="${el.id}">
                 <td class="col-name" title="${esc(this._label(el))}">${esc(this._label(el))}</td>
@@ -1782,6 +1497,11 @@ class DataTablePanel {
                 <td><input type="number" step="0.01" min="0" max="1" class="cell" data-field="failureRate" value="${d.failureRate}"></td>
                 <td><input type="number" step="any" min="0" class="cell" data-field="reworkTime.value" value="${d.reworkTime.value}"></td>
                 <td><select class="cell" data-field="reworkTime.unit">${units(d.reworkTime.unit)}</select></td>
+                <td><select class="cell" data-field="resources.pool">${selectPool}</select></td>
+                <td><input type="number" step="1" min="1" class="cell mini" data-field="resources.quantityRequired"
+                  value="${(d.resources && d.resources.quantityRequired) || 1}"
+                  ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
+                </td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -1792,7 +1512,86 @@ class DataTablePanel {
         <strong>mín</strong>, <strong>moda</strong> y <strong>máx</strong>, y el valor de «Tiempo» se ignora.
         Con la distribución fija la simulación es determinista.
       </p>
+      <p class="hint">
+        <strong>Recurso</strong>: la tarea toma esa cantidad de la piscina antes de empezar y la devuelve al
+        terminar. Si no hay unidades libres, <em>espera en cola</em>: esa espera se ve en el
+        «Tiempo de espera» del mapa de calor y, si defines un costo de espera, en el «Costo de tiempos muertos».
+        Las piscinas se definen en la pestaña <strong>Recursos</strong>; sin ninguna dada de alta, esta columna
+        no tiene nada que ofrecer.
+      </p>
     `;
+  }
+
+  /**
+   * Pestaña de piscinas de recursos.
+   *
+   * Faltaba: el motor lee `resourcePools` del proceso, la metrica "Cantidad de
+   * Recursos" existe en la paleta y las tareas ya podian consumir recursos...
+   * pero no habia NINGUNA forma de declarar una piscina desde el plugin. Solo el
+   * generador aleatorio (ya retirado) las creaba.
+   */
+  _renderResources() {
+    const root = this._getProcessRoot();
+
+    if (!root) {
+      this._body.innerHTML = '<p class="empty">El diagrama no tiene ningún proceso donde guardar los recursos.</p>';
+      return;
+    }
+
+    const pools = this._getPools();
+
+    this._body.innerHTML = `
+      <p class="hint">
+        Piscinas de recursos del proceso: <strong>${esc(this._label(root))}</strong>.
+        Cada piscina es un grupo de unidades equivalentes (personas, máquinas, vehículos).
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr><th>Nombre de la piscina</th><th>Cantidad</th><th></th></tr>
+        </thead>
+        <tbody class="filas-pool">
+          ${pools.map((p) => this._filaPool(p.name, p.quantity)).join('')}
+        </tbody>
+      </table>
+      <p class="hint">
+        Los nombres deben ser <strong>únicos</strong> y las cantidades enteros ≥ 1.
+        Después podrás asignarlas en la pestaña <strong>Tareas</strong>.
+      </p>
+      <button class="btn-anadir-fila" type="button">+ Añadir piscina</button>
+    `;
+
+    const boton = this._body.querySelector('.btn-anadir-fila');
+    if (boton) {
+      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(boton, 'click', () => {
+        const tbody = this._body.querySelector('.filas-pool');
+        // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
+        // parseo de un contenedor que no sea <table>/<tbody>.
+        tbody.insertAdjacentHTML('beforeend', this._filaPool('', 1));
+      });
+    }
+
+    // Delegacion: un unico manejador en el tbody cubre las filas que se añadan
+    // despues, y evita re-vincular los botones que ya existian.
+    const tbody = this._body.querySelector('.filas-pool');
+    if (tbody) {
+      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(tbody, 'click', (e) => {
+        const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
+        if (!btn) return;
+        const tr = btn.closest('tr');
+        if (tr) tr.remove();
+      });
+    }
+  }
+
+  _filaPool(nombre, cantidad) {
+    const valor = cantidad == null || cantidad === '' ? 1 : cantidad;
+    return `
+      <tr>
+        <td><input type="text" class="cell" data-field="pool.name"
+          value="${esc(nombre == null ? '' : nombre)}" placeholder="p. ej. Analistas"></td>
+        <td><input type="number" step="1" min="1" class="cell mini" data-field="pool.quantity" value="${valor}"></td>
+        <td><button class="btn-quitar-pool" type="button" title="Quitar esta piscina" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
   }
 
   _renderFlows() {
@@ -1836,7 +1635,7 @@ class DataTablePanel {
       // que ya existiera, pero no habia forma de crearlo desde aqui. El usuario
       // rellenaba las tareas, guardaba, y al simular recibia "No root start
       // event found" sin saber que le faltaba. Ahora se puede crear desde aqui.
-      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
+      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:StartEvent'));
 
       if (!inicios.length) {
         this._body.innerHTML = `
@@ -1859,13 +1658,14 @@ class DataTablePanel {
             </button>`).join('')}
         </div>
         <p class="hint">
-          Se crearán los valores por defecto: 1000 instancias, llegada cada 60 min,
-          jornada 09:00-17:00 de lunes a viernes, y 50 por hora. Podrás ajustarlos aquí mismo.
+          Se crearán los valores por defecto: 1000 instancias, <strong>una llegada por minuto</strong>
+          (tasa 1 por <code>minute</code>), jornada 09:00-17:00 de lunes a viernes y 50 por hora.
+          Podrás ajustarlos aquí mismo.
         </p>
       `;
 
       this._body.querySelectorAll('.btn-raiz').forEach((btn) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
+        min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
       });
       return;
     }
@@ -1912,7 +1712,17 @@ class DataTablePanel {
             </tr>`).join('')}
         </tbody>
       </table>
-      <p class="hint">Marca los días laborables y ajusta las horas con los selectores. La hora de entrada debe ser anterior a la de salida.</p>
+      <p class="hint">
+        <strong>La tasa de llegada es una tasa, no un intervalo.</strong>
+        Con valor <code>60</code> y unidad <code>minute</code> no significa «una cada 60 minutos»:
+        significa <strong>60 llegadas por minuto, o sea una cada segundo</strong>, y las 1000 instancias
+        entrarían en la primera jornada. Para una llegada cada 60 minutos pon <code>1</code> con unidad
+        <code>hour</code>. El informe de la consola imprime la tasa ya resuelta («una cada 1.0 s»).
+      </p>
+      <p class="hint">
+        Marca los días laborables y ajusta las horas con los selectores.
+        La hora de entrada debe ser anterior a la de salida.
+      </p>
     `;
   }
 
@@ -1980,19 +1790,75 @@ class DataTablePanel {
         const reworkValue = num('reworkTime.value', 'retrabajo');
         if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
 
-        const current = this._taskData(el);
-        writes.push({
-          element: el,
-          data: {
-            ...current,
-            processingTime,
-            // Se conserva la distribucion del retrabajo que hubiera: la tabla
-            // todavia no la edita, y forzarla a "fixed" destruiria un triangular
-            // configurado. Mismo error que tenia el modal del lapiz.
-            reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
-            failureRate: failure
+        // Recurso: '(ninguno)' deja el campo vacio, que es lo que el motor lee
+        // como "sin restriccion de recursos".
+        const pool = val('resources.pool');
+        const cantRaw = val('resources.quantityRequired');
+        let recurso = null;
+        if (pool) {
+          const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `${name} · cantidad de recurso`);
+          if (!(cantidad >= 1)) {
+            throw new Error(`${name}: la cantidad de recurso debe ser un número mayor o igual que 1`);
           }
-        });
+          if (!this._getPools().some((p) => p.name === pool)) {
+            throw new Error(
+              `${name}: la piscina «${pool}» no está dada de alta. Créala en la pestaña Recursos antes de asignarla.`
+            );
+          }
+          recurso = { pool, quantityRequired: cantidad };
+        }
+
+        const current = this._taskData(el);
+        const datos = {
+          ...current,
+          processingTime,
+          // Se conserva la distribucion del retrabajo que hubiera: la tabla
+          // todavia no la edita, y forzarla a "fixed" destruiria un triangular
+          // configurado. Mismo error que tenia el modal del lapiz.
+          reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
+          failureRate: failure
+        };
+        // delete y no null: el motor comprueba `data.resources && data.resources.pool`,
+        // asi que un objeto con pool vacio pasaria el primer filtro. Ademas el
+        // JSON no arrastra claves muertas.
+        if (recurso) datos.resources = recurso;
+        else delete datos.resources;
+
+        writes.push({ element: el, data: datos });
+      });
+      return writes;
+    }
+
+    if (this._activeTab === 'resources') {
+      const root = this._getProcessRoot();
+      if (!root) throw new Error('El diagrama no tiene ningún proceso donde guardar los recursos');
+
+      const pools = [];
+      const vistos = new Set();
+
+      this._body.querySelectorAll('.filas-pool tr').forEach((tr, i) => {
+        const nombre = String(tr.querySelector('[data-field="pool.name"]').value || '').trim();
+        const cantRaw = String(tr.querySelector('[data-field="pool.quantity"]').value || '').trim();
+
+        // Fila totalmente vacia: se ignora en vez de dar error, para que la fila
+        // que se acaba de añadir y no se ha rellenado no bloquee el guardado.
+        if (nombre === '' && cantRaw === '') return;
+
+        if (!nombre) throw new Error(`Piscina ${i + 1}: falta el nombre`);
+        if (vistos.has(nombre)) throw new Error(`Piscina «${nombre}»: el nombre está repetido`);
+        vistos.add(nombre);
+
+        const cantidad = this._num(cantRaw, `Piscina «${nombre}» · cantidad`);
+        if (!Number.isInteger(cantidad) || cantidad < 1) {
+          throw new Error(`Piscina «${nombre}»: la cantidad debe ser un entero mayor o igual que 1`);
+        }
+
+        pools.push({ name: nombre, quantity: cantidad });
+      });
+
+      writes.push({
+        element: root,
+        data: { ...((0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(root) || {}), resourcePools: pools }
       });
       return writes;
     }
@@ -2072,12 +1938,16 @@ class DataTablePanel {
    * Ademas, como no se guarda nada, un clic accidental solo cuesta los cambios
    * que hubiera sin guardar en la tabla.
    *
-   * Los rangos son los mismos que usaba RandomDataGenerator, que ya estaban
-   * revisados: tiempo de proceso 5-45 min, fallo 1-30%, retrabajo 5-30 min.
+   * Los rangos son deliberadamente amplios y siguen la convencion habitual en
+   * simulacion de procesos: tiempo de proceso 5-45 min, fallo 1-30%, retrabajo
+   * 5-30 min. Lo que importa es que se VEAN en la tabla y se puedan corregir.
    */
   generarDatosDePrueba() {
-    if (this._activeTab === 'global') {
-      this._setStatus('Los datos de prueba aplican a Tareas y Flujos. En Global define tu propio escenario.', 'info');
+    if (this._activeTab === 'global' || this._activeTab === 'resources') {
+      this._setStatus(
+        'Los datos de prueba aplican a Tareas y Flujos. En Global y Recursos define tu propio escenario.',
+        'info'
+      );
       return;
     }
 
@@ -2088,6 +1958,13 @@ class DataTablePanel {
     }
 
     if (this._activeTab === 'tasks') {
+      // Si hay piscinas dadas de alta, se asigna la primera a cada tarea con
+      // cantidad 1. Es lo que hace que la simulacion EJERCITE el codigo de
+      // recursos (cola, espera, costo de espera), que de otro modo nunca se
+      // ejecuta porque nada escribia el campo `resources`.
+      const pools = this._getPools();
+      const primeraPool = pools.length ? pools[0].name : null;
+
       filas.forEach((tr) => {
         const poner = (campo, valor) => {
           const el = tr.querySelector(`[data-field="${campo}"]`);
@@ -2104,9 +1981,25 @@ class DataTablePanel {
         poner('failureRate', (0.01 + Math.random() * 0.29).toFixed(2));
         poner('reworkTime.value', this._azar(5, 30));
         poner('reworkTime.unit', 'minutes');
+
+        const selPool = tr.querySelector('[data-field="resources.pool"]');
+        if (selPool && primeraPool) {
+          selPool.value = primeraPool;
+          const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
+          if (cant) {
+            cant.disabled = false;
+            cant.value = 1;
+          }
+        }
       });
 
-      this._setStatus(`${filas.length} tarea(s) rellenadas con datos de prueba. Revisa y pulsa «Guardar todo».`, 'ok');
+      const extra = primeraPool
+        ? ` Asignadas a la piscina «${primeraPool}» (x1) para que se simule la espera por recursos.`
+        : '';
+      this._setStatus(
+        `${filas.length} tarea(s) rellenadas con datos de prueba.${extra} Revisa y pulsa «Guardar todo».`,
+        'ok'
+      );
       return;
     }
 
@@ -2156,10 +2049,13 @@ class DataTablePanel {
       const soloLectura = /read-only/i.test(String(err && err.message));
       const texto = soloLectura
         ? 'No se pudo crear la configuración raíz: el diagrama está en solo lectura porque el modo '
-          + 'Token Simulation está activo. Desactívalo (menú «Toggle Token Simulation» o la tecla T).'
+          + 'Token Simulation está activo.'
         : `No se pudo crear la configuración raíz: ${err.message || err}`;
-      this._setStatus(texto, 'error');
+
       this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+
+      if (soloLectura) this._ofrecerDesactivarModo(texto, () => this.marcarRaiz(elId));
+      else this._setStatus(texto, 'error');
       return;
     }
 
@@ -2209,12 +2105,18 @@ class DataTablePanel {
     } catch (err) {
       const soloLectura = /read-only/i.test(String(err && err.message));
 
-      const texto = soloLectura
-        ? 'El diagrama está en solo lectura porque el modo Token Simulation está activo. '
-          + 'Desactívalo (menú «Toggle Token Simulation» o la tecla T) y vuelve a guardar.'
+      if (soloLectura) {
+        // NO se re-renderiza: los valores que el usuario acaba de escribir siguen
+        // en la tabla, y el reintento los vuelve a recoger tal cual.
+        const texto = 'El diagrama está en solo lectura porque el modo Token Simulation está activo.'
           + (escritos ? ` Se guardaron ${escritos} de ${changed.length} elementos antes de fallar.` : '')
-        : `No se pudieron guardar los datos: ${err.message || err}`;
+          + ' Se puede desactivar y reintentar sin perder lo escrito.';
+        this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+        this._ofrecerDesactivarModo(texto, () => this.save());
+        return;
+      }
 
+      const texto = `No se pudieron guardar los datos: ${err.message || err}`;
       this._setStatus(texto, 'error');
       this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
       this._render();
@@ -2234,11 +2136,40 @@ class DataTablePanel {
 
   _csvForActiveTab() {
     if (this._activeTab === 'tasks') {
-      const rows = [ [ 'id', 'nombre', 'tiempo_proceso', 'unidad_proceso', 'tasa_fallo', 'retrabajo', 'unidad_retrabajo' ] ];
+      // Se exportan TAMBIEN las columnas de la triangular y las de recurso: antes
+      // el CSV solo llevaba el tiempo fijo, asi que una tarea triangular salia
+      // con `tiempo_proceso` vacio y sus min/moda/max se perdian de vista.
+      const rows = [ [
+        'id', 'nombre', 'distribucion',
+        'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
+        'tasa_fallo', 'retrabajo', 'unidad_retrabajo',
+        'recurso', 'cant_recurso'
+      ] ];
       this._getTasks().forEach((el) => {
         const d = this._taskData(el);
-        rows.push([ el.id, this._label(el), d.processingTime.value, d.processingTime.unit, d.failureRate, d.reworkTime.value, d.reworkTime.unit ]);
+        const tri = d.processingTime.distribution === 'triangular';
+        rows.push([
+          el.id,
+          this._label(el),
+          d.processingTime.distribution || 'fixed',
+          tri ? '' : d.processingTime.value,
+          d.processingTime.unit,
+          tri ? d.processingTime.min : '',
+          tri ? d.processingTime.mode : '',
+          tri ? d.processingTime.max : '',
+          d.failureRate,
+          d.reworkTime.value,
+          d.reworkTime.unit,
+          (d.resources && d.resources.pool) || '',
+          (d.resources && d.resources.quantityRequired) || ''
+        ]);
       });
+      return rows;
+    }
+
+    if (this._activeTab === 'resources') {
+      const rows = [ [ 'nombre', 'cantidad' ] ];
+      this._getPools().forEach((p) => rows.push([ p.name, p.quantity ]));
       return rows;
     }
 
@@ -2269,7 +2200,7 @@ class DataTablePanel {
   exportCsv() {
     try {
       const rows = this._csvForActiveTab();
-      const name = { tasks: 'tareas', flows: 'flujos', global: 'global' }[this._activeTab];
+      const name = { tasks: 'tareas', flows: 'flujos', resources: 'recursos', global: 'global' }[this._activeTab];
       download(`simulacion-${name}.csv`, toCsv(rows));
       this._setStatus(`CSV exportado (${rows.length - 1} fila(s)).`, 'ok');
     } catch (err) {
@@ -2297,11 +2228,21 @@ class DataTablePanel {
 
     if (this._activeTab === 'tasks') {
       const iId = idx('id');
-      const iT = idx('tiempo_proceso');
       const iU = idx('unidad_proceso');
       const iF = idx('tasa_fallo');
       const iR = idx('retrabajo');
       const iRU = idx('unidad_retrabajo');
+
+      // Columnas OPCIONALES: un CSV exportado por una version anterior (sin
+      // distribucion, sin triangular y sin recurso) sigue importandose, y en ese
+      // caso se conserva lo que tuviera el elemento en vez de destruirlo.
+      const iDist = header.indexOf('distribucion');
+      const iT = header.indexOf('tiempo_proceso');
+      const iMin = header.indexOf('min');
+      const iModa = header.indexOf('moda');
+      const iMax = header.indexOf('max');
+      const iRec = header.indexOf('recurso');
+      const iCant = header.indexOf('cant_recurso');
 
       body.forEach((r, n) => {
         const line = n + 2;
@@ -2317,16 +2258,80 @@ class DataTablePanel {
         if (failure < 0 || failure > 1) throw new Error(`Línea ${line}: la tasa de fallo debe estar entre 0 y 1`);
 
         const cur = this._taskData(el);
-        updates.push({
-          element: el,
-          data: {
-            ...cur,
-            processingTime: { ...cur.processingTime, value: this._num(r[iT], `Línea ${line}: tiempo de proceso`), unit },
-            reworkTime: { ...cur.reworkTime, value: this._num(r[iR], `Línea ${line}: retrabajo`), unit: unitR },
-            failureRate: failure
+
+        const dist = (iDist !== -1 && String(r[iDist]).trim())
+          ? String(r[iDist]).trim()
+          : (cur.processingTime.distribution || 'fixed');
+        if (dist !== 'fixed' && dist !== 'triangular') {
+          throw new Error(`Línea ${line}: distribución «${dist}» inválida (usa fixed o triangular)`);
+        }
+
+        let processingTime;
+        if (dist === 'triangular') {
+          const min = this._num(r[iMin], `Línea ${line}: mínimo`);
+          const mode = this._num(r[iModa], `Línea ${line}: moda`);
+          const max = this._num(r[iMax], `Línea ${line}: máximo`);
+          if (!(min <= mode && mode <= max)) {
+            throw new Error(`Línea ${line}: en la triangular debe cumplirse mínimo ≤ moda ≤ máximo`);
           }
-        });
+          processingTime = { distribution: 'triangular', min, mode, max, unit };
+        } else {
+          const value = iT !== -1
+            ? this._num(r[iT], `Línea ${line}: tiempo de proceso`)
+            : (cur.processingTime.value || 0);
+          processingTime = { distribution: 'fixed', value, unit };
+        }
+
+        const data = {
+          ...cur,
+          processingTime,
+          reworkTime: { ...cur.reworkTime, value: this._num(r[iR], `Línea ${line}: retrabajo`), unit: unitR },
+          failureRate: failure
+        };
+
+        const recurso = iRec !== -1 ? String(r[iRec]).trim() : ((cur.resources && cur.resources.pool) || '');
+        if (recurso) {
+          const cantRaw = iCant !== -1 ? String(r[iCant]).trim() : '';
+          const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `Línea ${line}: cantidad de recurso`);
+          if (!(cantidad >= 1)) throw new Error(`Línea ${line}: la cantidad de recurso debe ser ≥ 1`);
+          if (!this._getPools().some((p) => p.name === recurso)) {
+            throw new Error(`Línea ${line}: la piscina «${recurso}» no está dada de alta (créala en la pestaña Recursos)`);
+          }
+          data.resources = { pool: recurso, quantityRequired: cantidad };
+        } else {
+          delete data.resources;
+        }
+
+        updates.push({ element: el, data });
       });
+      return updates;
+    }
+
+    if (this._activeTab === 'resources') {
+      const root = this._getProcessRoot();
+      if (!root) throw new Error('El diagrama no tiene ningún proceso donde guardar los recursos');
+
+      const iN = idx('nombre');
+      const iC = idx('cantidad');
+
+      const pools = [];
+      const vistos = new Set();
+
+      body.forEach((r, n) => {
+        const line = n + 2;
+        const nombre = String(r[iN]).trim();
+        if (!nombre) throw new Error(`Línea ${line}: falta el nombre de la piscina`);
+        if (vistos.has(nombre)) throw new Error(`Línea ${line}: la piscina «${nombre}» está repetida`);
+        vistos.add(nombre);
+
+        const cantidad = this._num(r[iC], `Línea ${line}: cantidad`);
+        if (!Number.isInteger(cantidad) || cantidad < 1) {
+          throw new Error(`Línea ${line}: la cantidad debe ser un entero mayor o igual que 1`);
+        }
+        pools.push({ name: nombre, quantity: cantidad });
+      });
+
+      updates.push({ element: root, data: { ...((0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(root) || {}), resourcePools: pools } });
       return updates;
     }
 
@@ -2405,9 +2410,26 @@ class DataTablePanel {
       }
 
       const changed = updates.filter(({ element, data }) => JSON.stringify((0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(element) || {}) !== JSON.stringify(data));
-      changed.forEach(({ element, data }) => {
-        (0,_util__WEBPACK_IMPORTED_MODULE_0__.setSimulationData)(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
-      });
+
+      // Mismo tratamiento que en save(): la importacion tambien escribe en el
+      // diagrama y tambien choca con el modo de solo lectura. Aqui si se
+      // re-renderiza tras desactivar, porque el CSV es la fuente de verdad.
+      try {
+        changed.forEach(({ element, data }) => {
+          (0,_util__WEBPACK_IMPORTED_MODULE_0__.setSimulationData)(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
+        });
+      } catch (err) {
+        const soloLectura = /read-only/i.test(String(err && err.message));
+        const texto = soloLectura
+          ? 'No se pudo importar: el diagrama está en solo lectura porque el modo Token Simulation está activo.'
+          : `No se pudo importar el CSV: ${err.message || err}`;
+
+        this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+
+        if (soloLectura) this._ofrecerDesactivarModo(texto, () => this.importCsv(event));
+        else this._setStatus(texto, 'error');
+        return;
+      }
 
       this._setStatus(`Importado: ${changed.length} de ${updates.length} fila(s) con cambios.`, 'ok');
       this._notifications.showNotification({
@@ -2427,7 +2449,10 @@ DataTablePanel.$inject = [
   'elementRegistry',
   'modeling',
   'bpmnFactory',
-  'notifications'
+  'notifications',
+  'editorActions',
+  'overlays',
+  'selection'
 ];
 
 
@@ -2565,179 +2590,6 @@ MatrixLoader.$inject = [ 'canvas' ];
 
 /***/ }),
 
-/***/ "./client/simulation/RandomDataGenerator.js":
-/*!**************************************************!*\
-  !*** ./client/simulation/RandomDataGenerator.js ***!
-  \**************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (/* binding */ RandomDataGenerator)
-/* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
-/* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
-
-
-
-const random = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
-const timeUnits = ['seconds', 'minutes', 'hours'];
-const getRandomTimeUnit = () => timeUnits[random(0, timeUnits.length - 1)];
-
-const generateRealisticTimeObject = (distribution = 'fixed') => {
-  const unit = getRandomTimeUnit();
-  let value, min, mode, max;
-
-  if (unit === 'seconds') {
-    min = random(20, 60);
-    mode = random(60, 180);
-    max = random(180, 400);
-    value = random(30, 300);
-  } else if (unit === 'minutes') {
-    min = random(1, 10);
-    mode = random(10, 25);
-    max = random(25, 60);
-    value = random(5, 50);
-  } else { // hours
-    min = random(1, 2);
-    mode = random(2, 3);
-    max = random(3, 5);
-    value = random(1, 4);
-  }
-
-  if (distribution === 'triangular') {
-    return { distribution, unit, min, mode, max };
-  }
-  return { distribution, unit, value };
-};
-
-
-class RandomDataGenerator {
-  constructor(elementRegistry, modeling, bpmnFactory, editorActions, canvas) {
-    this._elementRegistry = elementRegistry;
-    this._modeling = modeling;
-    this._bpmnFactory = bpmnFactory;
-    this._canvas = canvas;
-
-    editorActions.register({
-      generateRandomSimulationData: () => this.generate()
-    });
-  }
-
-  generate() {
-    console.log("--- INICIANDO GENERADOR DE DATOS ALEATORIOS ---");
-
-    const allElements = [];
-    const rootElement = this._canvas.getRootElement();
-
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(rootElement, 'bpmn:Collaboration')) {
-        console.log("Detectado diagrama de colaboración.");
-        rootElement.children.forEach(participant => {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(participant, 'bpmn:Participant')) {
-                const process = participant.businessObject.processRef;
-                if (process && process.flowElements) {
-                    process.flowElements.forEach(flowElement => {
-                        const element = this._elementRegistry.get(flowElement.id);
-                        if (element) {
-                            allElements.push(element);
-                        }
-                    });
-                }
-                allElements.push(participant);
-            }
-        });
-    } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(rootElement, 'bpmn:Process')) {
-        console.log("Detectado diagrama de proceso simple.");
-        rootElement.children.forEach(child => allElements.push(child));
-        allElements.push(rootElement);
-    }
-    console.log(`Encontrados ${allElements.length} elementos para procesar.`);
-
-    const processRoot = allElements.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(el, 'bpmn:Participant'));
-    if (processRoot) {
-      console.log("Estableciendo configuración global en: ", processRoot.id);
-      const simulationConfig = {
-        simulationConfig: { runValue: 1000 },
-        resourcePools: [ { name: "Analistas", quantity: random(1, 5) }, { name: "Gerentes", quantity: random(1, 3) } ]
-      };
-      this.setSimulationData(processRoot, simulationConfig);
-    }
-
-    allElements.forEach(element => {
-      console.log("Procesando elemento:", element.id, `(Tipo: ${element.type})`);
-      let data = null;
-
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:StartEvent')) {
-        data = { arrivalRate: { distribution: "fixed", unit: 'minutes', value: random(5, 15) } };
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:Task')) {
-        data = {
-          processingTime: generateRealisticTimeObject('triangular'),
-          resources: { pool: "Analistas", quantityRequired: random(1, 2) },
-          cost: { type: "perHour", value: random(10, 100), currency: "USD" },
-          failureRate: parseFloat((Math.random() * 0.29 + 0.01).toFixed(2)),
-          reworkTime: generateRealisticTimeObject('fixed')
-        };
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
-        let remainingProbability = 1.0;
-        element.outgoing.forEach((flow, index) => {
-            let probability;
-            if (index === element.outgoing.length - 1) {
-              probability = remainingProbability;
-            } else {
-              probability = Math.random() * remainingProbability * 0.7;
-              remainingProbability -= probability;
-            }
-            this.setSimulationData(flow, { branchingProbability: parseFloat(probability.toFixed(2)) });
-        });
-      }
-
-      if (data) {
-        this.setSimulationData(element, data);
-      }
-    });
-    console.log("--- GENERADOR DE DATOS ALEATORIOS FINALIZADO ---");
-  }
-
-  setSimulationData(element, existingData = {}) {
-    console.log(`Guardando datos para ${element.id}...`);
-    const businessObject = element.businessObject;
-    const currentSimData = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(element) || {};
-    const newData = { ...currentSimData, ...existingData };
-    const simulationDataString = JSON.stringify(newData, null, 2);
-    console.log(" -> Datos a guardar:", newData);
-
-    let extensionElements = businessObject.get('extensionElements');
-    if (!extensionElements) extensionElements = this._bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
-
-    let properties = extensionElements.get('values').find(v => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_1__.is)(v, 'camunda:Properties'));
-    if (!properties) {
-      properties = this._bpmnFactory.create('camunda:Properties', { values: [] });
-      extensionElements.get('values').push(properties);
-    }
-
-    let simProperty = properties.get('values').find(p => p.name === 'simulationData');
-    if (!simProperty) {
-        simProperty = this._bpmnFactory.create('camunda:Property', { name: 'simulationData' });
-        properties.get('values').push(simProperty);
-    }
-
-    simProperty.value = simulationDataString;
-    this._modeling.updateProperties(element, { extensionElements });
-  }
-}
-
-RandomDataGenerator.$inject = [
-  'elementRegistry',
-  'modeling',
-  'bpmnFactory',
-  'editorActions',
-  'canvas'
-];
-
-
-/***/ }),
-
 /***/ "./client/simulation/SimulationController.js":
 /*!***************************************************!*\
   !*** ./client/simulation/SimulationController.js ***!
@@ -2810,6 +2662,12 @@ const MAX_BLOB_RADIUS = 240;
 const HEATMAP_TYPES = [ 'bpmn:Task', 'bpmn:Gateway' ];
 
 // Nombre legible de cada metrica, para el nombre del archivo exportado.
+//
+// Se listan SOLO las metricas que el motor puede calcular de verdad. Antes
+// estaban tambien `reworkCost`, `transportWaitTime` e `inefficientDispatch`,
+// pero el motor no acumula `totalReworkCost`, `totalTransportWaitTime` ni
+// `inefficientDispatchCount`: el mapa de calor pintaba NaN y los graficos
+// salian vacios. Una metrica que nunca puede dar dato es peor que no tenerla.
 const NOMBRES_METRICA = {
   cost: 'costo',
   waitTime: 'espera-promedio',
@@ -2819,12 +2677,31 @@ const NOMBRES_METRICA = {
   processTime: 'tiempo-de-proceso',
   failureRate: 'tasa-de-fallos',
   reworkTime: 'tiempo-de-reparacion',
-  reworkCost: 'costo-de-reparacion',
   overtime: 'horas-extras',
   waitTimeCost: 'costo-tiempos-muertos',
-  transportWaitTime: 'espera-de-transporte',
-  inefficientDispatch: 'despachos-ineficientes',
   resourceQuantity: 'cantidad-de-recursos'
+};
+
+// Los resultados del motor mezclan DOS unidades de tiempo y hay que
+// normalizarlas antes de dibujar:
+//   - totalProcessingTime / totalOvertime / totalReworkTime -> MILISEGUNDOS
+//   - totalWaitTime / totalCycleTime -> MINUTOS
+//     (los acumula calculateBusinessDurationInMinutes, que cuenta minutos)
+//
+// Los graficos pintaban el valor CRUDO con el eje rotulado "(s)": las barras
+// mostraban milisegundos bajo una etiqueta de segundos, y el tiempo de espera
+// —que viene en minutos— se formateaba con formatMilliseconds(), un error de
+// 60.000x. Se normaliza TODO a MINUTOS, que es la unidad con la que el usuario
+// configura el simulador, y se formatea con formatMinutes().
+//
+// `factor` convierte el campo crudo a minutos.
+const METRICAS_TIEMPO = {
+  processTime: { campo: 'totalProcessingTime', factor: 1 / 60000 },
+  paretoTime: { campo: 'totalProcessingTime', factor: 1 / 60000 },
+  waitTime: { campo: 'totalWaitTime', factor: 1 },
+  allWaitTimes: { campo: 'totalWaitTime', factor: 1 },
+  overtime: { campo: 'totalOvertime', factor: 1 / 60000 },
+  reworkTime: { campo: 'totalReworkTime', factor: 1 / 60000 }
 };
 
 // Quita caracteres que no son validos en un nombre de archivo.
@@ -3409,11 +3286,8 @@ class SimulationController {
           else if (metric === 'processTime') value = result.totalProcessingTime / (result.executionCount || 1);
           else if (metric === 'cycleTime') value = result.totalCycleTime / (result.executionCount || 1);
           else if (metric === 'failureRate') value = result.failureCount / (result.executionCount || 1);
-          else if (metric === 'transportWaitTime') value = result.totalTransportWaitTime / (result.executionCount || 1);
-          else if (metric === 'inefficientDispatch') value = result.inefficientDispatchCount;
           else if (metric === 'overtime') value = result.totalOvertime;
           else if (metric === 'reworkTime') value = result.totalReworkTime;
-          else if (metric === 'reworkCost') value = result.totalReworkCost;
           else if (metric === 'waitTimeCost') value = result.totalWaitTimeCost;
 
 
@@ -3452,15 +3326,8 @@ class SimulationController {
                     const rate = (result.failureCount / result.executionCount * 100).toFixed(1);
                     overlayText = `Fallos: ${result.failureCount} (${rate}%)`;
                 }
-                else if (metric === 'transportWaitTime' && result.totalTransportWaitTime > 0) {
-                  overlayText = `E.Carro: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalTransportWaitTime / (result.executionCount || 1))}`;
-                }
-                else if (metric === 'inefficientDispatch' && result.inefficientDispatchCount > 0) {
-                  overlayText = `Desp. Inef: ${result.inefficientDispatchCount}`;
-                }
                 else if (metric === 'overtime') overlayText = `H. Extras: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalOvertime)}`;
                 else if (metric === 'reworkTime') overlayText = `T. Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalReworkTime)}`;
-                else if (metric === 'reworkCost') overlayText = `Costo Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalReworkCost, 'MXN')}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalWaitTimeCost, 'MXN')}`;
             } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalCycleTime / (result.executionCount || 1))}`;
@@ -3596,17 +3463,19 @@ class SimulationController {
         }
     };
 
+    // Los ejes de tiempo se rotulan en MINUTOS porque getChartData() ya ha
+    // convertido la serie a minutos (ver METRICAS_TIEMPO). Antes decian "(s)"
+    // sobre valores en milisegundos.
     const yAxisTitle =
         metric === 'cost' ? 'Costo Total ($)' :
-        metric === 'processTime' ? 'Tiempo de Proceso Total (s)' :
-        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (s)' :
+        metric === 'processTime' ? 'Tiempo de Proceso Total (min)' :
+        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (min)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
         metric === 'pareto' ? 'Número de Fallos' :
-        metric === 'paretoTime' ? 'Tiempo de Proceso Total' :
+        metric === 'paretoTime' ? 'Tiempo de Proceso Total (min)' :
         metric === 'paretoCost' ? 'Costo Total ($)' :
-        metric === 'overtime' ? 'Tiempo Extra Total (s)' :
-        metric === 'reworkTime' ? 'Tiempo de Reparación Total (s)' :
-        metric === 'reworkCost' ? 'Costo de Reparación Total ($)' :
+        metric === 'overtime' ? 'Tiempo Extra Total (min)' :
+        metric === 'reworkTime' ? 'Tiempo de Reparación Total (min)' :
         metric === 'waitTimeCost' ? 'Costo de Espera Total ($)' :
         metric === 'dailyProduction' ? 'Piezas Completadas' :
         'Valor';
@@ -3631,7 +3500,7 @@ class SimulationController {
         options.scales.x = {
             type: 'linear',
             position: 'bottom',
-            title: { display: true, text: 'Tiempo de Proceso Promedio (s)' }
+            title: { display: true, text: 'Tiempo de Proceso Promedio (min)' }
         };
         options.scales.y.title = { display: true, text: 'Costo Total ($)' };
     }
@@ -3644,8 +3513,9 @@ class SimulationController {
         borderWidth: 1
     }];
 
-    const timeMetrics = ['processTime', 'waitTime', 'allWaitTimes', 'overtime', 'reworkTime'];
-    if (timeMetrics.includes(metric) || metric === 'paretoTime') {
+    // Series de tiempo: se formatean con formatMinutes() porque la serie ya
+    // viene en minutos, no en milisegundos.
+    if (METRICAS_TIEMPO[metric]) {
         options.plugins = {
             tooltip: {
                 callbacks: {
@@ -3656,7 +3526,7 @@ class SimulationController {
                           if (context.dataset.yAxisID === 'y1') {
                             label += context.parsed.y.toFixed(1) + '%';
                           } else {
-                            label += (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(context.parsed.y);
+                            label += (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(context.parsed.y);
                           }
                         }
                         return label;
@@ -3693,7 +3563,7 @@ class SimulationController {
                 callbacks: {
                     label: function(context) {
                         const label = context.dataset.label || '';
-                        const time = (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(context.parsed.x * 1000);
+                        const time = (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(context.parsed.x);
                         const cost = (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(context.parsed.y, 'MXN');
                         return `${context.chart.data.labels[context.dataIndex]}: (${time}, ${cost})`;
                     }
@@ -3788,10 +3658,13 @@ class SimulationController {
   }
 
   createOverallSummary(report, normalReport) {
-    let totalCost = 0, totalReworkCost = 0, totalOvertimeCost = 0,
-        totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
+    // Solo se acumulan campos que el motor ESCRIBE de verdad. Antes se leian
+    // aqui `totalReworkCost`, `totalOvertimeCost` y `totalNormalTimeCost`, que
+    // SimulationEngine.initialize no crea y nadie acumula: el `|| 0` los
+    // convertia en tres tarjetas que mostraban siempre $0.00.
+    let totalCost = 0, totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
         totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0,
-        totalNormalTimeCost = 0;
+        totalOperationCost = 0, totalWaitTimeCost = 0;
 
     // console.log('--- SUMMARY DATA ---');
     // console.log('Overtime Report:', report);
@@ -3800,15 +3673,17 @@ class SimulationController {
 
     report.results.forEach(result => {
       totalCost += result.totalCost || 0;
-      totalReworkCost += result.totalReworkCost || 0;
-      totalOvertimeCost += result.totalOvertimeCost || 0;
       totalFailures += result.failureCount || 0;
       totalReworkTime += result.totalReworkTime || 0;
       totalOvertimeMs += result.totalOvertime || 0;
       totalDoubleOvertimeCost += result.totalDoubleOvertimeCost || 0;
       totalTripleOvertimeCost += result.totalTripleOvertimeCost || 0;
-      totalNormalTimeCost += result.totalNormalTimeCost || 0;
+      totalOperationCost += result.totalOperationCost || 0;
+      totalWaitTimeCost += result.totalWaitTimeCost || 0;
     });
+
+    const totalPrimasExtra = totalDoubleOvertimeCost + totalTripleOvertimeCost;
+    const sumaComponentes = totalOperationCost + totalPrimasExtra + totalWaitTimeCost;
 
     const totalTimeDays = report.totalWorkingDays;
     const totalTimeHours = (report.calendarDuration / (1000 * 60 * 60)).toFixed(2);
@@ -3849,12 +3724,12 @@ class SimulationController {
             <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Costo del Tiempo de Reparación:</span>
-            <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalReworkCost, 'MXN')}</span>
+            <span class="label">Costo de Operación (base):</span>
+            <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalOperationCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Costo Total Horas Extras:</span>
-            <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalOvertimeCost, 'MXN')}</span>
+            <span class="label">Primas de Horas Extra (doble + triple):</span>
+            <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalPrimasExtra, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Costo Horas Extras Dobles:</span>
@@ -3865,14 +3740,21 @@ class SimulationController {
             <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalTripleOvertimeCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
-            <span class="label">Costo Horas Normales:</span>
-            <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalNormalTimeCost, 'MXN')}</span>
+            <span class="label">Costo de Espera de Recursos:</span>
+            <span class="value">${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalWaitTimeCost, 'MXN')}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Porcentaje de Tiempo Extra:</span>
             <span class="value">${overtimePercentage}%</span>
           </div>
         </div>
+        <p class="sim-summary-note">
+          Comprobación: operación + primas + espera =
+          <strong>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(sumaComponentes, 'MXN')}</strong>
+          ${Math.abs(sumaComponentes - totalCost) < 0.01
+            ? '— coincide con el Costo Total.'
+            : `— NO coincide con el Costo Total (${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(totalCost, 'MXN')}).`}
+        </p>
       </div>
     `;
   }
@@ -3965,7 +3847,8 @@ class SimulationController {
 
     if (metric === 'scatter') {
         const scatterData = tasks.map(t => ({
-            x: t.totalProcessingTime / (t.executionCount || 1) / 1000,
+            // /60000: de milisegundos a minutos, la unidad del eje.
+            x: t.totalProcessingTime / (t.executionCount || 1) / 60000,
             y: t.totalCost
         }));
         return { data: scatterData, labels: tasks.map(t => t.name), label: 'Tiempo de Proceso vs. Costo' };
@@ -4052,7 +3935,9 @@ class SimulationController {
         timedTasks.sort((a, b) => b.totalProcessingTime - a.totalProcessingTime);
 
         const labels = timedTasks.map(t => t.name);
-        const timeData = timedTasks.map(t => t.totalProcessingTime);
+        // totalProcessingTime esta en MILISEGUNDOS; el eje del Pareto de tiempos
+        // esta rotulado en minutos, asi que se convierte aqui.
+        const timeData = timedTasks.map(t => t.totalProcessingTime / 60000);
         const totalTime = timeData.reduce((sum, count) => sum + count, 0);
 
         let cumulative = 0;
@@ -4090,12 +3975,9 @@ class SimulationController {
     else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
     else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'allWaitTimes') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
-    else if (metric === 'transportWaitTime') { dataProperty = 'totalTransportWaitTime'; label = 'Tiempo de Espera Total (Transporte)'; }
-    else if (metric === 'inefficientDispatch') { dataProperty = 'inefficientDispatchCount'; label = 'Total de Despachos Ineficientes'; }
     else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }
     else if (metric === 'overtime') { dataProperty = 'totalOvertime'; label = 'Tiempo Extra Total'; }
     else if (metric === 'reworkTime') { dataProperty = 'totalReworkTime'; label = 'Tiempo de Reparación Total'; }
-    else if (metric === 'reworkCost') { dataProperty = 'totalReworkCost'; label = 'Costo de Reparación Total'; }
     else if (metric === 'waitTimeCost') { dataProperty = 'totalWaitTimeCost'; label = 'Costo de Espera Total'; }
 
     tasks.sort((a, b) => b[dataProperty] - a[dataProperty]);
@@ -4105,7 +3987,11 @@ class SimulationController {
         : tasks.filter(t => t[dataProperty] > 0).slice(0, 5);
 
     const labels = chartTasks.map(t => t.name);
-    const data = chartTasks.map(t => t[dataProperty]);
+
+    // Normalizacion de unidades: las metricas de tiempo se pasan a MINUTOS para
+    // que coincidan con el rotulo del eje. El resto se deja tal cual.
+    const tiempo = METRICAS_TIEMPO[metric];
+    const data = chartTasks.map(t => (tiempo ? t[dataProperty] * tiempo.factor : t[dataProperty]));
 
     return { data, labels, label };
   }
@@ -4456,6 +4342,12 @@ class SimulationEngine {
     this.weeklyStats = new Map();
     this.dailyCompletions = new Map();
 
+    // Desglose explicito del tiempo extra por tramo. Se acumula aqui (y no se
+    // deduce de la prima) para poder COMPROBARLO en el informe: prima = horas x
+    // tarifa x (multiplicador - 1), asi que sin las horas el reparto semanal
+    // doble/triple no es auditable a mano.
+    this.overtimeBreakdown = { normalMs: 0, excessMs: 0 };
+
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
@@ -4511,9 +4403,13 @@ class SimulationEngine {
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
     const elementResults = this.results.get(element.id);
-    elementResults.executionCount++;
     this.clock = event.time;
 
+    // INSTANCE_COMPLETE NO es una ejecucion del elemento: se emite llevando el
+    // elemento terminal como transporte para cerrar el caso. Contarlo aqui
+    // sumaba DOS ejecuciones al ultimo elemento del diagrama (una por su propio
+    // evento y otra por el cierre), lo que duplicaba su "Frecuencia" y dividia
+    // a la mitad su tiempo de ciclo promedio (que se acumula justo aqui abajo).
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
 
@@ -4528,6 +4424,8 @@ class SimulationEngine {
       this.instanceStates.delete(instanceId);
       return;
     }
+
+    elementResults.executionCount++;
 
     const nextElements = this.findNextElements(element);
 
@@ -4593,8 +4491,10 @@ class SimulationEngine {
     const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
 
     // Overtime cost is the PREMIUM ONLY.
-    const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
-    const currentWeeklyOvertime = this.weeklyStats.get(weekNumber) || 0;
+    // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
+    // numero, la semana 1 de un año y la del siguiente compartian contador.
+    const weekKey = this.calendar.getWeekKey(new Date(endTime));
+    const currentWeeklyOvertime = this.weeklyStats.get(weekKey) || 0;
     const overtimeRules = this.rootConfig.overtime;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
 
@@ -4605,7 +4505,10 @@ class SimulationEngine {
     const doubleOvertimePremium = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
     const tripleOvertimePremium = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
 
-    this.weeklyStats.set(weekNumber, currentWeeklyOvertime + taskOvertimeDuration);
+    this.overtimeBreakdown.normalMs += normalOvertime;
+    this.overtimeBreakdown.excessMs += excessOvertime;
+
+    this.weeklyStats.set(weekKey, currentWeeklyOvertime + taskOvertimeDuration);
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
 
@@ -4805,6 +4708,27 @@ class SimulationEngine {
   }
 
   /**
+   * Descripcion legible del intervalo entre llegadas.
+   *
+   * `arrivalRate` es una TASA (llegadas por unidad de tiempo), NO un intervalo:
+   * `{ value: 60, unit: 'minute' }` significa 60 llegadas por minuto, es decir
+   * una cada SEGUNDO, no una cada 60 minutos. Es la confusion mas facil de
+   * cometer al leer la tabla, asi que el informe la imprime resuelta.
+   */
+  _intervaloLlegada() {
+    const rate = this.rootConfig.arrivalRate || { value: 1, unit: 'minute' };
+    if (!(rate.value > 0)) return 'sin llegadas (tasa 0: solo se ejecuta la instancia inicial)';
+
+    const segundos = rate.unit === 'second' ? 1 / rate.value
+      : rate.unit === 'hour' ? 3600 / rate.value
+      : 60 / rate.value;
+
+    if (segundos < 1) return `una cada ${(segundos * 1000).toFixed(0)} ms`;
+    if (segundos < 90) return `una cada ${segundos.toFixed(1)} s`;
+    return `una cada ${(segundos / 60).toFixed(1)} min`;
+  }
+
+  /**
    * Informe de validacion en consola: entradas y salidas de la simulacion.
    *
    * Existe para poder COMPROBAR los resultados, no para adornar. Con
@@ -4825,7 +4749,9 @@ class SimulationEngine {
     console.log('ENTRADAS · configuración global', {
       instanciasObjetivo: runValue,
       instanciasCompletadas: this.completedInstances,
-      llegada: cfg.arrivalRate,
+      llegada: cfg.arrivalRate
+        ? `tasa ${cfg.arrivalRate.value} por ${cfg.arrivalRate.unit || 'minute'} → ${this._intervaloLlegada()}`
+        : '(sin configurar)',
       jornada: cal.workingHours
         ? `${horas(cal.workingHours.start)} - ${horas(cal.workingHours.end)}` +
           (useOvertime ? ` (extendida: ${horas(this.calendar.config.workingHours.end)})` : '')
@@ -4900,6 +4826,13 @@ class SimulationEngine {
       de_eso_prima_triple: Number(totalTriple.toFixed(2)),
       de_eso_costo_espera: Number(totalEsperaCosto.toFixed(2)),
       cuadre_operacion_mas_primas: Number((totalOperacion + totalDoble + totalTriple + totalEsperaCosto).toFixed(2)),
+      // El reparto doble/triple depende del CUPO SEMANAL. Estas tres cifras lo
+      // hacen comprobable: si solo hay 1 semana con extra, el tramo doble no
+      // puede pasar del limite; con N semanas, hasta N x limite.
+      semanas_con_horas_extra: this.weeklyStats.size,
+      horas_extra_en_tramo_doble_h: Number((this.overtimeBreakdown.normalMs / 3600000).toFixed(2)),
+      horas_extra_en_tramo_triple_h: Number((this.overtimeBreakdown.excessMs / 3600000).toFixed(2)),
+      limite_horas_extra_por_semana: (this.rootConfig.overtime || {}).limitHours,
       costo_promedio_por_instancia: this.completedInstances > 0
         ? Number((totalCosto / this.completedInstances).toFixed(2))
         : 0,
@@ -4943,19 +4876,16 @@ const TotalWaitTimeIcon = '<path d="M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v
 const ProcessTimeIcon = '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>';
 const CycleTimeIcon = '<path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8A5.87 5.87 0 0 1 6 12c0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/>';
 
-// --- Costos (tres iconos distintos, antes eran tres dólares iguales) ---
+// --- Costos (iconos distintos, antes eran tres dólares iguales) ---
 const CostIcon = '<path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>';
-const ReworkCostIcon = '<path d="M14 6.2c-.84-.28-1.63-.51-2.36-.7-1.45-.38-2.01-.65-2.01-1.36 0-.62.57-1.1 1.65-1.1 1.02 0 1.5.42 1.57 1.13h2.06C14.85 2.62 13.98 1.72 12.5 1.4V0h-2.5v1.37C8.4 1.66 7.2 2.53 7.2 3.99c0 1.75 1.4 2.62 3.5 3.13 1.9.46 2.3 1.01 2.3 1.87 0 .72-.6 1.3-1.75 1.3-1.5 0-2.1-.7-2.2-1.6H7.05c.1 1.7 1.35 2.6 2.9 2.9V13h2.5v-1.4c1.75-.28 2.9-1.13 2.9-2.83 0-2.1-1.8-2.82-3.35-3.2zM4 19l3 3h10l3-3-3-3H7l-3 3z"/>';
 const IdleCostIcon = '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>';
 
 // --- Calidad y fallos (dos iconos distintos, antes eran dos bichos iguales) ---
 const FailureRateIcon = '<path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5s-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/>';
 const ReworkTimeIcon = '<path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/>';
 
-// --- Tiempo extra y logística ---
+// --- Tiempo extra ---
 const OvertimeIcon = '<path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>';
-const TruckIcon = '<path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM15 11V6h3.5l1.96 2.5H15z"/>';
-const WarningIcon = '<path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>';
 
 // --- Otros ---
 const FrequencyIcon = '<path d="M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z"/>';
@@ -4995,8 +4925,6 @@ const HELP_SECTIONS = [
     items: [
       [ CostIcon, 'Costo total',
         'Coste acumulado en cada tarea: operación + primas de horas extra + espera. <em>Piensa en él como lo que cuesta producir ahí.</em>' ],
-      [ ReworkCostIcon, 'Costo de reparación',
-        'Lo que cuesta el tiempo dedicado a <strong>rehacer trabajo</strong> tras un fallo.' ],
       [ IdleCostIcon, 'Costo de tiempos muertos',
         'Lo que <strong>pagas mientras nadie trabaja</strong>: recursos ociosos esperando. Dinero que se va sin producir nada.' ]
     ]
@@ -5011,14 +4939,10 @@ const HELP_SECTIONS = [
     ]
   },
   {
-    title: 'Tiempo extra y logística',
+    title: 'Tiempo extra',
     items: [
       [ OvertimeIcon, 'Horas extras',
-        'Horas trabajadas fuera de la jornada, dentro de las franjas de <strong>pago doble o triple</strong>.' ],
-      [ TruckIcon, 'Espera de transporte',
-        'Tiempo perdido esperando un vehículo o un lote antes de poder mover el material.' ],
-      [ WarningIcon, 'Despachos ineficientes',
-        'Viajes que <strong>no se aprovecharon</strong>. Ejemplo: un camión que sale medio vacío. Cada uno es un costo evitable.' ]
+        'Horas trabajadas fuera de la jornada, dentro de las franjas de <strong>pago doble o triple</strong>.' ]
     ]
   },
   {
@@ -5131,12 +5055,6 @@ class SimulationPalette {
         metric: 'reworkTime'
     });
     this.addEntry({
-        title: 'Visualizar Costo de Reparación por Fallo',
-        tooltip: 'Costo acumulado del tiempo de reparación tras fallos',
-        icon: ReworkCostIcon,
-        metric: 'reworkCost'
-    });
-    this.addEntry({
         title: 'Visualizar Horas Extras',
         tooltip: 'Horas trabajadas dentro de las franjas de pago doble y triple',
         icon: OvertimeIcon,
@@ -5147,18 +5065,6 @@ class SimulationPalette {
         tooltip: 'Costo del tiempo en que los recursos estuvieron ociosos esperando',
         icon: IdleCostIcon,
         metric: 'waitTimeCost'
-    });
-    this.addEntry({
-        title: 'Visualizar Espera de Transporte',
-        tooltip: 'Tiempo perdido esperando por un vehículo o lote',
-        icon: TruckIcon,
-        metric: 'transportWaitTime'
-    });
-    this.addEntry({
-        title: 'Visualizar Despachos Ineficientes',
-        tooltip: 'Despachos de transporte ineficientes (p. ej. un vehículo que sale sin llenarse)',
-        icon: WarningIcon,
-        metric: 'inefficientDispatch'
     });
     this.addEntry({
         title: 'Visualizar Cantidad de Recursos Asignados',
@@ -5321,12 +5227,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var _SimulationController__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./SimulationController */ "./client/simulation/SimulationController.js");
 /* harmony import */ var _SimulationPalette__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./SimulationPalette */ "./client/simulation/SimulationPalette.js");
-/* harmony import */ var _RandomDataGenerator__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./RandomDataGenerator */ "./client/simulation/RandomDataGenerator.js");
-/* harmony import */ var _SimulationEngine__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./SimulationEngine */ "./client/simulation/SimulationEngine.js");
-/* harmony import */ var _ChartPanel__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./ChartPanel */ "./client/simulation/ChartPanel.js");
-/* harmony import */ var _DataTablePanel__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./DataTablePanel */ "./client/simulation/DataTablePanel.js");
-/* harmony import */ var _MatrixLoader__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./MatrixLoader */ "./client/simulation/MatrixLoader.js");
-
+/* harmony import */ var _SimulationEngine__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./SimulationEngine */ "./client/simulation/SimulationEngine.js");
+/* harmony import */ var _ChartPanel__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./ChartPanel */ "./client/simulation/ChartPanel.js");
+/* harmony import */ var _DataTablePanel__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./DataTablePanel */ "./client/simulation/DataTablePanel.js");
+/* harmony import */ var _MatrixLoader__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./MatrixLoader */ "./client/simulation/MatrixLoader.js");
 
 
 
@@ -5338,22 +5242,19 @@ __webpack_require__.r(__webpack_exports__);
   __init__: [
     'simulationController',
     'simulationPalette',
-    'randomDataGenerator',
     'chartPanel',
     'dataTablePanel',
     'matrixLoader'
   ],
   simulationController: [ 'type', _SimulationController__WEBPACK_IMPORTED_MODULE_0__["default"] ],
   simulationPalette: [ 'type', _SimulationPalette__WEBPACK_IMPORTED_MODULE_1__["default"] ],
-  randomDataGenerator: [ 'type', _RandomDataGenerator__WEBPACK_IMPORTED_MODULE_2__["default"] ],
-  simulationEngine: [ 'type', _SimulationEngine__WEBPACK_IMPORTED_MODULE_3__["default"] ],
-  chartPanel: [ 'type', _ChartPanel__WEBPACK_IMPORTED_MODULE_4__["default"] ],
-  // Se registra en este modulo (y no en el del editor) porque
+  simulationEngine: [ 'type', _SimulationEngine__WEBPACK_IMPORTED_MODULE_2__["default"] ],
+  chartPanel: [ 'type', _ChartPanel__WEBPACK_IMPORTED_MODULE_3__["default"] ],
+  // El editor por tabla vive en este modulo (y no en uno propio) porque
   // SimulationController lo inyecta: didi instancia los modulos en orden de
-  // __init__, y el modulo del editor se registra despues, por lo que la
-  // inyeccion fallaria si estuviera alli.
-  dataTablePanel: [ 'type', _DataTablePanel__WEBPACK_IMPORTED_MODULE_5__["default"] ],
-  matrixLoader: [ 'type', _MatrixLoader__WEBPACK_IMPORTED_MODULE_6__["default"] ]
+  // __init__, y un modulo registrado despues no estaria disponible.
+  dataTablePanel: [ 'type', _DataTablePanel__WEBPACK_IMPORTED_MODULE_4__["default"] ],
+  matrixLoader: [ 'type', _MatrixLoader__WEBPACK_IMPORTED_MODULE_5__["default"] ]
 });
 
 
@@ -14901,196 +14802,6 @@ function getPluginsDirectory() {
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/editor/data-editor.css":
-/*!********************************************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/editor/data-editor.css ***!
-  \********************************************************************************************************************************/
-/***/ ((module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
-/* harmony export */ });
-/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../../node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/sourceMaps.js */ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/sourceMaps.js");
-/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../../node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/api.js */ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/api.js");
-/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1__);
-// Imports
-
-
-var ___CSS_LOADER_EXPORT___ = _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1___default()((_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0___default()));
-// Module
-___CSS_LOADER_EXPORT___.push([module.id, `.sim-data-editor-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
-}
-
-.sim-data-editor-modal.hidden {
-  display: none;
-}
-
-.sim-data-editor-content {
-  background-color: #f7f7f7;
-  border-radius: 4px;
-  width: 500px;
-  max-width: 90%;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-}
-
-.sim-data-editor-header {
-  background-color: #f0f0f0;
-  padding: 15px;
-  font-weight: bold;
-  border-bottom: 1px solid #ccc;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top-left-radius: 4px;
-  border-top-right-radius: 4px;
-}
-
-.sim-data-editor-header .close {
-  background: none;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.sim-data-editor-body {
-  padding: 20px;
-  max-height: 60vh;
-  overflow-y: auto;
-}
-
-.sim-data-editor-footer {
-  padding: 15px;
-  background-color: #f0f0f0;
-  border-top: 1px solid #ccc;
-  text-align: right;
-  border-bottom-left-radius: 4px;
-  border-bottom-right-radius: 4px;
-}
-
-.sim-data-editor-footer button.save {
-  background-color: #4CAF50;
-  color: white;
-  padding: 10px 15px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.sim-data-editor-footer button.save:hover {
-  background-color: #45a049;
-}
-
-.sim-data-editor-footer.hidden {
-  display: none;
-}
-
-.form-group {
-  margin-bottom: 15px;
-}
-
-.form-group label {
-  display: block;
-  font-weight: bold;
-  margin-bottom: 5px;
-  font-size: 13px;
-}
-
-.form-group input[type="text"],
-.form-group input[type="number"],
-.form-group select {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-sizing: border-box;
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  outline: none;
-  border-color: #007bff;
-}
-
-.resource-pool-row {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 5px;
-}
-
-.resource-pool-row input:first-child {
-  flex-grow: 1;
-}
-
-button.add-button,
-button.remove-pool {
-  background-color: #e0e0e0;
-  border: 1px solid #ccc;
-  cursor: pointer;
-  font-weight: bold;
-  border-radius: 4px;
-}
-
-button.add-button {
-  width: 100%;
-  padding: 5px;
-  margin-top: 5px;
-}
-
-button.remove-pool {
-  background-color: #f44336;
-  color: white;
-  border-color: #d32f2f;
-  min-width: 30px;
-}
-
-button.add-button:hover {
-  background-color: #d5d5d5;
-}
-
-button.remove-pool:hover {
-  background-color: #d32f2f;
-}
-
-.sim-data-editor-overlay {
-  background-color: white;
-  border: 1px solid #ccc;
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-  color: #555;
-}
-
-.sim-data-editor-overlay:hover {
-  background-color: #f0f0f0;
-  color: black;
-}
-`, "",{"version":3,"sources":["webpack://./client/editor/data-editor.css"],"names":[],"mappings":"AAAA;EACE,eAAe;EACf,MAAM;EACN,OAAO;EACP,WAAW;EACX,YAAY;EACZ,oCAAoC;EACpC,aAAa;EACb,uBAAuB;EACvB,mBAAmB;EACnB,aAAa;AACf;;AAEA;EACE,aAAa;AACf;;AAEA;EACE,yBAAyB;EACzB,kBAAkB;EAClB,YAAY;EACZ,cAAc;EACd,sCAAsC;AACxC;;AAEA;EACE,yBAAyB;EACzB,aAAa;EACb,iBAAiB;EACjB,6BAA6B;EAC7B,aAAa;EACb,8BAA8B;EAC9B,mBAAmB;EACnB,2BAA2B;EAC3B,4BAA4B;AAC9B;;AAEA;EACE,gBAAgB;EAChB,YAAY;EACZ,eAAe;EACf,eAAe;EACf,cAAc;AAChB;;AAEA;EACE,aAAa;EACb,gBAAgB;EAChB,gBAAgB;AAClB;;AAEA;EACE,aAAa;EACb,yBAAyB;EACzB,0BAA0B;EAC1B,iBAAiB;EACjB,8BAA8B;EAC9B,+BAA+B;AACjC;;AAEA;EACE,yBAAyB;EACzB,YAAY;EACZ,kBAAkB;EAClB,YAAY;EACZ,kBAAkB;EAClB,eAAe;EACf,eAAe;AACjB;;AAEA;EACE,yBAAyB;AAC3B;;AAEA;EACE,aAAa;AACf;;AAEA;EACE,mBAAmB;AACrB;;AAEA;EACE,cAAc;EACd,iBAAiB;EACjB,kBAAkB;EAClB,eAAe;AACjB;;AAEA;;;EAGE,WAAW;EACX,YAAY;EACZ,sBAAsB;EACtB,kBAAkB;EAClB,sBAAsB;AACxB;;AAEA;;EAEE,aAAa;EACb,qBAAqB;AACvB;;AAEA;EACE,aAAa;EACb,SAAS;EACT,kBAAkB;AACpB;;AAEA;EACE,YAAY;AACd;;AAEA;;EAEE,yBAAyB;EACzB,sBAAsB;EACtB,eAAe;EACf,iBAAiB;EACjB,kBAAkB;AACpB;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,eAAe;AACjB;;AAEA;EACE,yBAAyB;EACzB,YAAY;EACZ,qBAAqB;EACrB,eAAe;AACjB;;AAEA;EACE,yBAAyB;AAC3B;;AAEA;EACE,yBAAyB;AAC3B;;AAEA;EACE,uBAAuB;EACvB,sBAAsB;EACtB,kBAAkB;EAClB,WAAW;EACX,YAAY;EACZ,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,qCAAqC;EACrC,WAAW;AACb;;AAEA;EACE,yBAAyB;EACzB,YAAY;AACd","sourcesContent":[".sim-data-editor-modal {\n  position: fixed;\n  top: 0;\n  left: 0;\n  width: 100%;\n  height: 100%;\n  background-color: rgba(0, 0, 0, 0.5);\n  display: flex;\n  justify-content: center;\n  align-items: center;\n  z-index: 1000;\n}\n\n.sim-data-editor-modal.hidden {\n  display: none;\n}\n\n.sim-data-editor-content {\n  background-color: #f7f7f7;\n  border-radius: 4px;\n  width: 500px;\n  max-width: 90%;\n  box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n}\n\n.sim-data-editor-header {\n  background-color: #f0f0f0;\n  padding: 15px;\n  font-weight: bold;\n  border-bottom: 1px solid #ccc;\n  display: flex;\n  justify-content: space-between;\n  align-items: center;\n  border-top-left-radius: 4px;\n  border-top-right-radius: 4px;\n}\n\n.sim-data-editor-header .close {\n  background: none;\n  border: none;\n  font-size: 24px;\n  cursor: pointer;\n  line-height: 1;\n}\n\n.sim-data-editor-body {\n  padding: 20px;\n  max-height: 60vh;\n  overflow-y: auto;\n}\n\n.sim-data-editor-footer {\n  padding: 15px;\n  background-color: #f0f0f0;\n  border-top: 1px solid #ccc;\n  text-align: right;\n  border-bottom-left-radius: 4px;\n  border-bottom-right-radius: 4px;\n}\n\n.sim-data-editor-footer button.save {\n  background-color: #4CAF50;\n  color: white;\n  padding: 10px 15px;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  font-size: 14px;\n}\n\n.sim-data-editor-footer button.save:hover {\n  background-color: #45a049;\n}\n\n.sim-data-editor-footer.hidden {\n  display: none;\n}\n\n.form-group {\n  margin-bottom: 15px;\n}\n\n.form-group label {\n  display: block;\n  font-weight: bold;\n  margin-bottom: 5px;\n  font-size: 13px;\n}\n\n.form-group input[type=\"text\"],\n.form-group input[type=\"number\"],\n.form-group select {\n  width: 100%;\n  padding: 8px;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  box-sizing: border-box;\n}\n\n.form-group input:focus,\n.form-group select:focus {\n  outline: none;\n  border-color: #007bff;\n}\n\n.resource-pool-row {\n  display: flex;\n  gap: 10px;\n  margin-bottom: 5px;\n}\n\n.resource-pool-row input:first-child {\n  flex-grow: 1;\n}\n\nbutton.add-button,\nbutton.remove-pool {\n  background-color: #e0e0e0;\n  border: 1px solid #ccc;\n  cursor: pointer;\n  font-weight: bold;\n  border-radius: 4px;\n}\n\nbutton.add-button {\n  width: 100%;\n  padding: 5px;\n  margin-top: 5px;\n}\n\nbutton.remove-pool {\n  background-color: #f44336;\n  color: white;\n  border-color: #d32f2f;\n  min-width: 30px;\n}\n\nbutton.add-button:hover {\n  background-color: #d5d5d5;\n}\n\nbutton.remove-pool:hover {\n  background-color: #d32f2f;\n}\n\n.sim-data-editor-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0,0,0,0.2);\n  color: #555;\n}\n\n.sim-data-editor-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n"],"sourceRoot":""}]);
-// Exports
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
-
-
-/***/ }),
-
 /***/ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/simulation/data-table.css":
 /*!***********************************************************************************************************************************!*\
   !*** ./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/simulation/data-table.css ***!
@@ -15431,7 +15142,101 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
 .sim-data-table-panel .btn-save:hover {
   background: #0d47a1;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, anclado abajo a la derecha. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  width: min(1180px, calc(100vw - 60px));\n  max-height: calc(100vh - 60px);\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 14px 16px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n"],"sourceRoot":""}]);
+
+/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama
+   (DataTablePanel.openFor). Marca cual se va a editar. */
+.sim-data-table-panel .data-table tbody tr.fila-foco {
+  background: #e3f0ff;
+  box-shadow: inset 3px 0 0 #1565c0;
+}
+
+.sim-data-table-panel .data-table tbody tr.fila-foco:hover {
+  background: #d7e9ff;
+}
+
+/* Boton para anadir una fila (pestaña Recursos). */
+.sim-data-table-panel .btn-anadir-fila {
+  margin-top: 12px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  color: #1565c0;
+  background: #fff;
+  border: 1px dashed #90caf9;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .btn-anadir-fila:hover {
+  background: #e3f0ff;
+  border-style: solid;
+}
+
+/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */
+.sim-data-table-panel .btn-quitar-pool {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: #888;
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .btn-quitar-pool:hover {
+  color: #c62828;
+  border-color: #ef9a9a;
+  background: #fdecea;
+}
+
+/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */
+.sim-data-table-panel .btn-desactivar {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: #c62828;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sim-data-table-panel .btn-desactivar:hover {
+  background: #a01717;
+}
+
+/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama
+   que abre la tabla centrada en ese elemento. Proviene del modulo \`editor\`, ya
+   retirado; el estilo se conserva identico para no cambiar de aspecto. */
+.sim-data-table-overlay {
+  background-color: white;
+  border: 1px solid #ccc;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);
+  color: #555;
+}
+
+.sim-data-table-overlay:hover {
+  background-color: #f0f0f0;
+  color: black;
+}
+
+.sim-data-table-overlay svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  display: block;
+}
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"AAAA;;qEAEqE;;AAErE;EACE,kBAAkB;EAClB,YAAY;EACZ,WAAW;EACX,sCAAsC;EACtC,8BAA8B;EAC9B,aAAa;EACb,sBAAsB;EACtB,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,0CAA0C;EAC1C,YAAY;EACZ,eAAe;EACf,WAAW;AACb;;AAEA;EACE,aAAa;AACf;;AAEA,qBAAqB;AACrB;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,kBAAkB;EAClB,6BAA6B;EAC7B,mBAAmB;EACnB,0BAA0B;AAC5B;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;EACR,gBAAgB;EAChB,iBAAiB;EACjB,OAAO;AACT;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,kBAAkB;AACpB;;AAEA;EACE,aAAa;EACb,mBAAmB;EACnB,QAAQ;AACV;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,uBAAuB;EACvB,WAAW;EACX,YAAY;EACZ,UAAU;EACV,gBAAgB;EAChB,YAAY;EACZ,kBAAkB;EAClB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,gBAAgB;EAChB,WAAW;AACb;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA,qBAAqB;AACrB;EACE,aAAa;EACb,QAAQ;EACR,eAAe;EACf,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA;EACE,iBAAiB;EACjB,gBAAgB;EAChB,YAAY;EACZ,oCAAoC;EACpC,eAAe;EACf,gBAAgB;EAChB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,WAAW;AACb;;AAEA;EACE,cAAc;EACd,4BAA4B;AAC9B;;AAEA,mBAAmB;AACnB;EACE,OAAO;EACP,aAAa;EACb,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,cAAc;EACd,kBAAkB;EAClB,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,gBAAgB;EAChB,eAAe;EACf,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,gBAAgB;EAChB,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA,kBAAkB;AAClB;EACE,WAAW;EACX,yBAAyB;AAC3B;;AAEA;EACE,gBAAgB;EAChB,MAAM;EACN,UAAU;EACV,mBAAmB;EACnB,sBAAsB;EACtB,iBAAiB;EACjB,gBAAgB;EAChB,gBAAgB;EAChB,eAAe;EACf,mBAAmB;AACrB;;AAEA;EACE,yBAAyB;EACzB,gBAAgB;EAChB,sBAAsB;AACxB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;;EAEE,gBAAgB;EAChB,gBAAgB;EAChB,uBAAuB;EACvB,mBAAmB;AACrB;;AAEA;EACE,UAAU;EACV,WAAW;AACb;;AAEA;EACE,WAAW;EACX,eAAe;EACf,gBAAgB;EAChB,iBAAiB;EACjB,oBAAoB;EACpB,cAAc;EACd,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;AACpB;;AAEA;EACE,0BAA0B;EAC1B,oBAAoB;EACpB,qBAAqB;AACvB;;AAEA,0DAA0D;AAC1D;EACE,aAAa;EACb,eAAe;EACf,aAAa;AACf;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;EACR,iBAAiB;EACjB,mBAAmB;EACnB,eAAe;AACjB;;AAEA;EACE,SAAS;EACT,eAAe;AACjB;;AAEA,oEAAoE;AACpE;EACE,gBAAgB;EAChB,iBAAiB;EACjB,iBAAiB;EACjB,gBAAgB;EAChB,cAAc;EACd,mBAAmB;EACnB,yBAAyB;EACzB,8BAA8B;EAC9B,kBAAkB;AACpB;;AAEA,8CAA8C;AAC9C;EACE,aAAa;EACb,sBAAsB;EACtB,QAAQ;EACR,gBAAgB;EAChB,iBAAiB;AACnB;;AAEA;EACE,kBAAkB;EAClB,eAAe;EACf,cAAc;EACd,gBAAgB;EAChB,yBAAyB;EACzB,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,mBAAmB;EACnB,qBAAqB;AACvB;;AAEA,uEAAuE;AACvE;EACE,eAAe;EACf,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA,gBAAgB;AAChB;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,kBAAkB;EAClB,0BAA0B;EAC1B,mBAAmB;EACnB,0BAA0B;AAC5B;;AAEA;EACE,OAAO;EACP,iBAAiB;EACjB,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,cAAc;EACd,gBAAgB;AAClB;;AAEA;EACE,cAAc;EACd,gBAAgB;AAClB;;AAEA;EACE,WAAW;AACb;;AAEA;EACE,iBAAiB;EACjB,eAAe;EACf,gBAAgB;EAChB,WAAW;EACX,mBAAmB;EACnB,YAAY;EACZ,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;yDACyD;AACzD;EACE,mBAAmB;EACnB,iCAAiC;AACnC;;AAEA;EACE,mBAAmB;AACrB;;AAEA,mDAAmD;AACnD;EACE,gBAAgB;EAChB,iBAAiB;EACjB,iBAAiB;EACjB,cAAc;EACd,gBAAgB;EAChB,0BAA0B;EAC1B,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,mBAAmB;EACnB,mBAAmB;AACrB;;AAEA,yEAAyE;AACzE;EACE,WAAW;EACX,YAAY;EACZ,UAAU;EACV,eAAe;EACf,cAAc;EACd,WAAW;EACX,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,cAAc;EACd,qBAAqB;EACrB,mBAAmB;AACrB;;AAEA,4EAA4E;AAC5E;EACE,iBAAiB;EACjB,iBAAiB;EACjB,gBAAgB;EAChB,WAAW;EACX,mBAAmB;EACnB,YAAY;EACZ,kBAAkB;EAClB,eAAe;EACf,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;;yEAEyE;AACzE;EACE,uBAAuB;EACvB,sBAAsB;EACtB,kBAAkB;EAClB,WAAW;EACX,YAAY;EACZ,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,uCAAuC;EACvC,WAAW;AACb;;AAEA;EACE,yBAAyB;EACzB,YAAY;AACd;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,kBAAkB;EAClB,cAAc;AAChB","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, anclado abajo a la derecha. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  width: min(1180px, calc(100vw - 60px));\n  max-height: calc(100vh - 60px);\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 14px 16px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 
@@ -15915,6 +15720,45 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
   overflow-y: auto;
 }
 
+/* La ayuda es texto largo: se limita la medida de linea para que sea legible y
+   se le da jerarquia a los apartados. */
+.simulation-chart-panel .help-content h4 {
+  margin: 0 0 10px;
+  color: #1565c0;
+}
+
+.simulation-chart-panel .help-content h5 {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 3px;
+}
+
+.simulation-chart-panel .help-content p,
+.simulation-chart-panel .help-content ul,
+.simulation-chart-panel .help-content ol {
+  max-width: 88ch;
+  line-height: 1.55;
+}
+
+.simulation-chart-panel .help-content ul,
+.simulation-chart-panel .help-content ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.simulation-chart-panel .help-content li {
+  margin-bottom: 5px;
+}
+
+.simulation-chart-panel .help-content code {
+  padding: 1px 4px;
+  font-size: 12px;
+  background: #eef;
+  border-radius: 3px;
+}
+
 .simulation-chart-panel .help-content.hidden,
 .simulation-chart-panel .content.hidden,
 .simulation-chart-panel .html-content.hidden {
@@ -16166,7 +16010,20 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
   color: #1565c0;
   font-weight: bold;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"AAAA;;;CAGC;;AAED,uBAAuB;AACvB;EACE,kBAAkB;EAClB,SAAS;EACT,UAAU,EAAE,gDAAgD;EAC5D,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,YAAY;EACZ,aAAa,EAAE,sBAAsB;EACrC,YAAY;AACd;;AAEA;EACE,aAAa;EACb,sBAAsB;AACxB;;AAEA;EACE,YAAY;EACZ,eAAe;EACf,kBAAkB;EAClB,WAAW;EACX,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,YAAY;EACZ,gBAAgB;AAClB;;AAEA;IACI,eAAe;IACf,iBAAiB;AACrB;;AAEA;EACE,gBAAgB;AAClB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;EACE,WAAW;EACX,YAAY;AACd;;AAEA;EACE,aAAa;EACb,0BAA0B;EAC1B,mBAAmB;EACnB,iBAAiB;EACjB,kBAAkB;EAClB,UAAU;AACZ;;AAEA;;;;;;;oEAOoE;AACpE;EACE,kBAAkB;AACpB;;AAEA;EACE,uBAAuB;EACvB,kBAAkB;EAClB,uBAAuB;EACvB,QAAQ;EACR,2BAA2B;EAC3B,mBAAmB;EACnB,WAAW;EACX,eAAe;EACf,gBAAgB;EAChB,iBAAiB;EACjB,gBAAgB;EAChB,kBAAkB;EAClB,mBAAmB;EACnB,kBAAkB;EAClB,gBAAgB;EAChB,UAAU;EACV,kBAAkB;EAClB,8CAA8C;EAC9C,oBAAoB;EACpB,WAAW;AACb;;AAEA;EACE,WAAW;EACX,kBAAkB;EAClB,sBAAsB;EACtB,QAAQ;EACR,2BAA2B;EAC3B,6BAA6B;EAC7B,2BAA2B;EAC3B,UAAU;EACV,kBAAkB;EAClB,8CAA8C;EAC9C,oBAAoB;EACpB,WAAW;AACb;;AAEA;;EAEE,UAAU;EACV,mBAAmB;AACrB;;AAEA;;mBAEmB;AACnB;EACE,UAAU;EACV,wBAAwB;AAC1B;;AAEA;EACE,UAAU;EACV,uBAAuB;EACvB,+BAA+B;EAC/B,0BAA0B;AAC5B;;AAEA,0CAA0C;AAC1C;EACE,aAAa;EACb,kBAAkB;EAClB,uBAAuB;EACvB,MAAM;EACN,YAAY;EACZ,gBAAgB;EAChB,gBAAgB;EAChB,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,yCAAyC;EACzC,uBAAuB;EACvB,WAAW;AACb;;AAEA;EACE,cAAc;AAChB;;AAEA;EACE,eAAe;EACf,gBAAgB;EAChB,WAAW;EACX,kBAAkB;AACpB;;AAEA;EACE,eAAe;EACf,gBAAgB;EAChB,yBAAyB;EACzB,oBAAoB;EACpB,WAAW;EACX,kBAAkB;AACpB;;AAEA;EACE,WAAW;EACX,yBAAyB;AAC3B;;AAEA;EACE,gBAAgB;EAChB,gCAAgC;EAChC,iBAAiB;EACjB,sBAAsB;AACxB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;EACE,WAAW;EACX,kBAAkB;AACpB;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,cAAc;EACd,cAAc;AAChB;;AAEA;EACE,YAAY;EACZ,gBAAgB;EAChB,WAAW;AACb;;AAEA;EACE,WAAW;EACX,iBAAiB;AACnB;;;AAGA,aAAa;AACb;EACE,8BAA8B;EAC9B,YAAY;EACZ,gBAAgB;EAChB,kBAAkB;EAClB,eAAe;EACf,mBAAmB;AACrB;;AAEA,sBAAsB;AACtB;IACI,4BAA4B;AAChC;;AAEA;IACI,kBAAkB;IAClB,MAAM;IACN,OAAO;IACP,WAAW;IACX,YAAY;IACZ,oBAAoB;IACpB,wBAAwB;IACxB,YAAY;AAChB;;AAEA,oCAAoC;AACpC;EACE,kBAAkB;EAClB,YAAY;EACZ,WAAW;EACX,6EAA6E;EAC7E,sCAAsC;EACtC,8BAA8B;EAC9B,aAAa;EACb,sBAAsB;EACtB,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,uBAAuB;EACvB,0CAA0C;EAC1C,YAAY;AACd;;AAEA;EACE,aAAa;AACf;;AAEA;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,6BAA6B;EAC7B,oBAAoB;EACpB,mBAAmB;AACrB;;AAEA;EACE,OAAO;EACP,YAAY;EACZ,gBAAgB;EAChB,iBAAiB;EACjB,eAAe;EACf,cAAc;EACd,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,0BAA0B;EAC1B,oBAAoB;AACtB;;AAEA;EACE,aAAa;EACb,mBAAmB;EACnB,QAAQ;EACR,iBAAiB;AACnB;;AAEA;;;;iBAIiB;AACjB;EACE,oBAAoB;EACpB,mBAAmB;EACnB,uBAAuB;EACvB,WAAW;EACX,YAAY;EACZ,cAAc;EACd,UAAU;EACV,gBAAgB;EAChB,YAAY;EACZ,kBAAkB;EAClB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,gBAAgB;EAChB,WAAW;AACb;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA;EACE,iBAAiB;EACjB,0BAA0B;EAC1B,gBAAgB;AAClB;;AAEA;;;EAGE,aAAa;AACf;;AAEA,gCAAgC;AAChC;EACE,OAAO;EACP,aAAa;EACb,gBAAgB;EAChB,gBAAgB;AAClB;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,cAAc;AAChB;;AAEA;;;2DAG2D;AAC3D;EACE,eAAe;EACf,QAAQ;EACR,8BAA8B;EAC9B,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,aAAa;EACb,aAAa;AACf;;AAEA;EACE,aAAa;AACf;;AAEA;EACE,aAAa;EACb,sBAAsB;EACtB,wBAAwB;EACxB,gBAAgB;EAChB,gBAAgB;EAChB,kBAAkB;EAClB,0CAA0C;EAC1C,gBAAgB;AAClB;;AAEA;EACE,aAAa;EACb,mBAAmB;EACnB,8BAA8B;EAC9B,SAAS;EACT,kBAAkB;EAClB,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA;EACE,SAAS;EACT,eAAe;EACf,cAAc;AAChB;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,uBAAuB;EACvB,WAAW;EACX,YAAY;EACZ,UAAU;EACV,gBAAgB;EAChB,YAAY;EACZ,kBAAkB;EAClB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,aAAa;EACb,gBAAgB;AAClB;;AAEA;IACI,WAAW;IACX,yBAAyB;IACzB,mBAAmB,EAAE,gDAAgD;AACzE;;AAEA;;IAEI,sBAAsB;IACtB,YAAY;IACZ,gBAAgB;IAChB,qBAAqB,EAAE,mBAAmB;AAC9C;;AAEA;IACI,yBAAyB;IACzB,iBAAiB;AACrB;;AAEA;IACI,yBAAyB;AAC7B;;AAEA;IACI,aAAa;AACjB;;AAEA,mBAAmB;AACnB;;IAEI,eAAe;IACf,MAAM;IACN,OAAO;IACP,WAAW;IACX,YAAY;IACZ,8BAA8B;IAC9B,aAAa;IACb,mBAAmB;IACnB,uBAAuB;IACvB,aAAa,EAAE,sBAAsB;AACzC;;AAEA;;IAEI,aAAa;AACjB;;AAEA;IACI,gBAAgB;IAChB,aAAa;IACb,kBAAkB;IAClB,sCAAsC;IACtC,UAAU;IACV,gBAAgB;AACpB;;AAEA;IACI,aAAa;IACb,8BAA8B;IAC9B,mBAAmB;IACnB,6BAA6B;IAC7B,oBAAoB;IACpB,mBAAmB;AACvB;;AAEA;IACI,SAAS;IACT,gBAAgB;AACpB;;AAEA;IACI,gBAAgB;IAChB,YAAY;IACZ,eAAe;IACf,eAAe;IACf,cAAc;AAClB;;AAEA;IACI,aAAa;IACb,mBAAmB;AACvB;;AAEA;IACI,qBAAqB;IACrB,eAAe;AACnB;;AAEA;IACI,mBAAmB;IACnB,YAAY;IACZ,kBAAkB;IAClB,kBAAkB;AACtB;;AAEA;IACI,aAAa;IACb,mBAAmB;AACvB;;AAEA;IACI,gBAAgB;AACpB;;AAEA;IACI,mBAAmB;IACnB,sBAAsB;IACtB,kBAAkB;IAClB,gBAAgB;IAChB,eAAe;AACnB;;AAEA;IACI,aAAa;AACjB;;AAEA;IACI,aAAa;IACb,6BAA6B;IAC7B,SAAS;AACb;;AAEA;IACI,OAAO;AACX;;AAEA;EACE,aAAa;EACb,2DAA2D;EAC3D,SAAS;EACT,iBAAiB;AACnB;;AAEA;EACE,aAAa;EACb,sBAAsB;EACtB,mBAAmB;EACnB,aAAa;EACb,kBAAkB;EAClB,8BAA8B,EAAE,iBAAiB;AACnD;;AAEA;EACE,iBAAiB;EACjB,WAAW;EACX,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA;EACE,gBAAgB;EAChB,cAAc;EACd,iBAAiB;AACnB","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  /* Ocupa casi todo el ancho disponible sin desbordar en pantallas pequenas. */\n  width: min(1500px, calc(100vw - 60px));\n  max-height: calc(100vh - 60px);\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 14px 18px 18px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  max-height: 72vh;\n  overflow-y: auto;\n}\n\n.simulation-chart-panel .html-content {\n  width: 100%;\n  height: 100%;\n  overflow: auto;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1200px, 100%);\n  max-height: 100%;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: 90%;\n    max-width: 600px;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n"],"sourceRoot":""}]);
+
+/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.
+   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de
+   Intl.NumberFormat); el propio texto indica si coincide o no. */
+.sim-summary-note {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  font-size: 0.9em;
+  color: #444;
+  background: #f2f7fd;
+  border: 1px solid #d6e4f5;
+  border-radius: 5px;
+}
+`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"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","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  /* Ocupa casi todo el ancho disponible sin desbordar en pantallas pequenas. */\n  width: min(1500px, calc(100vw - 60px));\n  max-height: calc(100vh - 60px);\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 14px 18px 18px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n/* La ayuda es texto largo: se limita la medida de linea para que sea legible y\n   se le da jerarquia a los apartados. */\n.simulation-chart-panel .help-content h4 {\n  margin: 0 0 10px;\n  color: #1565c0;\n}\n\n.simulation-chart-panel .help-content h5 {\n  margin: 16px 0 6px;\n  font-size: 13px;\n  color: #333;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 3px;\n}\n\n.simulation-chart-panel .help-content p,\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  max-width: 88ch;\n  line-height: 1.55;\n}\n\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  margin: 6px 0;\n  padding-left: 22px;\n}\n\n.simulation-chart-panel .help-content li {\n  margin-bottom: 5px;\n}\n\n.simulation-chart-panel .help-content code {\n  padding: 1px 4px;\n  font-size: 12px;\n  background: #eef;\n  border-radius: 3px;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  max-height: 72vh;\n  overflow-y: auto;\n}\n\n.simulation-chart-panel .html-content {\n  width: 100%;\n  height: 100%;\n  overflow: auto;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1200px, 100%);\n  max-height: 100%;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: 90%;\n    max-width: 600px;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n\n/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.\n   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de\n   Intl.NumberFormat); el propio texto indica si coincide o no. */\n.sim-summary-note {\n  margin: 12px 0 0;\n  padding: 9px 12px;\n  font-size: 0.9em;\n  color: #444;\n  background: #f2f7fd;\n  border: 1px solid #d6e4f5;\n  border-radius: 5px;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 
@@ -17639,59 +17496,6 @@ function remove(el) {
 }
   return randomColor;
 }));
-
-
-/***/ }),
-
-/***/ "./client/editor/data-editor.css":
-/*!***************************************!*\
-  !*** ./client/editor/data-editor.css ***!
-  \***************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
-/* harmony export */ });
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleDomAPI.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleDomAPI.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1__);
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertBySelector.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertBySelector.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2__);
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/setAttributesWithoutAttributes.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/setAttributesWithoutAttributes.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3__);
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertStyleElement.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertStyleElement.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4__);
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleTagTransform.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleTagTransform.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5__);
-/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_editor_css__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! !!../../node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./data-editor.css */ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/editor/data-editor.css");
-
-      
-      
-      
-      
-      
-      
-      
-      
-      
-
-var options = {};
-
-options.styleTagTransform = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5___default());
-options.setAttributes = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3___default());
-options.insert = _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2___default().bind(null, "head");
-options.domAPI = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1___default());
-options.insertStyleElement = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4___default());
-
-var update = _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default()(_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_editor_css__WEBPACK_IMPORTED_MODULE_6__["default"], options);
-
-
-
-
-       /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_editor_css__WEBPACK_IMPORTED_MODULE_6__["default"] && _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_editor_css__WEBPACK_IMPORTED_MODULE_6__["default"].locals ? _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_editor_css__WEBPACK_IMPORTED_MODULE_6__["default"].locals : undefined);
 
 
 /***/ }),
@@ -35236,15 +35040,13 @@ var __webpack_exports__ = {};
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! camunda-modeler-plugin-helpers */ "./node_modules/.pnpm/camunda-modeler-plugin-helpers@6.0.0/node_modules/camunda-modeler-plugin-helpers/index.js");
 /* harmony import */ var _simulation_simulation_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./simulation/simulation.css */ "./client/simulation/simulation.css");
-/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/.pnpm/bpmn-js-token-simulation@0.38.1/node_modules/bpmn-js-token-simulation/lib/modeler.js");
+/* harmony import */ var bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js-token-simulation */ "./node_modules/.pnpm/bpmn-js-token-simulation@0.38.1/node_modules/bpmn-js-token-simulation/lib/modeler.js");
 /* harmony import */ var _HideModelerElements__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./HideModelerElements */ "./client/HideModelerElements.js");
 /* harmony import */ var _TimeTracker__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./TimeTracker */ "./client/TimeTracker.js");
 /* harmony import */ var _simulation__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./simulation */ "./client/simulation/index.js");
-/* harmony import */ var _editor__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./editor */ "./client/editor/index.js");
 
 
 // new css import
-
 
 
 
@@ -35264,10 +35066,9 @@ const TimeTrackerPluginModule = {
 };
 
 // Register the BpmnJS modules
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_6__["default"]);
+(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(bpmn_js_token_simulation__WEBPACK_IMPORTED_MODULE_5__["default"]);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(TimeTrackerPluginModule);
 (0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(_simulation__WEBPACK_IMPORTED_MODULE_4__["default"]);
-(0,camunda_modeler_plugin_helpers__WEBPACK_IMPORTED_MODULE_0__.registerBpmnJSPlugin)(_editor__WEBPACK_IMPORTED_MODULE_5__["default"]);
 
 })();
 

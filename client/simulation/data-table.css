@@ -318,3 +318,97 @@
 .sim-data-table-panel .btn-save:hover {
   background: #0d47a1;
 }
+
+/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama
+   (DataTablePanel.openFor). Marca cual se va a editar. */
+.sim-data-table-panel .data-table tbody tr.fila-foco {
+  background: #e3f0ff;
+  box-shadow: inset 3px 0 0 #1565c0;
+}
+
+.sim-data-table-panel .data-table tbody tr.fila-foco:hover {
+  background: #d7e9ff;
+}
+
+/* Boton para anadir una fila (pestaña Recursos). */
+.sim-data-table-panel .btn-anadir-fila {
+  margin-top: 12px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  color: #1565c0;
+  background: #fff;
+  border: 1px dashed #90caf9;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .btn-anadir-fila:hover {
+  background: #e3f0ff;
+  border-style: solid;
+}
+
+/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */
+.sim-data-table-panel .btn-quitar-pool {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: #888;
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .btn-quitar-pool:hover {
+  color: #c62828;
+  border-color: #ef9a9a;
+  background: #fdecea;
+}
+
+/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */
+.sim-data-table-panel .btn-desactivar {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: #c62828;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sim-data-table-panel .btn-desactivar:hover {
+  background: #a01717;
+}
+
+/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama
+   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya
+   retirado; el estilo se conserva identico para no cambiar de aspecto. */
+.sim-data-table-overlay {
+  background-color: white;
+  border: 1px solid #ccc;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);
+  color: #555;
+}
+
+.sim-data-table-overlay:hover {
+  background-color: #f0f0f0;
+  color: black;
+}
+
+.sim-data-table-overlay svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  display: block;
+}

@@ -122,6 +122,12 @@ export default class SimulationEngine {
     this.weeklyStats = new Map();
     this.dailyCompletions = new Map();
 
+    // Desglose explicito del tiempo extra por tramo. Se acumula aqui (y no se
+    // deduce de la prima) para poder COMPROBARLO en el informe: prima = horas x
+    // tarifa x (multiplicador - 1), asi que sin las horas el reparto semanal
+    // doble/triple no es auditable a mano.
+    this.overtimeBreakdown = { normalMs: 0, excessMs: 0 };
+
     this._elementRegistry.getAll().forEach(element => {
       this.results.set(element.id, {
         executionCount: 0, failureCount: 0, totalWaitTime: 0,
@@ -177,9 +183,13 @@ export default class SimulationEngine {
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
     const elementResults = this.results.get(element.id);
-    elementResults.executionCount++;
     this.clock = event.time;
 
+    // INSTANCE_COMPLETE NO es una ejecucion del elemento: se emite llevando el
+    // elemento terminal como transporte para cerrar el caso. Contarlo aqui
+    // sumaba DOS ejecuciones al ultimo elemento del diagrama (una por su propio
+    // evento y otra por el cierre), lo que duplicaba su "Frecuencia" y dividia
+    // a la mitad su tiempo de ciclo promedio (que se acumula justo aqui abajo).
     if (type === 'INSTANCE_COMPLETE') {
       this.completedInstances++;
 
@@ -194,6 +204,8 @@ export default class SimulationEngine {
       this.instanceStates.delete(instanceId);
       return;
     }
+
+    elementResults.executionCount++;
 
     const nextElements = this.findNextElements(element);
 
@@ -259,8 +271,10 @@ export default class SimulationEngine {
     const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
 
     // Overtime cost is the PREMIUM ONLY.
-    const weekNumber = this.calendar.getWeekNumber(new Date(endTime));
-    const currentWeeklyOvertime = this.weeklyStats.get(weekNumber) || 0;
+    // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
+    // numero, la semana 1 de un año y la del siguiente compartian contador.
+    const weekKey = this.calendar.getWeekKey(new Date(endTime));
+    const currentWeeklyOvertime = this.weeklyStats.get(weekKey) || 0;
     const overtimeRules = this.rootConfig.overtime;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
 
@@ -271,7 +285,10 @@ export default class SimulationEngine {
     const doubleOvertimePremium = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
     const tripleOvertimePremium = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
 
-    this.weeklyStats.set(weekNumber, currentWeeklyOvertime + taskOvertimeDuration);
+    this.overtimeBreakdown.normalMs += normalOvertime;
+    this.overtimeBreakdown.excessMs += excessOvertime;
+
+    this.weeklyStats.set(weekKey, currentWeeklyOvertime + taskOvertimeDuration);
 
     const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
 
@@ -471,6 +488,27 @@ export default class SimulationEngine {
   }
 
   /**
+   * Descripcion legible del intervalo entre llegadas.
+   *
+   * `arrivalRate` es una TASA (llegadas por unidad de tiempo), NO un intervalo:
+   * `{ value: 60, unit: 'minute' }` significa 60 llegadas por minuto, es decir
+   * una cada SEGUNDO, no una cada 60 minutos. Es la confusion mas facil de
+   * cometer al leer la tabla, asi que el informe la imprime resuelta.
+   */
+  _intervaloLlegada() {
+    const rate = this.rootConfig.arrivalRate || { value: 1, unit: 'minute' };
+    if (!(rate.value > 0)) return 'sin llegadas (tasa 0: solo se ejecuta la instancia inicial)';
+
+    const segundos = rate.unit === 'second' ? 1 / rate.value
+      : rate.unit === 'hour' ? 3600 / rate.value
+      : 60 / rate.value;
+
+    if (segundos < 1) return `una cada ${(segundos * 1000).toFixed(0)} ms`;
+    if (segundos < 90) return `una cada ${segundos.toFixed(1)} s`;
+    return `una cada ${(segundos / 60).toFixed(1)} min`;
+  }
+
+  /**
    * Informe de validacion en consola: entradas y salidas de la simulacion.
    *
    * Existe para poder COMPROBAR los resultados, no para adornar. Con
@@ -491,7 +529,9 @@ export default class SimulationEngine {
     console.log('ENTRADAS · configuración global', {
       instanciasObjetivo: runValue,
       instanciasCompletadas: this.completedInstances,
-      llegada: cfg.arrivalRate,
+      llegada: cfg.arrivalRate
+        ? `tasa ${cfg.arrivalRate.value} por ${cfg.arrivalRate.unit || 'minute'} → ${this._intervaloLlegada()}`
+        : '(sin configurar)',
       jornada: cal.workingHours
         ? `${horas(cal.workingHours.start)} - ${horas(cal.workingHours.end)}` +
           (useOvertime ? ` (extendida: ${horas(this.calendar.config.workingHours.end)})` : '')
@@ -566,6 +606,13 @@ export default class SimulationEngine {
       de_eso_prima_triple: Number(totalTriple.toFixed(2)),
       de_eso_costo_espera: Number(totalEsperaCosto.toFixed(2)),
       cuadre_operacion_mas_primas: Number((totalOperacion + totalDoble + totalTriple + totalEsperaCosto).toFixed(2)),
+      // El reparto doble/triple depende del CUPO SEMANAL. Estas tres cifras lo
+      // hacen comprobable: si solo hay 1 semana con extra, el tramo doble no
+      // puede pasar del limite; con N semanas, hasta N x limite.
+      semanas_con_horas_extra: this.weeklyStats.size,
+      horas_extra_en_tramo_doble_h: Number((this.overtimeBreakdown.normalMs / 3600000).toFixed(2)),
+      horas_extra_en_tramo_triple_h: Number((this.overtimeBreakdown.excessMs / 3600000).toFixed(2)),
+      limite_horas_extra_por_semana: (this.rootConfig.overtime || {}).limitHours,
       costo_promedio_por_instancia: this.completedInstances > 0
         ? Number((totalCosto / this.completedInstances).toFixed(2))
         : 0,

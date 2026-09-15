@@ -4,6 +4,38 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: edición de datos por tabla (pestañas Tareas, Flujos, Recursos y Global) con
+  exportación/importación de CSV, datos de prueba y validación bloqueante. Sustituye al
+  modal por elemento, que sobrescribía `distribution` a `fixed` y destruía una
+  distribución triangular configurada.
+* `FEAT`: pestaña **Recursos** (`resourcePools`) y columnas **Recurso** / **Cant.** en
+  Tareas. El campo `resources` del motor ya se puede escribir desde la interfaz.
+* `FEAT`: informe de validación en consola con entradas y salidas, desglose de horas extra
+  por tramo, número de semanas con horas extra y comprobación del cuadre de costos.
+* `FEAT`: exportación del mapa de calor a PNG (`<nombre>_<métrica>.png`) y aviso de carga
+  durante la simulación.
+* `FEAT`: ayuda extensa en el panel de gráficos y guía de usuario completa en
+  `docs/GUIA_SIMULACION.md` (teoría de colas, matemática de la triangular, cupo semanal,
+  fórmulas de costos, método de validación y limitaciones estadísticas).
+* `FIX`: la **tasa de llegada** por defecto pasa de `60/minuto` (una llegada por *segundo*)
+  a `1/minuto`, y la interfaz explica que es una tasa, no un intervalo.
+* `FIX`: el cupo semanal de horas extra se indexa por semana ISO completa (`2026-W03`).
+  Con solo el número, la semana 1 de dos años distintos compartía contador.
+* `FIX`: `INSTANCE_COMPLETE` ya no cuenta como ejecución del elemento terminal (duplicaba
+  su frecuencia y partía a la mitad su tiempo de ciclo medio).
+* `FIX`: ejes de los gráficos en las unidades reales. Las series de tiempo están
+  normalizadas a minutos; el tiempo de espera se formateaba como milisegundos (error de
+  60 000×) y los ejes decían `(s)` sobre valores en milisegundos.
+* `FIX`: **eliminadas** tres métricas que el motor nunca calculó («Costo de Reparación»,
+  «Espera de Transporte», «Despachos Ineficientes») y tres tarjetas del resumen que
+  mostraban siempre `$0.00`.
+* `FIX`: al guardar con el modo Token Simulation activo se ofrece desactivarlo y reintentar
+  **sin perder** lo escrito, en lugar de avisar y descartar los cambios.
+* `FIX`: `AI_DEVELOPER_GUIDE.md` corregido contra el código (unidades, formato de
+  `startDate`, campos fantasma, módulos que ya no existen).
+* `CHORE`: retirados `RandomDataGenerator.js` y el módulo `client/editor/`. El icono del
+  lápiz sobre cada figura abre ahora el panel de tabla centrado en el elemento.
+
 ___Note:__ Yet to be released changes appear here._
 
 ## 0.22.0

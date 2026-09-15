@@ -41,8 +41,8 @@ const pad = (n) => String(n).padStart(2, '0');
 const GLOBAL_FIELDS = [
   { key: 'startDate', label: 'Fecha de inicio de la simulación', kind: 'text', path: [ 'startDate' ] },
   { key: 'simulationConfig.runValue', label: 'Instancias a simular', kind: 'number', path: [ 'simulationConfig', 'runValue' ], min: 1 },
-  { key: 'arrivalRate.value', label: 'Tasa de llegada (valor)', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0 },
-  { key: 'arrivalRate.unit', label: 'Tasa de llegada (unidad)', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ] },
+  { key: 'arrivalRate.value', label: 'Tasa de llegada: cuántas llegadas por unidad', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0 },
+  { key: 'arrivalRate.unit', label: 'Tasa de llegada: unidad de tiempo', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ] },
   { key: 'cost.baseRatePerHour', label: 'Tarifa base por hora', kind: 'number', path: [ 'cost', 'baseRatePerHour' ], min: 0 },
   { key: 'cost.waitCostPerHour', label: 'Costo de espera por hora', kind: 'number', path: [ 'cost', 'waitCostPerHour' ], min: 0 },
   { key: 'overtime.limitHours', label: 'Límite de horas antes de recargo', kind: 'number', path: [ 'overtime', 'limitHours' ], min: 0 },
@@ -55,7 +55,12 @@ const GLOBAL_FIELDS = [
 
 const DEFAULT_GLOBAL = () => ({
   startDate: '',
-  arrivalRate: { value: 60, unit: 'minute' },
+  // CORREGIDO: antes era `{ value: 60, unit: 'minute' }`, que NO significa «una
+  // llegada cada 60 minutos» sino 60 llegadas por minuto, o sea una por SEGUNDO:
+  // las 1000 instancias entraban en la primera jornada y el cupo semanal de
+  // horas extra se agotaba de una vez. Es una tasa, y el valor por defecto debe
+  // ser una tasa razonable: una llegada por minuto.
+  arrivalRate: { value: 1, unit: 'minute' },
   simulationConfig: { runValue: 1000 },
   isRoot: true,
   calendar: {
@@ -152,24 +157,81 @@ const TestDataIcon = '<path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.
 const ExportIcon = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
 const ImportIcon = '<path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/>';
 const CloseIcon = '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>';
+// Lapiz del acceso directo sobre la figura seleccionada.
+const EditIcon = '<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>';
 
 const svg = (path) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">${path}</svg>`;
 
 export default class DataTablePanel {
 
-  constructor(canvas, eventBus, elementRegistry, modeling, bpmnFactory, notifications) {
+  constructor(canvas, eventBus, elementRegistry, modeling, bpmnFactory, notifications, editorActions, overlays, selection) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._elementRegistry = elementRegistry;
     this._modeling = modeling;
     this._bpmnFactory = bpmnFactory;
     this._notifications = notifications;
+    // Sirve para disparar 'toggleTokenSimulation' (esta en la lista blanca de
+    // DisableModeling, asi que funciona con el modo activo) y resolver el
+    // bloqueo de solo lectura sin mandar al usuario al menu.
+    this._editorActions = editorActions;
+    // El acceso directo por elemento (el lapiz) vive aqui y no en un modulo
+    // aparte: abre ESTA tabla, asi que mantenerlo separado solo servia para
+    // duplicar la logica de guardado (y para perderla: el modal antiguo forzaba
+    // `distribution: "fixed"` y destruia un triangular configurado).
+    this._overlays = overlays;
+    this._selection = selection;
 
     this._panel = null;
     this._activeTab = 'tasks';
+    this._focusId = null;
+    this._btnDesactivar = null;
+    this._overlayId = null;
 
     this._eventBus.on('canvas.init', () => this._init());
     this._eventBus.on('diagram.destroy', () => this.destroy());
+
+    // Lapiz sobre la figura seleccionada, para llegar a su fila de un clic.
+    this._eventBus.on('selection.changed', ({ newSelection }) => {
+      this._quitarLapiz();
+      if (newSelection.length === 1 && this._esEditable(newSelection[0])) {
+        this._ponerLapiz(newSelection[0]);
+      }
+    });
+  }
+
+  /**
+   * Indica si la tabla tiene algo que editar para ese elemento.
+   *
+   * Evita poner el lapiz sobre figuras que no aparecen en ninguna pestaña: al
+   * pulsarlo no habria a donde llevar al usuario.
+   */
+  _esEditable(element) {
+    if (!element || isLabel(element)) return false;
+    if (is(element, 'bpmn:Task')) return true;
+    if (is(element, 'bpmn:StartEvent')) return true;
+    if (is(element, 'bpmn:Process') || is(element, 'bpmn:Participant')) return true;
+    return is(element, 'bpmn:SequenceFlow')
+      && Boolean(element.source && is(element.source, 'bpmn:ExclusiveGateway'));
+  }
+
+  _ponerLapiz(element) {
+    const nodo = domify(
+      `<div class="sim-data-table-overlay" title="Editar los datos de simulación de este elemento"`
+      + ` data-tip="Editar en la tabla de datos">${svg(EditIcon)}</div>`
+    );
+    domEvent.bind(nodo, 'click', () => this.openFor(element));
+    this._overlayId = this._overlays.add(element, 'sim-data-table', {
+      position: { top: -12, left: -12 },
+      html: nodo
+    });
+  }
+
+  _quitarLapiz() {
+    if (this._overlayId) {
+      this._overlays.remove(this._overlayId);
+      this._overlayId = null;
+    }
   }
 
   // -- infraestructura ------------------------------------------------------
@@ -191,6 +253,7 @@ export default class DataTablePanel {
         <div class="panel-tabs">
           <button data-tab="tasks" class="${TAB_ACTIVE_CLS}">Tareas</button>
           <button data-tab="flows">Flujos</button>
+          <button data-tab="resources">Recursos</button>
           <button data-tab="global">Global</button>
         </div>
         <div class="panel-body"></div>
@@ -231,10 +294,48 @@ export default class DataTablePanel {
     domClasses(this._panel).add(OPEN_CLS);
     this._render();
   }
+
+  /**
+   * Abre la tabla centrada en un elemento concreto.
+   *
+   * Sustituye al modal del lapiz: en vez de mantener un formulario aparte que
+   * solo editaba un elemento a la vez (y que forzaba `distribution: "fixed"` al
+   * guardar, destruyendo un triangular configurado), lleva al panel de tabla
+   * —la unica fuente de verdad— a la pestaña que corresponde al elemento y
+   * marca su fila para que se vea cual se va a editar.
+   */
+  openFor(element) {
+    if (!element) return this.open();
+
+    if (is(element, 'bpmn:Task')) this._activeTab = 'tasks';
+    else if (is(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
+    else if (is(element, 'bpmn:StartEvent')) this._activeTab = 'global';
+    else if (is(element, 'bpmn:Process') || is(element, 'bpmn:Participant')) this._activeTab = 'resources';
+    else this._activeTab = 'tasks';
+
+    this._focusId = element.id;
+    this.open();
+
+    // _render() reconstruye las pestañas sin conservar cual estaba activa, asi
+    // que se marca aqui.
+    this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
+      domClasses(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+
+    const fila = this._panel.querySelector(`tbody tr[data-el-id="${element.id}"]`);
+    if (fila) {
+      domClasses(fila).add('fila-foco');
+      if (fila.scrollIntoView) fila.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  }
+
   close() {
     if (this._panel) domClasses(this._panel).remove(OPEN_CLS);
+    this._focusId = null;
+    this._quitarOferta();
   }
   destroy() {
+    this._quitarLapiz();
+    this._quitarOferta();
     if (this._panel && this._panel.parentNode) {
       this._panel.parentNode.removeChild(this._panel);
       this._panel = null;
@@ -245,6 +346,53 @@ export default class DataTablePanel {
     if (!this._status) return;
     this._status.textContent = text || '';
     this._status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  /**
+   * Ofrece desactivar el modo Token Simulation y reintentar la operacion.
+   *
+   * Antes solo se mostraba un aviso y el usuario tenia que ir al menu, pulsar
+   * «Toggle Token Simulation» y volver a empezar. Peor: el aviso venia seguido de
+   * un `_render()` que reconstruia la tabla desde el diagrama, asi que TODO lo
+   * que el usuario acababa de teclear se perdia — justo el escenario donde mas
+   * molesta. Aqui no se re-renderiza (los valores siguen en pantalla) y se
+   * ofrece un boton que dispara 'toggleTokenSimulation' y reintenta tal cual.
+   *
+   * `toggleTokenSimulation` esta en la lista blanca de DisableModeling, asi que
+   * funciona aunque el modo este activo (es su proposito).
+   *
+   * @param {string}   mensaje      texto del estado (el motivo del bloqueo)
+   * @param {Function} alReintentar accion a repetir tras desactivar el modo
+   */
+  _ofrecerDesactivarModo(mensaje, alReintentar) {
+    this._quitarOferta();
+    if (!this._panel) return;
+
+    const boton = this._btnDesactivar = domify(
+      '<button class="btn-desactivar" type="button">Desactivar modo y reintentar</button>'
+    );
+
+    domEvent.bind(boton, 'click', () => {
+      this._quitarOferta();
+      try {
+        this._editorActions.trigger('toggleTokenSimulation');
+      } catch (err) {
+        this._setStatus(`No se pudo desactivar el modo Token Simulation: ${err.message || err}`, 'error');
+        return;
+      }
+      alReintentar();
+    });
+
+    const footer = this._panel.querySelector('.panel-footer');
+    footer.insertBefore(boton, footer.querySelector('.btn-save'));
+    this._setStatus(mensaje, 'error');
+  }
+
+  _quitarOferta() {
+    if (this._btnDesactivar && this._btnDesactivar.parentNode) {
+      this._btnDesactivar.parentNode.removeChild(this._btnDesactivar);
+    }
+    this._btnDesactivar = null;
   }
 
   // -- acceso a datos -------------------------------------------------------
@@ -265,6 +413,26 @@ export default class DataTablePanel {
       const d = getSimulationData(el);
       return d && d.isRoot;
     }) || null;
+  }
+
+  /**
+   * Elemento que guarda las piscinas de recursos: el proceso o el participante.
+   *
+   * Se replica el MISMO criterio que usa el motor (`_elementRegistry.find(...)`)
+   * para que lo que se edita aqui sea exactamente lo que el motor lee. En un
+   * diagrama con varios participantes el motor toma el primero; si eso cambia
+   * algun dia, tiene que cambiar en los dos sitios a la vez.
+   */
+  _getProcessRoot() {
+    return this._elementRegistry.find((el) => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant')) || null;
+  }
+
+  /** Piscinas de recursos declaradas en el proceso. */
+  _getPools() {
+    const root = this._getProcessRoot();
+    if (!root) return [];
+    const d = getSimulationData(root) || {};
+    return Array.isArray(d.resourcePools) ? d.resourcePools : [];
   }
 
   _label(element) {
@@ -301,9 +469,11 @@ export default class DataTablePanel {
   _render() {
     if (!this._panel) return;
     this._setStatus('');
+    this._quitarOferta();
 
     if (this._activeTab === 'tasks') this._renderTasks();
     else if (this._activeTab === 'flows') this._renderFlows();
+    else if (this._activeTab === 'resources') this._renderResources();
     else this._renderGlobal();
 
     this._avisarSinRaiz();
@@ -336,6 +506,8 @@ export default class DataTablePanel {
       return;
     }
 
+    const nombresPool = this._getPools().map((p) => p.name).filter(Boolean);
+
     this._body.innerHTML = `
       <table class="data-table">
         <thead>
@@ -350,6 +522,8 @@ export default class DataTablePanel {
             <th>Tasa de fallo</th>
             <th>Retrabajo</th>
             <th>Unidad</th>
+            <th>Recurso</th>
+            <th>Cant.</th>
           </tr>
         </thead>
         <tbody>
@@ -364,6 +538,19 @@ export default class DataTablePanel {
             const p = (campo, valor, marcador) =>
               `<input type="number" step="any" min="0" class="cell mini" `
               + `data-field="${campo}" value="${valor == null ? '' : valor}" placeholder="${marcador}">`;
+
+            // Selector en vez de texto libre: el motor busca la piscina por
+            // nombre exacto y, si no la encuentra, IGNORA el recurso en silencio.
+            // Una errata desactivaria la restriccion sin avisar.
+            const actual = (d.resources && d.resources.pool) || '';
+            const opciones = [ '' ].concat(nombresPool);
+            // Si la tarea apunta a una piscina que ya no existe, se conserva
+            // como opcion para no borrarla sin querer al guardar.
+            if (actual && !nombresPool.includes(actual)) opciones.push(actual);
+            const selectPool = opciones.map((n) =>
+              `<option value="${esc(n)}" ${actual === n ? 'selected' : ''}>${n === '' ? '(ninguno)' : esc(n)}</option>`
+            ).join('');
+
             return `
               <tr data-el-id="${el.id}">
                 <td class="col-name" title="${esc(this._label(el))}">${esc(this._label(el))}</td>
@@ -379,6 +566,11 @@ export default class DataTablePanel {
                 <td><input type="number" step="0.01" min="0" max="1" class="cell" data-field="failureRate" value="${d.failureRate}"></td>
                 <td><input type="number" step="any" min="0" class="cell" data-field="reworkTime.value" value="${d.reworkTime.value}"></td>
                 <td><select class="cell" data-field="reworkTime.unit">${units(d.reworkTime.unit)}</select></td>
+                <td><select class="cell" data-field="resources.pool">${selectPool}</select></td>
+                <td><input type="number" step="1" min="1" class="cell mini" data-field="resources.quantityRequired"
+                  value="${(d.resources && d.resources.quantityRequired) || 1}"
+                  ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
+                </td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -389,7 +581,86 @@ export default class DataTablePanel {
         <strong>mín</strong>, <strong>moda</strong> y <strong>máx</strong>, y el valor de «Tiempo» se ignora.
         Con la distribución fija la simulación es determinista.
       </p>
+      <p class="hint">
+        <strong>Recurso</strong>: la tarea toma esa cantidad de la piscina antes de empezar y la devuelve al
+        terminar. Si no hay unidades libres, <em>espera en cola</em>: esa espera se ve en el
+        «Tiempo de espera» del mapa de calor y, si defines un costo de espera, en el «Costo de tiempos muertos».
+        Las piscinas se definen en la pestaña <strong>Recursos</strong>; sin ninguna dada de alta, esta columna
+        no tiene nada que ofrecer.
+      </p>
     `;
+  }
+
+  /**
+   * Pestaña de piscinas de recursos.
+   *
+   * Faltaba: el motor lee `resourcePools` del proceso, la metrica "Cantidad de
+   * Recursos" existe en la paleta y las tareas ya podian consumir recursos...
+   * pero no habia NINGUNA forma de declarar una piscina desde el plugin. Solo el
+   * generador aleatorio (ya retirado) las creaba.
+   */
+  _renderResources() {
+    const root = this._getProcessRoot();
+
+    if (!root) {
+      this._body.innerHTML = '<p class="empty">El diagrama no tiene ningún proceso donde guardar los recursos.</p>';
+      return;
+    }
+
+    const pools = this._getPools();
+
+    this._body.innerHTML = `
+      <p class="hint">
+        Piscinas de recursos del proceso: <strong>${esc(this._label(root))}</strong>.
+        Cada piscina es un grupo de unidades equivalentes (personas, máquinas, vehículos).
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr><th>Nombre de la piscina</th><th>Cantidad</th><th></th></tr>
+        </thead>
+        <tbody class="filas-pool">
+          ${pools.map((p) => this._filaPool(p.name, p.quantity)).join('')}
+        </tbody>
+      </table>
+      <p class="hint">
+        Los nombres deben ser <strong>únicos</strong> y las cantidades enteros ≥ 1.
+        Después podrás asignarlas en la pestaña <strong>Tareas</strong>.
+      </p>
+      <button class="btn-anadir-fila" type="button">+ Añadir piscina</button>
+    `;
+
+    const boton = this._body.querySelector('.btn-anadir-fila');
+    if (boton) {
+      domEvent.bind(boton, 'click', () => {
+        const tbody = this._body.querySelector('.filas-pool');
+        // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
+        // parseo de un contenedor que no sea <table>/<tbody>.
+        tbody.insertAdjacentHTML('beforeend', this._filaPool('', 1));
+      });
+    }
+
+    // Delegacion: un unico manejador en el tbody cubre las filas que se añadan
+    // despues, y evita re-vincular los botones que ya existian.
+    const tbody = this._body.querySelector('.filas-pool');
+    if (tbody) {
+      domEvent.bind(tbody, 'click', (e) => {
+        const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
+        if (!btn) return;
+        const tr = btn.closest('tr');
+        if (tr) tr.remove();
+      });
+    }
+  }
+
+  _filaPool(nombre, cantidad) {
+    const valor = cantidad == null || cantidad === '' ? 1 : cantidad;
+    return `
+      <tr>
+        <td><input type="text" class="cell" data-field="pool.name"
+          value="${esc(nombre == null ? '' : nombre)}" placeholder="p. ej. Analistas"></td>
+        <td><input type="number" step="1" min="1" class="cell mini" data-field="pool.quantity" value="${valor}"></td>
+        <td><button class="btn-quitar-pool" type="button" title="Quitar esta piscina" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
   }
 
   _renderFlows() {
@@ -456,8 +727,9 @@ export default class DataTablePanel {
             </button>`).join('')}
         </div>
         <p class="hint">
-          Se crearán los valores por defecto: 1000 instancias, llegada cada 60 min,
-          jornada 09:00-17:00 de lunes a viernes, y 50 por hora. Podrás ajustarlos aquí mismo.
+          Se crearán los valores por defecto: 1000 instancias, <strong>una llegada por minuto</strong>
+          (tasa 1 por <code>minute</code>), jornada 09:00-17:00 de lunes a viernes y 50 por hora.
+          Podrás ajustarlos aquí mismo.
         </p>
       `;
 
@@ -509,7 +781,17 @@ export default class DataTablePanel {
             </tr>`).join('')}
         </tbody>
       </table>
-      <p class="hint">Marca los días laborables y ajusta las horas con los selectores. La hora de entrada debe ser anterior a la de salida.</p>
+      <p class="hint">
+        <strong>La tasa de llegada es una tasa, no un intervalo.</strong>
+        Con valor <code>60</code> y unidad <code>minute</code> no significa «una cada 60 minutos»:
+        significa <strong>60 llegadas por minuto, o sea una cada segundo</strong>, y las 1000 instancias
+        entrarían en la primera jornada. Para una llegada cada 60 minutos pon <code>1</code> con unidad
+        <code>hour</code>. El informe de la consola imprime la tasa ya resuelta («una cada 1.0 s»).
+      </p>
+      <p class="hint">
+        Marca los días laborables y ajusta las horas con los selectores.
+        La hora de entrada debe ser anterior a la de salida.
+      </p>
     `;
   }
 
@@ -577,19 +859,75 @@ export default class DataTablePanel {
         const reworkValue = num('reworkTime.value', 'retrabajo');
         if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
 
-        const current = this._taskData(el);
-        writes.push({
-          element: el,
-          data: {
-            ...current,
-            processingTime,
-            // Se conserva la distribucion del retrabajo que hubiera: la tabla
-            // todavia no la edita, y forzarla a "fixed" destruiria un triangular
-            // configurado. Mismo error que tenia el modal del lapiz.
-            reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
-            failureRate: failure
+        // Recurso: '(ninguno)' deja el campo vacio, que es lo que el motor lee
+        // como "sin restriccion de recursos".
+        const pool = val('resources.pool');
+        const cantRaw = val('resources.quantityRequired');
+        let recurso = null;
+        if (pool) {
+          const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `${name} · cantidad de recurso`);
+          if (!(cantidad >= 1)) {
+            throw new Error(`${name}: la cantidad de recurso debe ser un número mayor o igual que 1`);
           }
-        });
+          if (!this._getPools().some((p) => p.name === pool)) {
+            throw new Error(
+              `${name}: la piscina «${pool}» no está dada de alta. Créala en la pestaña Recursos antes de asignarla.`
+            );
+          }
+          recurso = { pool, quantityRequired: cantidad };
+        }
+
+        const current = this._taskData(el);
+        const datos = {
+          ...current,
+          processingTime,
+          // Se conserva la distribucion del retrabajo que hubiera: la tabla
+          // todavia no la edita, y forzarla a "fixed" destruiria un triangular
+          // configurado. Mismo error que tenia el modal del lapiz.
+          reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
+          failureRate: failure
+        };
+        // delete y no null: el motor comprueba `data.resources && data.resources.pool`,
+        // asi que un objeto con pool vacio pasaria el primer filtro. Ademas el
+        // JSON no arrastra claves muertas.
+        if (recurso) datos.resources = recurso;
+        else delete datos.resources;
+
+        writes.push({ element: el, data: datos });
+      });
+      return writes;
+    }
+
+    if (this._activeTab === 'resources') {
+      const root = this._getProcessRoot();
+      if (!root) throw new Error('El diagrama no tiene ningún proceso donde guardar los recursos');
+
+      const pools = [];
+      const vistos = new Set();
+
+      this._body.querySelectorAll('.filas-pool tr').forEach((tr, i) => {
+        const nombre = String(tr.querySelector('[data-field="pool.name"]').value || '').trim();
+        const cantRaw = String(tr.querySelector('[data-field="pool.quantity"]').value || '').trim();
+
+        // Fila totalmente vacia: se ignora en vez de dar error, para que la fila
+        // que se acaba de añadir y no se ha rellenado no bloquee el guardado.
+        if (nombre === '' && cantRaw === '') return;
+
+        if (!nombre) throw new Error(`Piscina ${i + 1}: falta el nombre`);
+        if (vistos.has(nombre)) throw new Error(`Piscina «${nombre}»: el nombre está repetido`);
+        vistos.add(nombre);
+
+        const cantidad = this._num(cantRaw, `Piscina «${nombre}» · cantidad`);
+        if (!Number.isInteger(cantidad) || cantidad < 1) {
+          throw new Error(`Piscina «${nombre}»: la cantidad debe ser un entero mayor o igual que 1`);
+        }
+
+        pools.push({ name: nombre, quantity: cantidad });
+      });
+
+      writes.push({
+        element: root,
+        data: { ...(getSimulationData(root) || {}), resourcePools: pools }
       });
       return writes;
     }
@@ -669,12 +1007,16 @@ export default class DataTablePanel {
    * Ademas, como no se guarda nada, un clic accidental solo cuesta los cambios
    * que hubiera sin guardar en la tabla.
    *
-   * Los rangos son los mismos que usaba RandomDataGenerator, que ya estaban
-   * revisados: tiempo de proceso 5-45 min, fallo 1-30%, retrabajo 5-30 min.
+   * Los rangos son deliberadamente amplios y siguen la convencion habitual en
+   * simulacion de procesos: tiempo de proceso 5-45 min, fallo 1-30%, retrabajo
+   * 5-30 min. Lo que importa es que se VEAN en la tabla y se puedan corregir.
    */
   generarDatosDePrueba() {
-    if (this._activeTab === 'global') {
-      this._setStatus('Los datos de prueba aplican a Tareas y Flujos. En Global define tu propio escenario.', 'info');
+    if (this._activeTab === 'global' || this._activeTab === 'resources') {
+      this._setStatus(
+        'Los datos de prueba aplican a Tareas y Flujos. En Global y Recursos define tu propio escenario.',
+        'info'
+      );
       return;
     }
 
@@ -685,6 +1027,13 @@ export default class DataTablePanel {
     }
 
     if (this._activeTab === 'tasks') {
+      // Si hay piscinas dadas de alta, se asigna la primera a cada tarea con
+      // cantidad 1. Es lo que hace que la simulacion EJERCITE el codigo de
+      // recursos (cola, espera, costo de espera), que de otro modo nunca se
+      // ejecuta porque nada escribia el campo `resources`.
+      const pools = this._getPools();
+      const primeraPool = pools.length ? pools[0].name : null;
+
       filas.forEach((tr) => {
         const poner = (campo, valor) => {
           const el = tr.querySelector(`[data-field="${campo}"]`);
@@ -701,9 +1050,25 @@ export default class DataTablePanel {
         poner('failureRate', (0.01 + Math.random() * 0.29).toFixed(2));
         poner('reworkTime.value', this._azar(5, 30));
         poner('reworkTime.unit', 'minutes');
+
+        const selPool = tr.querySelector('[data-field="resources.pool"]');
+        if (selPool && primeraPool) {
+          selPool.value = primeraPool;
+          const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
+          if (cant) {
+            cant.disabled = false;
+            cant.value = 1;
+          }
+        }
       });
 
-      this._setStatus(`${filas.length} tarea(s) rellenadas con datos de prueba. Revisa y pulsa «Guardar todo».`, 'ok');
+      const extra = primeraPool
+        ? ` Asignadas a la piscina «${primeraPool}» (x1) para que se simule la espera por recursos.`
+        : '';
+      this._setStatus(
+        `${filas.length} tarea(s) rellenadas con datos de prueba.${extra} Revisa y pulsa «Guardar todo».`,
+        'ok'
+      );
       return;
     }
 
@@ -753,10 +1118,13 @@ export default class DataTablePanel {
       const soloLectura = /read-only/i.test(String(err && err.message));
       const texto = soloLectura
         ? 'No se pudo crear la configuración raíz: el diagrama está en solo lectura porque el modo '
-          + 'Token Simulation está activo. Desactívalo (menú «Toggle Token Simulation» o la tecla T).'
+          + 'Token Simulation está activo.'
         : `No se pudo crear la configuración raíz: ${err.message || err}`;
-      this._setStatus(texto, 'error');
+
       this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+
+      if (soloLectura) this._ofrecerDesactivarModo(texto, () => this.marcarRaiz(elId));
+      else this._setStatus(texto, 'error');
       return;
     }
 
@@ -806,12 +1174,18 @@ export default class DataTablePanel {
     } catch (err) {
       const soloLectura = /read-only/i.test(String(err && err.message));
 
-      const texto = soloLectura
-        ? 'El diagrama está en solo lectura porque el modo Token Simulation está activo. '
-          + 'Desactívalo (menú «Toggle Token Simulation» o la tecla T) y vuelve a guardar.'
+      if (soloLectura) {
+        // NO se re-renderiza: los valores que el usuario acaba de escribir siguen
+        // en la tabla, y el reintento los vuelve a recoger tal cual.
+        const texto = 'El diagrama está en solo lectura porque el modo Token Simulation está activo.'
           + (escritos ? ` Se guardaron ${escritos} de ${changed.length} elementos antes de fallar.` : '')
-        : `No se pudieron guardar los datos: ${err.message || err}`;
+          + ' Se puede desactivar y reintentar sin perder lo escrito.';
+        this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+        this._ofrecerDesactivarModo(texto, () => this.save());
+        return;
+      }
 
+      const texto = `No se pudieron guardar los datos: ${err.message || err}`;
       this._setStatus(texto, 'error');
       this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
       this._render();
@@ -831,11 +1205,40 @@ export default class DataTablePanel {
 
   _csvForActiveTab() {
     if (this._activeTab === 'tasks') {
-      const rows = [ [ 'id', 'nombre', 'tiempo_proceso', 'unidad_proceso', 'tasa_fallo', 'retrabajo', 'unidad_retrabajo' ] ];
+      // Se exportan TAMBIEN las columnas de la triangular y las de recurso: antes
+      // el CSV solo llevaba el tiempo fijo, asi que una tarea triangular salia
+      // con `tiempo_proceso` vacio y sus min/moda/max se perdian de vista.
+      const rows = [ [
+        'id', 'nombre', 'distribucion',
+        'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
+        'tasa_fallo', 'retrabajo', 'unidad_retrabajo',
+        'recurso', 'cant_recurso'
+      ] ];
       this._getTasks().forEach((el) => {
         const d = this._taskData(el);
-        rows.push([ el.id, this._label(el), d.processingTime.value, d.processingTime.unit, d.failureRate, d.reworkTime.value, d.reworkTime.unit ]);
+        const tri = d.processingTime.distribution === 'triangular';
+        rows.push([
+          el.id,
+          this._label(el),
+          d.processingTime.distribution || 'fixed',
+          tri ? '' : d.processingTime.value,
+          d.processingTime.unit,
+          tri ? d.processingTime.min : '',
+          tri ? d.processingTime.mode : '',
+          tri ? d.processingTime.max : '',
+          d.failureRate,
+          d.reworkTime.value,
+          d.reworkTime.unit,
+          (d.resources && d.resources.pool) || '',
+          (d.resources && d.resources.quantityRequired) || ''
+        ]);
       });
+      return rows;
+    }
+
+    if (this._activeTab === 'resources') {
+      const rows = [ [ 'nombre', 'cantidad' ] ];
+      this._getPools().forEach((p) => rows.push([ p.name, p.quantity ]));
       return rows;
     }
 
@@ -866,7 +1269,7 @@ export default class DataTablePanel {
   exportCsv() {
     try {
       const rows = this._csvForActiveTab();
-      const name = { tasks: 'tareas', flows: 'flujos', global: 'global' }[this._activeTab];
+      const name = { tasks: 'tareas', flows: 'flujos', resources: 'recursos', global: 'global' }[this._activeTab];
       download(`simulacion-${name}.csv`, toCsv(rows));
       this._setStatus(`CSV exportado (${rows.length - 1} fila(s)).`, 'ok');
     } catch (err) {
@@ -894,11 +1297,21 @@ export default class DataTablePanel {
 
     if (this._activeTab === 'tasks') {
       const iId = idx('id');
-      const iT = idx('tiempo_proceso');
       const iU = idx('unidad_proceso');
       const iF = idx('tasa_fallo');
       const iR = idx('retrabajo');
       const iRU = idx('unidad_retrabajo');
+
+      // Columnas OPCIONALES: un CSV exportado por una version anterior (sin
+      // distribucion, sin triangular y sin recurso) sigue importandose, y en ese
+      // caso se conserva lo que tuviera el elemento en vez de destruirlo.
+      const iDist = header.indexOf('distribucion');
+      const iT = header.indexOf('tiempo_proceso');
+      const iMin = header.indexOf('min');
+      const iModa = header.indexOf('moda');
+      const iMax = header.indexOf('max');
+      const iRec = header.indexOf('recurso');
+      const iCant = header.indexOf('cant_recurso');
 
       body.forEach((r, n) => {
         const line = n + 2;
@@ -914,16 +1327,80 @@ export default class DataTablePanel {
         if (failure < 0 || failure > 1) throw new Error(`Línea ${line}: la tasa de fallo debe estar entre 0 y 1`);
 
         const cur = this._taskData(el);
-        updates.push({
-          element: el,
-          data: {
-            ...cur,
-            processingTime: { ...cur.processingTime, value: this._num(r[iT], `Línea ${line}: tiempo de proceso`), unit },
-            reworkTime: { ...cur.reworkTime, value: this._num(r[iR], `Línea ${line}: retrabajo`), unit: unitR },
-            failureRate: failure
+
+        const dist = (iDist !== -1 && String(r[iDist]).trim())
+          ? String(r[iDist]).trim()
+          : (cur.processingTime.distribution || 'fixed');
+        if (dist !== 'fixed' && dist !== 'triangular') {
+          throw new Error(`Línea ${line}: distribución «${dist}» inválida (usa fixed o triangular)`);
+        }
+
+        let processingTime;
+        if (dist === 'triangular') {
+          const min = this._num(r[iMin], `Línea ${line}: mínimo`);
+          const mode = this._num(r[iModa], `Línea ${line}: moda`);
+          const max = this._num(r[iMax], `Línea ${line}: máximo`);
+          if (!(min <= mode && mode <= max)) {
+            throw new Error(`Línea ${line}: en la triangular debe cumplirse mínimo ≤ moda ≤ máximo`);
           }
-        });
+          processingTime = { distribution: 'triangular', min, mode, max, unit };
+        } else {
+          const value = iT !== -1
+            ? this._num(r[iT], `Línea ${line}: tiempo de proceso`)
+            : (cur.processingTime.value || 0);
+          processingTime = { distribution: 'fixed', value, unit };
+        }
+
+        const data = {
+          ...cur,
+          processingTime,
+          reworkTime: { ...cur.reworkTime, value: this._num(r[iR], `Línea ${line}: retrabajo`), unit: unitR },
+          failureRate: failure
+        };
+
+        const recurso = iRec !== -1 ? String(r[iRec]).trim() : ((cur.resources && cur.resources.pool) || '');
+        if (recurso) {
+          const cantRaw = iCant !== -1 ? String(r[iCant]).trim() : '';
+          const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `Línea ${line}: cantidad de recurso`);
+          if (!(cantidad >= 1)) throw new Error(`Línea ${line}: la cantidad de recurso debe ser ≥ 1`);
+          if (!this._getPools().some((p) => p.name === recurso)) {
+            throw new Error(`Línea ${line}: la piscina «${recurso}» no está dada de alta (créala en la pestaña Recursos)`);
+          }
+          data.resources = { pool: recurso, quantityRequired: cantidad };
+        } else {
+          delete data.resources;
+        }
+
+        updates.push({ element: el, data });
       });
+      return updates;
+    }
+
+    if (this._activeTab === 'resources') {
+      const root = this._getProcessRoot();
+      if (!root) throw new Error('El diagrama no tiene ningún proceso donde guardar los recursos');
+
+      const iN = idx('nombre');
+      const iC = idx('cantidad');
+
+      const pools = [];
+      const vistos = new Set();
+
+      body.forEach((r, n) => {
+        const line = n + 2;
+        const nombre = String(r[iN]).trim();
+        if (!nombre) throw new Error(`Línea ${line}: falta el nombre de la piscina`);
+        if (vistos.has(nombre)) throw new Error(`Línea ${line}: la piscina «${nombre}» está repetida`);
+        vistos.add(nombre);
+
+        const cantidad = this._num(r[iC], `Línea ${line}: cantidad`);
+        if (!Number.isInteger(cantidad) || cantidad < 1) {
+          throw new Error(`Línea ${line}: la cantidad debe ser un entero mayor o igual que 1`);
+        }
+        pools.push({ name: nombre, quantity: cantidad });
+      });
+
+      updates.push({ element: root, data: { ...(getSimulationData(root) || {}), resourcePools: pools } });
       return updates;
     }
 
@@ -1002,9 +1479,26 @@ export default class DataTablePanel {
       }
 
       const changed = updates.filter(({ element, data }) => JSON.stringify(getSimulationData(element) || {}) !== JSON.stringify(data));
-      changed.forEach(({ element, data }) => {
-        setSimulationData(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
-      });
+
+      // Mismo tratamiento que en save(): la importacion tambien escribe en el
+      // diagrama y tambien choca con el modo de solo lectura. Aqui si se
+      // re-renderiza tras desactivar, porque el CSV es la fuente de verdad.
+      try {
+        changed.forEach(({ element, data }) => {
+          setSimulationData(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
+        });
+      } catch (err) {
+        const soloLectura = /read-only/i.test(String(err && err.message));
+        const texto = soloLectura
+          ? 'No se pudo importar: el diagrama está en solo lectura porque el modo Token Simulation está activo.'
+          : `No se pudo importar el CSV: ${err.message || err}`;
+
+        this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+
+        if (soloLectura) this._ofrecerDesactivarModo(texto, () => this.importCsv(event));
+        else this._setStatus(texto, 'error');
+        return;
+      }
 
       this._setStatus(`Importado: ${changed.length} de ${updates.length} fila(s) con cambios.`, 'ok');
       this._notifications.showNotification({
@@ -1024,5 +1518,8 @@ DataTablePanel.$inject = [
   'elementRegistry',
   'modeling',
   'bpmnFactory',
-  'notifications'
+  'notifications',
+  'editorActions',
+  'overlays',
+  'selection'
 ];
