@@ -336,6 +336,57 @@ objetivo declarado**, el óptimo deja de ser un debate y pasa a ser un dato.
 
 ## 5. A2 · Reglas laborales
 
+> **Estado: IMPLEMENTADO.** `LaborRules.js` (reglas **versionadas por fecha**), jornada base por
+> turno, topes del art. 65 con **indicador de cumplimiento**, primas de domingo (art. 73) y de
+> festivo (art. 74), editor con tabla de vigencias en la pestaña Global, round-trip por CSV, y una
+> **sección propia en el informe** con la base legal de cada tope y el veredicto. Verificado con
+> **33 comprobaciones** sobre el motor real y **17** sobre el panel (75 en total con las de A3).
+>
+> **Decisiones tomadas al implementar** (más allá del diseño):
+>
+> 1. **La extra se mide contra la jornada BASE del turno, no contra el horario declarado.** Un
+>    horario de 9 h en turno diurno ya lleva 1 h extra dentro, y con el calendario estándar esa hora
+>    se pagaba a tarifa base. Es un **recorte, nunca una ampliación**: una jornada de 8 h o menos no
+>    cambia nada, así que los diagramas existentes dan exactamente lo de antes.
+> 2. **Una celda vacía en la tabla de vigencias significa «lo que digan los valores de arriba».** Si
+>    no, cada fila tendría que repetir los ocho parámetros y una fila de «solo baja el cupo» sería
+>    imposible de leer.
+> 3. **La extra del día se imputa al día en que ARRANCA la tarea.** Una tarea que cruza la medianoche
+>    pertenece al día en que empezó, que es como se lee un turno en planta. La regla es única y está
+>    escrita, para que el tope diario sea comprobable a mano.
+> 4. **El tope diario no cambia lo que se paga.** El pago lo fijan los arts. 66 y 68, que son
+>    semanales. Los topes del art. 65 son de **legalidad**: no mueven un peso, pero deciden el
+>    veredicto. Mezclarlos habría hecho imposible auditar el reparto de primas.
+> 5. **La prima de festivo viene a 0 por defecto.** Cuánto se paga depende del contrato y de si el
+>    festivo cae en domingo; inventar un porcentaje sería peor que no tenerlo.
+> 6. **Solo los `limitHours`/`payMultiplier`/`excessPayMultiplier` siguen viviendo en `overtime`.**
+>    Estaban ahí desde antes de A2, y moverlos habría obligado a migrar todos los diagramas a cambio
+>    de nada. La tabla de vigencias los sobrescribe cuando hace falta, que es el caso que importa.
+>
+> **Tres defectos reales que encontró la verificación** (los tres corregidos):
+>
+> - **Una tarea que esperaba por un recurso pagaba horas extra que no existió.** Calculaba su extra y
+>   sus primas con la hora del **intento**, no con la hora real, y las apuntaba al día y a la semana
+>   equivocados: una tarea que arranca a las 18:00, espera al recurso y trabaja el martes pagaba 1 h
+>   extra de una franja en la que no trabajó. Ahora la unidad se pide **antes** de costear y la tarea
+>   se re-programa con su hora real — que es, además, donde el arranque se reevalúa.
+> - **Un festivo en un día laborable cerraba la planta sin avisar.** El calendario se contradecía:
+>   `workingDays` decía «abierto» y `holidays` «cerrado», y ganaba `holidays`, así que la corrida se
+>   saltaba el día en silencio y **la prima de festivo del art. 74 era imposible de pagar**. Ahora un
+>   festivo cierra **solo** si su día de la semana no está declarado laborable.
+> - **La pestaña Global se rompía al mezclar objetos anidados.** Un modelo con solo
+>   `labor.shiftType` declarado perdía los demás valores por defecto (y las casillas salían vacías)
+>   porque el `...raw` superficial sustituía el objeto entero. Ahora `labor`, `warmup` y `lots` se
+>   mezclan campo a campo.
+>
+> **Pendiente de refinar (documentado, no olvidado):**
+>
+> - **La extra del día se imputa al día de arranque, no se reparte** entre los días que toca una
+>   tarea que cruza la medianoche. Es una decisión, no un descuido, pero una tarea muy larga puede
+>   pasar un día sin pagar su parte.
+> - **Las vigencias se resuelven por la fecha de arranque de la corrida**, no día a día. Una corrida
+>   que cruce un cambio de ley aplica la ley del inicio de punta a punta.
+
 ### 5.1 Los valores por defecto ya son la ley
 
 | LFT | Qué marca | En el plugin |
@@ -406,6 +457,12 @@ Todos **ajustables** y **todos impresos en el informe** junto al resultado.
 | Espera de firma si no atienden | mín 10 / moda 20 / máx 60 min | Distribución con cola |
 | Tolerancia de espera de firma | 15 min | Define qué se avisa |
 | Semilla | Global | Habilita réplicas y números comunes |
+| Tipo de jornada | Diurna (8 h) | Nocturna 7 h / mixta 7,5 h (LFT art. 61) |
+| Tope de extra al día | 3 h | LFT art. 65 · **no** cambia lo que se paga |
+| Días con extra por semana | 3 | LFT art. 65 |
+| Prima dominical | 25 % | LFT art. 73 |
+| Prima de festivo | 0 % | LFT art. 74 · a 0 a propósito, no se inventa |
+| Vigencias de las reglas | Sin filas | Con filas, mandan por fecha de arranque |
 
 ---
 
@@ -463,3 +520,8 @@ Para que quede **por qué**, no solo **qué**.
 | Continuidad de lote en evento propio (`LOT_CONTINUE`) | Reutilizar `TASK_COMPLETE` | Reutilizarlo sumaba un tiempo inexistente y el informe salía con `NaN` |
 | El último lote puede ser parcial | Forzar lotes completos | La muestra efectiva son los lotes; completarlo inflaría la muestra |
 | El campo opcional se acepta vacío al importar | Exigir siempre un número | Exportar e importar la pestaña Global tiene que devolver lo mismo |
+| La unidad de recurso se pide ANTES de costear | Costear al intentar y corregir el fin | Costear un trabajo que no ha ocurrido paga extra de una franja vacía |
+| Un festivo cierra el día solo si el día de la semana no es laborable | `holidays` gana siempre | Si no, la planta se cierra sola y la prima de festivo es impagable |
+| La extra se mide contra la jornada base del turno | Contra el horario declarado | Un horario de 9 h ya lleva 1 h extra que se pagaba a tarifa base |
+| El tope diario no cambia lo que se paga | Sumarlo a la prima | El pago es semanal (arts. 66 y 68); el diario es de legalidad |
+| Las vigencias se resuelven por fecha de arranque | Por la fecha de hoy | Un informe de enero tiene que seguir cuadrando en junio |

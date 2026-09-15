@@ -207,6 +207,12 @@ arranca (no hay fallback a valores por defecto).
 | Parón de cambio entre lotes | Minutos de cambio de herramienta/utillaje entre un lote y el siguiente. |
 | Semilla | Vacío = al azar; la que se use queda guardada en el informe. Ver §4.4. |
 | Tabla de tamaños de lote | Solo con el modo `empirical`: cada tamaño con su **peso** (frecuencia relativa; no hace falta que sume 100). |
+| Tipo de jornada | Diurna (8 h), nocturna (7 h) o mixta (7,5 h). LFT art. 61. Ver §4.5. |
+| Tope de horas extra al día | 3 h. LFT art. 65. **No cambia lo que se paga**: cambia el veredicto. |
+| Máximo de días con extra por semana | 3. LFT art. 65. |
+| Prima dominical / Prima de festivo | % sobre el salario del día. LFT arts. 73 y 74. Ver §4.6. |
+| Tabla de vigencias | Reglas con **fecha desde la que rigen**. Vacía = usar los valores de arriba. Ver §4.7. |
+
 
 ### 4.1 Frecuencia: ¿una vez por pieza o una vez por lote?
 
@@ -280,6 +286,56 @@ Déjala **vacía** para simular con azar y que el sistema guarde la que usó (as
 siendo auditable). Escríbela a mano solo si quieres **repetir** una corrida concreta.
 
 ---
+
+### 4.5 Tipo de jornada: la extra se mide contra la jornada BASE
+
+La LFT fija la jornada en **8 h diurna, 7 h nocturna y 7,5 h mixta** (art. 61). Lo que pase de ahí en
+el día **ya es tiempo extra**, aunque el horario que hayas declarado en el calendario sea más largo:
+
+```
+horario declarado: 09:00 - 18:00 (9 h)      turno diurno (base 8 h)
+                   ├── 8 h de jornada base  ── se pagan a tarifa
+                   └── 1 h extra            ── se paga con prima
+```
+
+Es un **recorte, nunca una ampliación**: si tu jornada declarada ya es igual o más corta que la base
+legal, no cambia nada (nadie hace horas extra por trabajar menos). Por eso los diagramas que ya
+tenías dan exactamente los mismos números que antes.
+
+### 4.6 Primas de domingo (art. 73) y de festivo (art. 74)
+
+- **Dominical**: 25 % sobre el salario de los días ordinarios, si trabajas en domingo. Viene al 25 %
+  por defecto porque es lo que dice la ley.
+- **Festivo**: depende del contrato y de si el festivo cae en domingo, así que viene **a 0** y lo
+  declaras tú. Inventar un porcentaje sería peor que no tenerlo.
+- Si un festivo cae en **domingo**, manda la prima de festivo: **no se suman**.
+
+Y un matiz del calendario que conviene entender: **un festivo cierra el día solo si ese día de la
+semana no está declarado laborable**. Si tienes el lunes entre los días laborables y declaras un
+lunes como festivo, la planta **abre** ese día (y se paga la prima). Si no lo tuvieras como
+laborable, el día se cierra y la corrida se desplaza al siguiente.
+
+### 4.7 Reglas con vigencia: por qué no son una casilla
+
+El cupo semanal de horas extra, los multiplicadores, los topes y las primas se pueden declarar con
+**una fecha desde la que rigen**:
+
+| Desde | Cupo semanal (h) | Prima doble (×) | … |
+|---|---|---|---|
+| 2026-01-01 | 9 | 2 | … |
+| 2026-07-01 | 8 | 2,5 | … |
+
+La diferencia importa: si el cupo se guardara en una casilla suelta y mañana cambiara la ley,
+**todos los informes ya emitidos** se recalcularían con la ley nueva y dejarían de ser auditables.
+Con vigencias, se **añade una fila** y cada corrida guarda **qué versión usó**.
+
+Se resuelven por la **fecha de arranque de la simulación**, no por la de hoy: un informe de enero
+sigue cuadrando en junio. Una celda vacía significa **«lo que digan los valores de arriba»**, así que
+solo hay que rellenar lo que cambia. Si ninguna fila rige todavía, mandan los valores de arriba y el
+informe lo dice tal cual.
+
+> **Alcance, explícito:** esto es una **tabla de tasas y umbrales para costear el proceso**, no una
+> nómina. **No** se calculan IMSS, ISR, aguinaldo, prima vacacional ni finiquitos.
 
 ## 5. Distribuciones y su matemática
 

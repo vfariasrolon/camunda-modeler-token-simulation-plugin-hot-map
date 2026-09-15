@@ -46,6 +46,11 @@ const ESTILOS_INFORME = `
 .sim-report .etiqueta.ok { background: #e6f4ea; color: #0a7d32; }
 .sim-report .etiqueta.aviso { background: #fff4e0; color: #a35b00; }
 .sim-report .etiqueta.mal { background: #fdecea; color: #c62828; }
+/* Color de texto suelto: se usa dentro de tablas y de listas, donde una
+   etiqueta con fondo recargaria la lectura. */
+.sim-report .ok { color: #0a7d32; }
+.sim-report .mal { color: #c62828; font-weight: 600; }
+.sim-report td.col-mal { color: #c62828; }
 .sim-report .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
 .sim-report .kpi { border: 1px solid #dfe5ec; border-radius: 6px; padding: 9px 11px; break-inside: avoid; }
 .sim-report .kpi .k { font-size: 11px; color: #666; }
@@ -195,6 +200,7 @@ export default class ReportPanel {
       ${this._resumen(contexto)}
       ${this._metodologia()}
       ${this._comprobacion(contexto)}
+      ${this._laboral(contexto)}
       ${this._entradas()}
       ${this._resultados(contexto, figuras)}
       ${this._capacidad(contexto, figuras)}
@@ -275,7 +281,15 @@ export default class ReportPanel {
       ciclo, cicloNormal,
       tasaFallos, ejecucionesTareas,
       cvProduccion,
-      incidencias
+      incidencias,
+      // Reglas laborales RESUELTAS (no lo que el usuario escribió) y el
+      // cumplimiento de los topes. Van en el contexto porque el documento y el
+      // veredicto tienen que leer el mismo número.
+      labor: (overtime && overtime.labor) || null,
+      laborDescripcion: (overtime && overtime.laborDescripcion) || null,
+      cumplimiento: (overtime && overtime.compliance) || null,
+      primasDeDia: suma(overtime, 'totalDayPremiumCost'),
+      primasDia: (overtime && overtime.dayPremiums) || null
     };
   }
 
@@ -338,6 +352,12 @@ export default class ReportPanel {
         <tr><th>Días laborables simulados</th><td class="num">${ent(ctx.dias)}</td>
             <th class="num">Media de piezas por día</th><td class="num">${num(porDia, 1)}</td></tr>
         <tr><th>Reparto de llegadas</th><td colspan="3">${esc(this._llegada(ctx))}</td></tr>
+        <tr><th>Reglas laborales</th><td colspan="3">${esc(ctx.laborDescripcion || '(sin reglas declaradas)')}</td></tr>
+        ${ctx.cumplimiento ? `<tr><th>Cumplimiento de topes</th><td colspan="3">${
+          (ctx.cumplimiento.semanasSobreLimite > 0 || ctx.cumplimiento.diasSobreLimiteDiario > 0 || ctx.cumplimiento.semanasSobreDias > 0)
+            ? `<span class="mal">NO CUMPLE</span> — ${ctx.cumplimiento.semanasSobreLimite} de ${ctx.cumplimiento.semanas} semana(s)`
+              + ` por encima del cupo, ${ctx.cumplimiento.diasSobreLimiteDiario} día(s) por encima del tope diario`
+            : `<span class="ok">CUMPLE</span> — ningún día ni semana supera los topes`}</td></tr>` : ''}
       </table>
     `;
   }
@@ -438,7 +458,7 @@ export default class ReportPanel {
    * sus partes y se declara si coincide.
    */
   _comprobacion(ctx) {
-    const suma = ctx.operacion + ctx.primas + ctx.costoEspera;
+    const suma = ctx.operacion + ctx.primas + ctx.primasDeDia + ctx.costoEspera;
     const cuadra = Math.abs(suma - ctx.costoTotal) < 0.01;
 
     const tramos = ctx.overtime && ctx.overtime.overtimeBreakdown;
@@ -458,6 +478,8 @@ export default class ReportPanel {
               <td>horas × tarifa × (mult − 1)</td></tr>
           <tr><td>Prima de horas extra triple</td><td class="num">${formatCurrency(ctx.triple, 'MXN')}</td>
               <td>horas × tarifa × (mult − 1)</td></tr>
+          <tr><td>Primas de día (dominical y festivos)</td><td class="num">${formatCurrency(ctx.primasDeDia, 'MXN')}</td>
+              <td>horas × tarifa × % del día</td></tr>
           <tr><td>Espera de recursos</td><td class="num">${formatCurrency(ctx.costoEspera, 'MXN')}</td>
               <td>horas de espera × costo de espera</td></tr>
           <tr><th>Suma de componentes</th><th class="num">${formatCurrency(suma, 'MXN')}</th><td></td></tr>
@@ -481,6 +503,89 @@ export default class ReportPanel {
         </table>
         <p class="sub">El reparto entre tramos depende de en cuántas semanas ISO caen las horas extra: el cupo se
         agota una vez por semana. Concentrar la carga en pocas semanas manda más horas al tramo triple.</p>
+      ` : ''}
+    `;
+  }
+
+  /**
+   * Cumplimiento de las reglas laborales.
+   *
+   * Es una salida DISTINTA del coste, y por eso va en su propia seccion: pasarse
+   * del tope cuesta mas, pero ademas es ilegal. Un informe que solo dijera el
+   * coste estaria escondiendo la mitad de la conclusion.
+   */
+  _laboral(ctx) {
+    const c = ctx.cumplimiento;
+    const l = ctx.labor;
+
+    if (!c || !l) {
+      return `
+        <h2>4 · Reglas laborales</h2>
+        <p class="sub">La corrida no dejó información laboral. Suele significar que el motor es anterior a este
+        informe; vuelve a simular para que aparezca.</p>
+      `;
+    }
+
+    const incumple = c.semanasSobreLimite > 0 || c.diasSobreLimiteDiario > 0 || c.semanasSobreDias > 0;
+    const filas = (c.detalleSemanas || []).map((s) => `
+      <tr>
+        <td>${s.semana}</td>
+        <td class="num">${num(s.extraHoras, 2)}</td>
+        <td class="num">${s.diasConExtra}</td>
+        <td>${s.sobreLimiteSemanal ? '<span class="mal">supera el cupo</span>' : 'dentro'}</td>
+        <td>${s.sobreDiasConExtra ? '<span class="mal">demasiados días</span>' : 'dentro'}</td>
+      </tr>`).join('');
+
+    return `
+      <h2>4 · Reglas laborales</h2>
+      <p>Reglas <strong>resueltas</strong> para la fecha de arranque de esta corrida, no las de hoy. Es lo que
+      hace que el informe siga siendo auditable cuando la ley cambie.</p>
+      <table>
+        <thead><tr><th>Parámetro</th><th>Valor aplicado</th><th>Base legal</th></tr></thead>
+        <tbody>
+          <tr><td>Tipo de jornada</td><td>${l.shiftType} (${num(l.baseDailyHours, 1)} h/día)</td><td>LFT art. 61</td></tr>
+          <tr><td>Cupo semanal de horas extra</td><td>${num(l.limitHours, 2)} h · prima ${num(l.payMultiplier, 2)}×</td><td>LFT art. 66</td></tr>
+          <tr><td>Exceso sobre el cupo</td><td>prima ${num(l.excessPayMultiplier, 2)}×</td><td>LFT art. 68</td></tr>
+          <tr><td>Tope de horas extra al día</td><td>${num(l.dailyOvertimeLimitHours, 2)} h</td><td>LFT art. 65</td></tr>
+          <tr><td>Días con extra por semana</td><td>${num(l.maxOvertimeDaysPerWeek, 0)}</td><td>LFT art. 65</td></tr>
+          <tr><td>Prima dominical</td><td>${num(l.sundayPremiumPercent, 2)} %</td><td>LFT art. 73</td></tr>
+          <tr><td>Prima de día festivo</td><td>${num(l.holidayPremiumPercent, 2)} %</td><td>LFT art. 74</td></tr>
+          <tr><td>Vigencia de estas reglas</td><td>${l.version ? `desde ${l.version}` : 'valores por defecto (sin vigencia declarada)'}</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p class="sub">Los topes de los artículos 65, 66 y 68 son topes de <em>legalidad</em>: el informe los
+      aplica y los imprime, pero no sustituyen a una asesoría. Esto es una tabla de tasas y umbrales para
+      costear el proceso, no una nómina.</p>
+
+      <h3>Cumplimiento de los topes</h3>
+      <table>
+        <thead><tr><th>Comprobación</th><th class="num">Resultado</th><th>Tope</th></tr></thead>
+        <tbody>
+          <tr><td>Semanas analizadas</td><td class="num">${c.semanas}</td><td>—</td></tr>
+          <tr><td class="col-mal">Semanas por encima del cupo semanal</td><td class="num">${c.semanasSobreLimite}</td>
+              <td>${num(c.limiteSemanalHoras, 2)} h/semana</td></tr>
+          <tr><td>Semanas con más días de extra de los permitidos</td><td class="num">${c.semanasSobreDias}</td>
+              <td>${num(c.maxDiasConExtraPorSemana, 0)} días</td></tr>
+          <tr><td>Días por encima del tope diario</td><td class="num">${c.diasSobreLimiteDiario}</td>
+              <td>${num(c.limiteDiarioHoras, 2)} h/día</td></tr>
+          <tr><td>Extra máxima registrada en un día</td><td class="num">${num(c.maxExtraDiaHoras, 2)} h</td><td>—</td></tr>
+          <tr><td>Exceso total sobre el cupo</td><td class="num">${num(c.excesoTotalHoras, 2)} h</td><td>—</td></tr>
+          <tr><td>Exceso medio por semana excedida</td><td class="num">${num(c.excesoMedioSemanasSobreLimite, 2)} h</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <div class="aviso ${incumple ? 'mal' : 'ok'}">
+        ${incumple
+          ? `NO CUMPLE: con este plan, ${c.semanasSobreLimite} de ${c.semanas} semana(s) superaron el tope legal`
+            + (c.excesoTotalHoras > 0 ? ` y en promedio ${num(c.excesoMedioSemanasSobreLimite, 2)} h de más` : '')
+            + (c.diasSobreLimiteDiario > 0 ? `. Además, ${c.diasSobreLimiteDiario} día(s) pasaron del tope diario.` : '.')
+          : 'CUMPLE: ninguna semana ni ningún día supera los topes declarados.'}
+      </div>
+      ${filas ? `
+        <h3>Detalle por semana</h3>
+        <table>
+          <thead><tr><th>Semana</th><th class="num">Extra (h)</th><th class="num">Días con extra</th><th>Cupo</th><th>Días</th></tr></thead>
+          <tbody>${filas}</tbody>
+        </table>
       ` : ''}
     `;
   }
@@ -521,7 +626,7 @@ export default class ReportPanel {
     }).join('');
 
     return `
-      <h2 class="salto">4 · Entradas del modelo</h2>
+      <h2 class="salto">5 · Entradas del modelo</h2>
 
       <h3>Tareas</h3>
       <table>
@@ -562,7 +667,7 @@ export default class ReportPanel {
     });
 
     return `
-      <h2 class="salto">5 · Resultados</h2>
+      <h2 class="salto">6 · Resultados</h2>
 
       <h3>Producción y ciclo</h3>
       ${this._figuraHtml(figuras, 'dailyRun', 'Producción diaria con su media', 'El tramo inicial es el arranque del sistema vacío; a partir de ahí el ritmo se estabiliza.')}
@@ -585,7 +690,7 @@ export default class ReportPanel {
   _capacidad(ctx, figuras) {
     if (!ctx.utilizacion.length) {
       return `
-        <h2>6 · Capacidad y cuello de botella</h2>
+        <h2>7 · Capacidad y cuello de botella</h2>
         <div class="aviso">El modelo no declara recursos, así que no hay utilización que evaluar. Las tareas
         se ejecutan sin restricción de capacidad y las esperas serán cero: el modelo no puede mostrar cuellos de
         botella de recursos. Para evaluarlos, declare piscinas en la pestaña <strong>Recursos</strong> y asígnelas
@@ -608,7 +713,7 @@ export default class ReportPanel {
     const critico = ctx.utilizacion[0];
 
     return `
-      <h2>6 · Capacidad y cuello de botella</h2>
+      <h2>7 · Capacidad y cuello de botella</h2>
       <p>La utilización (ρ) es la fracción del tiempo disponible que el recurso está ocupado:
       minutos-recurso ocupados ÷ minutos-recurso disponibles. Se mide en el calendario del plan evaluado, así que
       las horas extra <em>añaden capacidad</em> y bajan ρ.</p>
@@ -738,7 +843,7 @@ export default class ReportPanel {
     const sinMedir = dimensiones.filter((d) => d.puntos == null);
 
     return `
-      <h2 class="salto">7 · Evaluación por puntos</h2>
+      <h2 class="salto">8 · Evaluación por puntos</h2>
       <p>Cada dimensión se puntúa con una <strong>rampa lineal</strong> entre dos umbrales declarados: el umbral
       <em>bueno</em> vale 100 puntos y el <em>malo</em> vale 0. La nota final es la media ponderada. Con el valor,
       los dos umbrales y el peso, cualquiera puede rehacer la cuenta.</p>
@@ -805,13 +910,35 @@ export default class ReportPanel {
         <ul>${ctx.incidencias.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`);
     }
 
+    // El incumplimiento va PRIMERO entre los hallazgos cuando existe: pasarse de
+    // un tope legal no es un problema de eficiencia, es un problema.
+    const c = ctx.cumplimiento;
+    if (c && (c.semanasSobreLimite > 0 || c.diasSobreLimiteDiario > 0 || c.semanasSobreDias > 0)) {
+      const partes = [];
+      if (c.semanasSobreLimite > 0) {
+        partes.push(`${c.semanasSobreLimite} de ${c.semanas} semana(s) superan el cupo de `
+          + `${num(c.limiteSemanalHoras, 2)} h de extra`);
+      }
+      if (c.excesoTotalHoras > 0) {
+        partes.push(`el exceso suma ${num(c.excesoTotalHoras, 2)} h`);
+      }
+      if (c.diasSobreLimiteDiario > 0) {
+        partes.push(`${c.diasSobreLimiteDiario} día(s) pasan del tope de ${num(c.limiteDiarioHoras, 2)} h al día`);
+      }
+      if (c.semanasSobreDias > 0) {
+        partes.push(`${c.semanasSobreDias} semana(s) con más de ${num(c.maxDiasConExtraPorSemana, 0)} días con extra`);
+      }
+      puntos.unshift(`<strong class="mal">Incumplimiento legal.</strong> ${partes.join('; ')}. `
+        + 'Excederse no solo cuesta más: está fuera de la ley, y aquí está medido antes de que ocurra.');
+    }
+
     if (!puntos.length) {
       puntos.push('No se han detectado problemas estructurales: capacidad con holgura, calidad dentro de lo '
         + 'razonable y modelo consistente.');
     }
 
     return `
-      <h2>8 · Hallazgos y recomendaciones</h2>
+      <h2>9 · Hallazgos y recomendaciones</h2>
       <ul>${puntos.map((p) => `<li>${p}</li>`).join('')}</ul>
       <h3>Qué haría a continuación</h3>
       <ul>
@@ -863,7 +990,7 @@ export default class ReportPanel {
     ` : '<p class="sub">Sin muestras de tiempo de ciclo.</p>';
 
     return `
-      <h2 class="salto">9 · Anexos</h2>
+      <h2 class="salto">10 · Anexos</h2>
 
       <h3>Tiempo de ciclo: percentiles</h3>
       ${percentiles}

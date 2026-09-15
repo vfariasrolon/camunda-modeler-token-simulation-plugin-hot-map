@@ -450,6 +450,17 @@
   border-left: 2px solid #eee;
 }
 
+/* Tabla de vigencias de las reglas laborales: ocho columnas numericas muy
+   estrechas. Se centran y se les pone un ancho minimo menor que el de la
+   triangular, porque aqui los valores son de uno o dos digitos. */
+.sim-data-table-panel .filas-regla .cell.mini {
+  min-width: 48px;
+}
+
+.sim-data-table-panel .filas-regla input[type="date"] {
+  min-width: 128px;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;

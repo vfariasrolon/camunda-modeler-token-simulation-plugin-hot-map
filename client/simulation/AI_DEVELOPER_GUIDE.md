@@ -394,9 +394,77 @@ nombre de una piscina declarada en el proceso, el motor **ignora el recurso en s
 la tabla sea un desplegable y no un campo de texto: una errata desactivaría la restricción
 sin que nada lo indicara.
 
+⚠️ **El recurso se pide ANTES de calcular tiempos y costes, y esto no es un detalle de estilo.**
+`scheduleTask()` reserva la unidad primero; si no hay hueco, **sale sin costear nada** y deja un
+*marcador* en la cola de la piscina. Cuando `release()` lo devuelve, el motor vuelve a llamar a
+`scheduleTask()` con `recursoTomado: true` y la hora **real**, y ahí sí costea. El motivo: si se
+costeara al intentar, la tarea pagaría el tiempo extra y las primas de la franja en la que
+**esperó** en vez de la franja en la que **trabajó** — una tarea que arranca a las 18:00, espera al
+recurso y trabaja el martes pagaba 1 h extra que no existió, y la apuntaba a la semana y al día
+equivocados. La espera se cobra aparte (`totalWaitTimeCost`), así que no se pierde nada.
+
+Si tocas ese camino, recuerda las tres cosas que van juntas: el **marcador** lleva `quantityRequired`
+y `waitStart` (la espera se mide al completar), el reencolado usa **`TASK_START`** y no el evento que
+ya tuviera, y `recursoTomado` evita pedir la unidad dos veces.
+
 **Nota:** El costo de la tarea **no** se define aquí; se calcula a partir de
 `cost.baseRatePerHour` de la configuración raíz. Cualquier campo `cost` dentro de una tarea
 es código heredado y se ignora.
+
+### Reglas laborales (`LaborRules.js`)
+
+Viven en la raíz, dentro de `labor`, y son **opcionales**: sin ellas se usan los valores por
+defecto, que ya son la ley (y son exactamente lo que ya usaba `overtime`).
+
+```json
+"labor": {
+  "shiftType": "diurna",
+  "dailyOvertimeLimitHours": 3,
+  "maxOvertimeDaysPerWeek": 3,
+  "sundayPremiumPercent": 25,
+  "holidayPremiumPercent": 0,
+  "rules": [ { "desde": "2026-07-01", "limitHours": 8, "payMultiplier": 2.5 } ]
+}
+```
+
+- **`shiftType`** fija la **jornada base**: diurna 8 h, nocturna 7 h, mixta 7,5 h (LFT art. 61).
+  El motor construye un `legalCalendar` con el MISMO horario declarado pero **recortado** a esa
+  base, y mide la extra contra él. Es un recorte, nunca una ampliación: con una jornada declarada
+  de 8 h o menos, `legalCalendar === standardCalendar` y no cambia nada. El recorte aplicado queda
+  en `engine.legalDayRecortadoMin`, que el informe imprime.
+- **`limits`/`premiums` sueltos** (`dailyOvertimeLimitHours`, `maxOvertimeDaysPerWeek`,
+  `sundayPremiumPercent`, `holidayPremiumPercent`) son los valores **por defecto**.
+- **`rules`** es una tabla de **vigencias**: cada fila tiene `desde` (`YYYY-MM-DD`) y solo los
+  campos que cambian. `resolveLabor(labor, overtime, fechaISO)` parte de los valores de `overtime`
+  y aplica encima, por orden, las filas con `desde <= fecha`. Devuelve además `version` (la
+  vigencia que mandó, o `null`) y `baseDailyHours`. **Una celda vacía es «lo de arriba»**, así que
+  solo se declara lo que cambia.
+- La fecha que se usa es la de **arranque de la corrida**, no la de hoy: un informe de enero tiene
+  que seguir cuadrando en junio.
+
+⚠️ **Los tres campos de `overtime` que también aparecen en una vigencia no se mueven de ahí.** Se
+quedan en `overtime` para no migrar todos los diagramas; la vigencia los **sobrescribe**. Si
+añades un parámetro nuevo, decide cuál de los dos sitios manda y escríbelo en los dos (el motor y
+el configurador).
+
+**Lo que produce el motor** (`engine.compliance`, `engine.labor`, `engine.premiumStats`):
+
+- `compliance`: `semanas`, `semanasSobreLimite`, `semanasSobreDias`, `diasSobreLimiteDiario`,
+  `maxExtraDiaHoras`, `excesoTotalHoras`, `detalleSemanas[]`. El **veredicto** lo redacta el
+  informe, no el motor: el motor solo cuenta.
+- La extra por día se acumula en `dailyStats` **imputada al día de ARRANQUE de la tarea**
+  (`_anotarExtraDelDia`) y los días con extra, por semana ISO, en `daysWithOvertime`.
+- `premiumStats` separa `dominicalMs` y `festivoMs` porque son artículos distintos; el cuadre del
+  informe los necesita por separado.
+
+⚠️ **El tope diario NO cambia lo que se paga.** El pago lo fijan los arts. 66 y 68, que son
+semanales. El art. 65 solo decide el veredicto. Mezclarlos haría imposible auditar el reparto de
+primas.
+
+⚠️ **Un festivo cierra el día solo si su día de la semana no está en `workingDays`**
+(`BusinessCalendar._festivosCerrados`). Si lo estuviera, la planta se cerraría sola y la prima del
+art. 74 sería impagable. Las dos listas se contradicen a propósito y gana `workingDays` para
+«¿abre?», mientras `holidays` sigue decidiendo la **prima**.
 
 ### `frequency`: una tarea, una vez por pieza o una vez por lote
 

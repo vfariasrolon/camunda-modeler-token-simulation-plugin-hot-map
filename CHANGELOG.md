@@ -4,6 +4,41 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **reglas laborales versionadas por fecha** (`LaborRules.js`). Un número en una casilla
+  reescribe el pasado: si el cupo semanal de horas extra se guardara suelto y mañana cambiara la ley,
+  todos los informes ya emitidos se recalcularían con la ley nueva y dejarían de ser auditables. Con
+  una **tabla de vigencias** se añade una fila, y cada corrida guarda **qué versión usó**. Se
+  resuelven por la fecha de arranque de la simulación, no por la de hoy. Deja la tabla vacía para
+  usar los valores de siempre.
+* `FEAT`: **tipo de jornada** (LFT art. 61): diurna 8 h, nocturna 7 h, mixta 7,5 h. La extra se mide
+  contra la jornada **base del turno**, no contra el horario declarado: un horario de 9 h en turno
+  diurno ya lleva dentro 1 h que se pagaba a tarifa base. Es un recorte, nunca una ampliación, así
+  que una jornada de 8 h o menos no cambia nada.
+* `FEAT`: **cumplimiento de la LFT art. 65** (máx. 3 h de extra al día y 3 días con extra por
+  semana). Es una salida **distinta del coste**: pasarse cuesta más, pero además es ilegal, y el
+  informe puede decirlo *antes* de que ocurra — «con este plan, en 8 de 20 semanas se superó el
+  límite legal, en promedio 2,3 h de más». El tope diario **no** cambia lo que se paga: el pago lo
+  fijan los arts. 66 y 68, que son semanales.
+* `FEAT`: **prima dominical** (art. 73, 25 %) y **prima de día festivo** (art. 74). Cada una en su
+  propio cubo, para que el cuadre del informe pueda demostrarlas. La de festivo viene a **0** por
+  defecto: cuánto se paga depende del contrato, e inventarlo sería peor que no tenerlo.
+* `FEAT`: el **informe técnico** gana una sección de reglas laborales con la base legal de cada
+  tope, el veredicto de cumplimiento y el detalle por semana, y la portada resume las reglas
+  aplicadas. El cuadre del coste incluye las primas de día como quinto componente, y la sección de
+  hallazgos pone el incumplimiento **el primero** cuando existe, porque no es un problema de
+  eficiencia.
+* `FIX`: **una tarea que esperaba por un recurso pagaba horas extra que no existió.** Calculaba su
+  tiempo extra y sus primas con la hora del **intento**, no con la hora real, y las apuntaba al día
+  y a la semana equivocados: una tarea que arranca a las 18:00, espera al recurso y trabaja el
+  martes pagaba 1 h extra de una franja en la que no trabajó. Ahora la unidad se pide **antes** de
+  costear y la tarea se re-programa con su hora real.
+* `FIX`: **un festivo en un día laborable cerraba la planta sin avisar.** El calendario se
+  contradecía: `workingDays` decía «abierto» y `holidays` «cerrado», y ganaba `holidays`, así que la
+  corrida se saltaba el día en silencio y la **prima de festivo era imposible de pagar**. Ahora un
+  festivo cierra **solo** si su día de la semana no está declarado laborable.
+* `FIX`: la pestaña Global **perdía los valores por defecto de los objetos anidados** cuando el
+  modelo solo tenía parte de ellos (`labor`, `warmup` o `lots`): el `...raw` superficial sustituía
+  el objeto entero y las casillas salían vacías.
 * `FEAT`: **llegadas por lotes, en serie y por tracción**. No hay dos lotes a la vez: se arranca
   uno, se cierra, y arranca el siguiente. El reloj de llegadas pasa a ser el reloj de lotes, y el
   **parón de cambio** entre ellos se mide como tiempo muerto con causa declarada («ocioso por fin

@@ -2,6 +2,7 @@ import { domify, event as domEvent, classes as domClasses } from 'min-dom';
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData, setSimulationData, isLabel } from './util';
 import { WARMUP_SHAPES, WARMUP_DEFAULTS, curvePoints, describeWarmup } from './WarmupCurve';
+import { TURNOS, LABOR_DEFAULTS } from './LaborRules';
 import './data-table.css';
 
 const PANEL_CLS = 'sim-data-table-panel';
@@ -90,7 +91,16 @@ const GLOBAL_FIELDS = [
   { key: 'lots.stopMinutes', label: 'Parón de cambio entre lotes (min)', kind: 'number', path: [ 'lots', 'stopMinutes' ], min: 0 },
 
   // --- semilla --------------------------------------------------------------
-  { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true }
+  { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true },
+
+  // --- reglas laborales (LFT) -----------------------------------------------
+  // Los tres primeros son los arts. 66 y 68 y ya existían como `overtime`; se
+  // quedan donde estaban para no migrar nada. Lo de abajo es lo que faltaba.
+  { key: 'labor.shiftType', label: 'Tipo de jornada (LFT art. 61)', kind: 'select', options: TURNOS, path: [ 'labor', 'shiftType' ] },
+  { key: 'labor.dailyOvertimeLimitHours', label: 'Tope de horas extra al día (art. 65)', kind: 'number', path: [ 'labor', 'dailyOvertimeLimitHours' ], min: 0 },
+  { key: 'labor.maxOvertimeDaysPerWeek', label: 'Máximo de días con extra por semana (art. 65)', kind: 'number', path: [ 'labor', 'maxOvertimeDaysPerWeek' ], min: 0 },
+  { key: 'labor.sundayPremiumPercent', label: 'Prima dominical en % (art. 73)', kind: 'number', path: [ 'labor', 'sundayPremiumPercent' ], min: 0 },
+  { key: 'labor.holidayPremiumPercent', label: 'Prima de día festivo en % (art. 74, 0 = no se paga)', kind: 'number', path: [ 'labor', 'holidayPremiumPercent' ], min: 0 }
 ];
 
 const DEFAULT_GLOBAL = () => ({
@@ -127,7 +137,12 @@ const DEFAULT_GLOBAL = () => ({
   },
   seed: '',
   cost: { baseRatePerHour: 50, waitCostPerHour: 0 },
-  overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 }
+  overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 },
+  // Reglas laborales (LFT). Los valores por defecto YA SON la ley que hay en los
+  // `overtime` de arriba, así que un diagrama existente se comporta igual hasta
+  // que alguien los cambie. `rules` empieza vacía: sin vigencias declaradas
+  // mandan estos valores y el informe lo dice tal cual.
+  labor: { ...LABOR_DEFAULTS(), rules: [] }
 });
 
 const getByPath = (obj, path) => path.reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
@@ -570,7 +585,20 @@ export default class DataTablePanel {
     if (!root) return null;
     const raw = getSimulationData(root) || {};
     const d = DEFAULT_GLOBAL();
-    return { element: root, data: { ...d, ...raw, isRoot: true } };
+    return {
+      element: root,
+      data: {
+        ...d,
+        ...raw,
+        isRoot: true,
+        // Los objetos anidados se mezclan uno a uno: con `...raw` a secas, un
+        // modelo que solo tenga `labor.shiftType` perdería los demás valores por
+        // defecto y las casillas saldrían vacías.
+        labor: { ...d.labor, ...(raw.labor || {}) },
+        warmup: { ...d.warmup, ...(raw.warmup || {}) },
+        lots: { ...d.lots, ...(raw.lots || {}) }
+      }
+    };
   }
 
   // -- render ---------------------------------------------------------------
@@ -1187,9 +1215,61 @@ export default class DataTablePanel {
         </tbody>
       </table>
       <button class="btn-anadir-fila" type="button" data-accion="anadir-lote">+ Añadir tamaño</button>
+
+      <h4 class="subtitulo">Reglas laborales con vigencia</h4>
+      <p class="hint">
+        Aquí se declara <strong>desde cuándo rige cada regla</strong>, y no un número en una casilla.
+        La diferencia importa: si el cupo semanal de horas extra se guardara suelto y mañana cambiara la
+        ley, <em>todos</em> los informes ya emitidos se recalcularían con la ley nueva y dejarían de ser
+        auditables. Con vigencias, se <strong>añade una fila</strong> y cada corrida guarda qué versión
+        usó. Deja la tabla vacía para usar los valores de arriba tal cual.
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Desde</th><th>Cupo semanal (h)</th><th>Prima doble (×)</th><th>Prima triple (×)</th>
+            <th>Tope al día (h)</th><th>Días/semana</th><th>Dominical (%)</th><th>Festivo (%)</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="filas-regla">
+          ${((data.labor && data.labor.rules) || []).map((r) => this._filaRegla(r)).join('')}
+        </tbody>
+      </table>
+      <button class="btn-anadir-fila" type="button" data-accion="anadir-regla">+ Añadir vigencia</button>
+      <p class="hint">
+        Una celda vacía significa <strong>«lo que digan los valores de arriba»</strong>: así solo hay que
+        rellenar lo que cambia. Se resuelven por la <strong>fecha de arranque</strong> de la simulación, no
+        por la de hoy, y si ninguna rige todavía se usa lo de arriba y el informe lo dice.
+      </p>
+      <p class="hint">
+        Alcance: esto es una <strong>tabla de tasas y umbrales para costear el proceso</strong>, no una
+        nómina. No se calculan IMSS, ISR, aguinaldo, prima vacacional ni finiquitos.
+      </p>
     `;
 
     this._bindGlobalExtras();
+  }
+
+  /** Una fila de la tabla de vigencias de las reglas laborales. */
+  _filaRegla(r) {
+    const v = (campo, paso) => {
+      const valor = r && r[campo] != null && r[campo] !== '' ? r[campo] : '';
+      return `<td><input type="number" step="${paso}" min="0" class="cell mini" data-regla="${campo}"
+        value="${valor}" placeholder="—"></td>`;
+    };
+    return `
+      <tr>
+        <td><input type="date" class="cell" data-regla="desde"
+          value="${esc(r && r.desde ? r.desde : '')}"></td>
+        ${v('limitHours', 'any')}
+        ${v('payMultiplier', '0.1')}
+        ${v('excessPayMultiplier', '0.1')}
+        ${v('dailyOvertimeLimitHours', 'any')}
+        ${v('maxOvertimeDaysPerWeek', '1')}
+        ${v('sundayPremiumPercent', 'any')}
+        ${v('holidayPremiumPercent', 'any')}
+        <td><button class="btn-quitar-pool" type="button" title="Quitar esta vigencia" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
   }
 
   /** Una fila de la tabla de tamaños de lote empíricos. */
@@ -1283,11 +1363,13 @@ export default class DataTablePanel {
 
   /** Conecta las listas de la pestaña Global y la vista previa de la curva. */
   _bindGlobalExtras() {
-    // Las dos listas (descansos y tamaños de lote) usan el mismo patrón: un botón
-    // para añadir y delegación en el cuerpo para quitar.
+    // Las tres listas (descansos, tamaños de lote y vigencias de las reglas
+    // laborales) usan el mismo patrón: un botón para añadir y delegación en el
+    // cuerpo para quitar.
     const listas = [
       { accion: 'anadir-descanso', tbody: '.filas-descanso', fila: () => this._filaDescanso(null) },
-      { accion: 'anadir-lote', tbody: '.filas-lote', fila: () => this._filaLote(null) }
+      { accion: 'anadir-lote', tbody: '.filas-lote', fila: () => this._filaLote(null) },
+      { accion: 'anadir-regla', tbody: '.filas-regla', fila: () => this._filaRegla(null) }
     ];
 
     listas.forEach(({ accion, tbody, fila }) => {
@@ -1692,6 +1774,51 @@ export default class DataTablePanel {
       }
     }
 
+    // Vigencias de las reglas laborales: otra lista. Una celda vacia significa
+    // «lo que digan los valores de arriba», asi que solo se escribe lo declarado.
+    const reglas = [];
+    const vistosDesde = new Set();
+
+    this._body.querySelectorAll('.filas-regla tr').forEach((tr, i) => {
+      const leer = (campo) => {
+        const el = tr.querySelector(`[data-regla="${campo}"]`);
+        return el ? String(el.value).trim() : '';
+      };
+      const campos = [ 'limitHours', 'payMultiplier', 'excessPayMultiplier',
+        'dailyOvertimeLimitHours', 'maxOvertimeDaysPerWeek', 'sundayPremiumPercent', 'holidayPremiumPercent' ];
+      const desde = leer('desde');
+      const algunValor = campos.some((c) => leer(c) !== '');
+
+      // Fila totalmente vacia: se ignora, para que la recien anadida no bloquee.
+      if (!desde && !algunValor) return;
+      if (!desde) throw new Error(`Vigencia ${i + 1}: falta la fecha desde la que rige`);
+
+      const m = desde.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) throw new Error(`Vigencia ${i + 1}: «${desde}» no es una fecha válida`);
+      if (vistosDesde.has(desde)) throw new Error(`Vigencia ${desde}: hay dos filas con la misma fecha`);
+      vistosDesde.add(desde);
+
+      const regla = { desde };
+      campos.forEach((c) => {
+        const bruto = leer(c);
+        if (bruto === '') return;
+        const n = this._num(bruto, `Vigencia ${desde} · ${c}`);
+        if (n < 0) throw new Error(`Vigencia ${desde}: ningún valor de la regla puede ser negativo`);
+        regla[c] = n;
+      });
+
+      // El reparto doble/triple tiene que ser coherente: si la prima de exceso
+      // fuera menor que la normal, el motor pagaria MENOS por trabajar mas.
+      const normal = regla.payMultiplier != null ? regla.payMultiplier : getByPath(data, [ 'overtime', 'payMultiplier' ]);
+      const exceso = regla.excessPayMultiplier != null ? regla.excessPayMultiplier : getByPath(data, [ 'overtime', 'excessPayMultiplier' ]);
+      if (normal != null && exceso != null && exceso < normal) {
+        throw new Error(`Vigencia ${desde}: la prima del exceso (${exceso}×) no puede ser menor que la normal (${normal}×)`);
+      }
+
+      reglas.push(regla);
+    });
+    setByPath(data, [ 'labor', 'rules' ], reglas);
+
     writes.push({ element: info.element, data });
     return writes;
   }
@@ -2027,6 +2154,25 @@ export default class DataTablePanel {
       rows.push([ `lote.${n}.peso`, `Tamaño de lote ${n}: peso`, f.weight ]);
     });
 
+    // Vigencias de las reglas laborales. Se exportan TODAS las columnas, aunque
+    // la celda esté vacía: en la ida y vuelta una columna ausente y una vacía no
+    // son lo mismo (vacío = «lo de arriba», ausente = columna que no existía).
+    ((info.data.labor && info.data.labor.rules) || []).forEach((r, i) => {
+      const n = i + 1;
+      rows.push([ `regla.${n}.desde`, `Vigencia ${n}: desde`, r.desde || '' ]);
+      [
+        [ 'limitHours', 'cupo semanal (h)' ],
+        [ 'payMultiplier', 'prima doble (x)' ],
+        [ 'excessPayMultiplier', 'prima triple (x)' ],
+        [ 'dailyOvertimeLimitHours', 'tope al día (h)' ],
+        [ 'maxOvertimeDaysPerWeek', 'días por semana' ],
+        [ 'sundayPremiumPercent', 'dominical (%)' ],
+        [ 'holidayPremiumPercent', 'festivo (%)' ]
+      ].forEach(([ campo, etiqueta ]) => {
+        rows.push([ `regla.${n}.${campo}`, `Vigencia ${n}: ${etiqueta}`, r[campo] == null ? '' : r[campo] ]);
+      });
+    });
+
     return rows;
   }
 
@@ -2296,6 +2442,7 @@ export default class DataTablePanel {
     // desconocido».
     const filasDescanso = new Map();
     const filasLote = new Map();
+    const filasRegla = new Map();
     const filasCampos = [];
 
     body.forEach((r) => {
@@ -2314,6 +2461,14 @@ export default class DataTablePanel {
         const i = Number(ml[1]);
         if (!filasLote.has(i)) filasLote.set(i, {});
         filasLote.get(i)[ml[2]] = String(r[iVal]).trim();
+        return;
+      }
+
+      const mr = clave.match(/^regla\.(\d+)\.(desde|limitHours|payMultiplier|excessPayMultiplier|dailyOvertimeLimitHours|maxOvertimeDaysPerWeek|sundayPremiumPercent|holidayPremiumPercent)$/);
+      if (mr) {
+        const i = Number(mr[1]);
+        if (!filasRegla.has(i)) filasRegla.set(i, {});
+        filasRegla.get(i)[mr[2]] = String(r[iVal]).trim();
         return;
       }
 
@@ -2410,6 +2565,35 @@ export default class DataTablePanel {
         tabla.push({ size, weight });
       });
       setByPath(data, [ 'lots', 'table' ], tabla);
+    }
+
+    // Vigencias de las reglas laborales: mismo criterio, se reconstruye ENTERA
+    // solo si el CSV trae alguna. Una celda vacía es «lo de arriba».
+    if (filasRegla.size) {
+      const reglas = [];
+      const vistos = new Set();
+      Array.from(filasRegla.keys()).sort((a, b) => a - b).forEach((idx) => {
+        const f = filasRegla.get(idx);
+        const desde = String(f.desde || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) {
+          throw new Error(`Línea de la vigencia ${idx}: «${desde}» no es una fecha AAAA-MM-DD`);
+        }
+        if (vistos.has(desde)) throw new Error(`Línea de la vigencia ${idx}: la fecha ${desde} está repetida`);
+        vistos.add(desde);
+
+        const regla = { desde };
+        [ 'limitHours', 'payMultiplier', 'excessPayMultiplier',
+          'dailyOvertimeLimitHours', 'maxOvertimeDaysPerWeek',
+          'sundayPremiumPercent', 'holidayPremiumPercent' ].forEach((c) => {
+          const bruto = String(f[c] == null ? '' : f[c]).trim();
+          if (bruto === '') return;
+          const n = this._num(bruto, `Línea de la vigencia ${desde}: ${c}`);
+          if (n < 0) throw new Error(`Línea de la vigencia ${desde}: ${c} no puede ser negativo`);
+          regla[c] = n;
+        });
+        reglas.push(regla);
+      });
+      setByPath(data, [ 'labor', 'rules' ], reglas);
     }
 
     updates.push({ element: info.element, data });
