@@ -2,6 +2,16 @@
 
 Este documento es una guía técnica para agentes de IA. Describe cómo interactuar con los datos de simulación (`simulationData`) almacenados dentro de los diagramas BPMN en este proyecto. El objetivo es permitir que un agente pueda construir nuevas herramientas, como un panel de propiedades, para editar estos datos.
 
+> **Estado de este documento (auditado el 2026-09-14):** el contenido se verificó línea a
+> línea contra el código fuente. Se corrigieron tres afirmaciones que contradecían la
+> implementación real (el rendimiento de `addWorkingTime`, el fallback inexistente cuando
+> falta el evento raíz, y la fórmula de `totalCost`), se completaron cuatro métricas de la
+> paleta de análisis que faltaban y se documentaron los módulos del cliente que no
+> aparecían. Los bloques marcados con ⚠️ señalan **discrepancias reales entre lo
+> documentado y el código**, no simples matices de redacción: léelos antes de confiar en
+> la sección que los contiene. Lo que no se pudo verificar se marca explícitamente como no
+> verificado en lugar de omitirse.
+
 ## Análisis General del Plugin: ¿Qué Hace y Cómo Funciona?
 
 Este proyecto es un **plugin para Camunda Modeler** que añade una potente capacidad de **simulación y análisis de procesos de negocio**. Su objetivo es permitir a un usuario analizar y optimizar un proceso BPMN antes de su implementación.
@@ -50,15 +60,25 @@ Esta paleta se abre al hacer clic en el botón del Yin-Yang (☯️). Cada botó
 | **📊** | **Frecuencia (Frequency)** | Muestra el **número de veces que se ha ejecutado** cada elemento, revelando las rutas más comunes. |
 | **🕒** | **Tiempo de Proceso (Process Time)** | Muestra el **tiempo de trabajo activo** promedio en cada tarea. |
 | **🐞** | **Tasa de Fallos (Failure Rate)** | Visualiza las tareas donde ocurren más fallos. |
+| **🕒** | **Tiempo de Reparación por Fallo** | Tiempo medio dedicado a reparar (rework) tras un fallo. |
+| **$** | **Costo de Reparación por Fallo** | Costo acumulado del tiempo de reparación. |
+| **🕒** | **Horas Extras (Overtime)** | Horas trabajadas dentro de las franjas de pago doble/triple. |
+| **$** | **Costo de Tiempos Muertos** | Costo incurrido por espera de recursos, calculado con `cost.waitCostPerHour`. |
 | **🚚** | **Espera de Transporte** | Muestra el tiempo perdido esperando por un vehículo o lote (si la lógica está activada). |
 | **⚠️** | **Despachos Ineficientes** | Muestra el número de despachos de transporte ineficientes (ej. un vehículo que sale sin estar lleno). |
 | **👥** | **Cantidad de Recursos** | Muestra el **número de recursos configurados** para cada tarea. |
 
+> **Nota:** Las métricas se definen en `client/simulation/SimulationPalette.js`. Las claves
+> internas son `cost`, `waitTime`, `totalWaitTime`, `cycleTime`, `frequency`, `processTime`,
+> `failureRate`, `reworkTime`, `reworkCost`, `overtime`, `waitTimeCost`,
+> `transportWaitTime`, `inefficientDispatch` y `resourceQuantity`. Si añades una métrica,
+> regístrala ahí: el mapa de calor de `SimulationController.js` consume esas claves.
+
 #### Controles de la Paleta
 
 *   **Limpiar**: Elimina el mapa de calor y las etiquetas de datos del diagrama.
-*   **R+ / R-**: Aumentan/disminuyen el **Radio** de las manchas de calor.
-*   **B+ / B-**: Aumentan/disminuyen el **Blur** (desenfoque) del mapa de calor.
+*   **R+ / R-**: Aumentan/disminuyen el **Radio** de las manchas de calor (paso de ±5).
+*   **B+ / B-**: Aumentan/disminuyen el **Blur** (desenfoque) del mapa de calor (paso de ±5).
 
 ---
 
@@ -68,32 +88,72 @@ Esta sección detalla las funcionalidades avanzadas añadidas al motor de simula
 
 ### 1. Arquitectura de los Nuevos Módulos
 
-*   **`client/simulation/BusinessCalendar.js`**: Este es un módulo nuevo y autocontenido que maneja toda la lógica de tiempo laboral. Es el responsable de sumar tiempo saltando noches/fines de semana y de calcular el tiempo de trabajo neto entre dos fechas. Es la fuente de verdad para todos los cálculos de tiempo. Su función `addWorkingTime` fue optimizada para realizar saltos matemáticos en lugar de iterar, evitando así que la aplicación se congele en simulaciones largas.
-*   **`client/editor/DataEditor.js`**: Este archivo controla la interfaz de usuario del panel de propiedades. La lógica para renderizar los formularios se encuentra en los métodos `render<ElementType>Form`. Fue modificado para centralizar toda la configuración global en el `StartEvent`.
+*   **`client/simulation/BusinessCalendar.js`**: Este es un módulo nuevo y autocontenido que maneja toda la lógica de tiempo laboral. Es el responsable de sumar tiempo saltando noches/fines de semana y de calcular el tiempo de trabajo neto entre dos fechas. Es la fuente de verdad para todos los cálculos de tiempo.
+    > ⚠️ **Rendimiento (estado real, no el deseado):** `addWorkingTime` calcula el número de
+    > días laborables de forma matemática, pero **después los recorre uno a uno** en un
+    > `while (workDaysCounted < fullDays)`. La iteración está reducida a granularidad de
+    > **día**, no eliminada. Peor: `calculateBusinessDurationInMinutes` — la función que
+    > alimenta el "Tiempo Total (Horas Netas)" del resumen — **sí itera minuto a minuto**.
+    > La optimización de este módulo es **parcial y sigue pendiente**. No des por hecho que
+    > el problema de rendimiento en simulaciones largas está resuelto.
+*   **`client/editor/DataEditor.js`**: Controla la interfaz de usuario del editor de datos de simulación. **Abre un modal** (clase `sim-data-editor-modal`), no el panel de propiedades nativo del modeler. La lógica para renderizar los formularios se encuentra en los métodos `render<ElementType>Form`. Fue modificado para centralizar toda la configuración global en el `StartEvent`.
 *   **`client/simulation/SimulationEngine.js`**: El motor principal. Fue refactorizado para usar el `BusinessCalendar` y para buscar su configuración en un "Evento de Inicio Raíz".
-*   **`client/simulation/SimulationController.js`**: El orquestador que conecta el motor con la UI. Fue actualizado para manejar y visualizar las nuevas métricas y el panel de resumen.
+*   **`client/simulation/SimulationController.js`**: El orquestador que conecta el motor con la UI. Fue actualizado para manejar y visualizar las nuevas métricas y el panel de resumen. También contiene la lógica del mapa de calor.
 *   **`client/simulation/ChartPanel.js`**: El panel de gráficos. Fue actualizado para incluir una opción de "Resumen General".
+
+Módulos que existen y conviene conocer (no documentados hasta ahora):
+
+*   **`client/simulation/SimulationPalette.js`**: Registra las métricas de la paleta de análisis y sus controles (limpiar, radio, blur). **Es el punto de entrada para añadir una métrica nueva al mapa de calor.** El mapa de calor que ves en el diagrama se define aquí, aunque el renderizado ocurra en `SimulationController.js`.
+*   **`client/simpleheat-svg.js`**: Implementación del mapa de calor sobre SVG. Es el motor de dibujo de las manchas de calor.
+*   **`client/simulation/RandomDataGenerator.js`**: Generador de datos de simulación aleatorios. Registra la acción `generateRandomSimulationData` (útil para demos y pruebas). **Ojo:** escribe un campo `cost` en las tareas y usa `unit: 'minutes'` en plural, ambos inconsistentes con el motor; es código heredado.
+*   **`client/TimeTracker.js`**: Rastreador de tiempos alternativo basado en eventos `TRACE_EVENT` del token-simulation original. **No forma parte del motor nuevo**: es una vía paralela que sigue el flujo de tokens del plugin original.
+*   **`client/HideModelerElements.js`**: Oculta elementos del panel del modeler.
+*   **`client/simulation/index.js`**, **`client/editor/index.js`**, **`client/client.js`**: Registro de servicios de inyección de dependencias y punto de entrada del cliente.
 
 ### 2. Flujo de Configuración Global (MUY IMPORTANTE)
 
 La configuración de la simulación (calendario, costos, reglas de horas extras, número de instancias) ya no se encuentra en el elemento Proceso/Participante. El nuevo flujo es:
 
 1.  El usuario selecciona un `bpmn:StartEvent`.
-2.  En el panel de propiedades (`DataEditor.js`), marca la casilla **"Usar como Configuración Raíz"**.
-3.  Todos los parámetros globales se configuran en este panel.
+2.  En el editor de datos (`DataEditor.js`), marca la casilla **"Usar como Configuración Raíz (init_root)"**.
+3.  Todos los parámetros globales se configuran en este editor.
 4.  Al ejecutar la simulación, `SimulationEngine.js` llama a `_findRootConfig()` para escanear todos los eventos de inicio y encontrar el que tiene la bandera `isRoot: true`.
-5.  Toda la simulación se ejecuta con base en la configuración de ese evento de inicio raíz. Si no se encuentra ninguno, se usa una configuración por defecto y se muestra una advertencia en la consola.
+5.  Toda la simulación se ejecuta con base en la configuración de ese evento de inicio raíz.
+6.  **Si no hay ningún evento raíz (o hay más de uno), la simulación FALLA.** No existe
+    fallback: `_findRootConfig()` emite un `console.warn` y devuelve `null`, y acto seguido
+    `run()` lanza `throw new Error("Cannot run simulation without a root configuration.")`.
+    El controlador aborta y muestra una notificación de error. **No asumas valores por
+    defecto**: sin evento raíz no hay resultados.
 
 ### 3. Lógica de Costos y Horas Extras (Refactorizada)
 
 El sistema de costos fue refactorizado para proveer un desglose más claro y útil para la toma de decisiones.
 
-*   El costo de una tarea ahora se calcula con base en los siguientes componentes, que se almacenan en el objeto de resultados de la simulación:
+*   Los componentes que **inicializa el motor** (`SimulationEngine.initialize`) y que se almacenan en el objeto de resultados son:
     *   **`totalOperationCost`**: Este es el **costo base de la operación**. Se calcula tomando todo el tiempo de trabajo de una tarea (tiempo de procesamiento + tiempo de reparación) y multiplicándolo por la tarifa base (`baseRatePerHour`). Es el costo del trabajo como si todas las horas se pagaran a tarifa normal.
     *   **`totalDoubleOvertimeCost`**: Este es el **pago extra (premium)** por las horas trabajadas en la franja de "pago doble". No incluye el costo base de esas horas (que ya está en `totalOperationCost`).
     *   **`totalTripleOvertimeCost`**: Similar al anterior, es el **pago extra (premium)** por las horas que exceden el límite y entran en la franja de "pago triple".
     *   **`totalWaitTimeCost`**: El costo incurrido por el tiempo de espera de recursos.
-*   El **`totalCost`** de una tarea (y del proceso) es la suma de todos estos componentes: `totalOperationCost` + `totalDoubleOvertimeCost` + `totalTripleOvertimeCost` + `totalWaitTimeCost`.
+*   **El cálculo real de `totalCost` NO es una suma limpia de esos cuatro campos.** La fórmula
+  del motor es:
+
+  ```
+  totalCost = (totalCost - waitTimeCost)
+            + operationCost
+            + doubleOvertimePremium
+            + tripleOvertimePremium
+            + waitTimeCost
+  ```
+
+  y el costo de espera del caso en curso se acumula **aparte**. Si necesitas el desglose
+  exacto, lee `SimulationEngine.js` alrededor de la línea 384; no lo reconstruyas desde el MD.
+
+*   ⚠️ **Bug conocido (campos fantasma):** `SimulationController.js` lee
+  `result.totalReworkCost` y `result.totalNormalTimeCost` al construir el resumen, pero
+  **`SimulationEngine.initialize` no los crea ni el motor los acumula en ningún punto**.
+  Con el `|| 0` del consumidor, esos valores son **siempre cero**. No documentes su valor
+  como si fuera real; o se calculan en el motor, o se eliminan de la UI. Existen además
+  `totalReworkTime` y `totalOvertimeCost`, que sí se usan en el resumen.
 
 ---
 
@@ -104,15 +164,17 @@ La estructura del JSON varía según el tipo de elemento.
 **A. Para un `bpmn:StartEvent` (cuando es `isRoot: true`):**
 ```json
 {
-  "arrivalRate": { "value": 1, "unit": "minute" },
+  "arrivalRate": { "value": 60, "unit": "minute" },
   "simulationConfig": { "runValue": 10 },
   "isRoot": true,
+  "startDate": "2026-01-15T09:00",
   "calendar": {
     "workingDays": [1, 2, 3, 4, 5],
     "workingHours": {
       "start": { "hour": 9, "minute": 0 },
       "end": { "hour": 17, "minute": 0 }
-    }
+    },
+    "holidays": ["2026-01-01", "2026-12-25"]
   },
   "cost": {
     "baseRatePerHour": 50,
@@ -126,19 +188,38 @@ La estructura del JSON varía según el tipo de elemento.
 }
 ```
 
+> **Unidades de `arrivalRate.unit`:** el motor acepta `"second"`, `"minute"` y `"hour"`;
+> el editor solo ofrece `"minute"` y `"hour"`. **Escribe el singular** (`"minute"`, no
+> `"minutes"`): el motor no reconoce el plural. El default del editor es `{ value: 60,
+> unit: "minute" }`.
+
 **B. Para un `bpmn:Task` (o UserTask, ScriptTask, etc.):**
 ```json
 {
   "processingTime": {
-    "distribution": "fixed", "value": 3, "unit": "minutes"
+    "distribution": "fixed", "value": 3, "unit": "minute"
   },
   "failureRate": 0.11,
   "reworkTime": {
-    "value": 3, "unit": "minutes"
+    "value": 3, "unit": "minute"
+  },
+  "resources": {
+    "pool": "Analistas", "quantityRequired": 1
   }
 }
 ```
-**Nota:** El costo de la tarea ya no se define aquí, se calcula a partir del `baseRatePerHour` de la configuración raíz.
+
+Para una distribución **triangular** (`distribution: "triangular"`), `processingTime` usa
+`min`, `mode` y `max` en lugar de `value`:
+```json
+{
+  "processingTime": {
+    "distribution": "triangular", "min": 2, "mode": 4, "max": 9, "unit": "minute"
+  }
+}
+```
+
+**Nota:** El costo de la tarea ya no se define aquí, se calcula a partir del `baseRatePerHour` de la configuración raíz. (`RandomDataGenerator.js` sigue escribiendo un campo `cost` en las tareas: es código heredado, ignóralo.)
 
 **C. Para un Flujo de Secuencia (`bpmn:SequenceFlow`) saliente de una Compuerta Exclusiva:**
 ```json
@@ -161,10 +242,21 @@ La estructura del JSON varía según el tipo de elemento.
 ## Aprendizajes Clave para Futuros Agentes
 
 *   **Cuidado con el Rendimiento de los Bucles**: El principal "bug" de la aplicación no era un bucle infinito, sino un bucle de muy bajo rendimiento en `BusinessCalendar.js` que iteraba sobre el tiempo en lugar de hacer saltos matemáticos. En simulaciones, los cálculos de tiempo deben ser eficientes para evitar congelar la aplicación.
-*   **Fuente Única de Verdad para la Configuración**: Un bug de bucle infinito fue causado por tener la configuración dividida en dos lugares (el `runValue` en el Proceso y el resto en el Evento de Inicio). Centralizar toda la configuración en el Evento de Inicio Raíz solucionó el problema. Es un principio de diseño clave.
-*   **Unidades de Medida**: Un error crítico que causaba resultados de miles de años fue pasar milisegundos a una función (`addWorkingTime`) que esperaba minutos. Se debe tener extremo cuidado con las unidades de medida, especialmente al interactuar entre diferentes módulos.
+    > ⚠️ **Corrección (verificado):** este problema **NO está resuelto del todo**. `addWorkingTime`
+    > redujo la iteración de minuto a **día**, pero sigue recorriendo los días uno a uno; y
+    > `calculateBusinessDurationInMinutes`, que alimenta el "Tiempo Total (Horas Netas)",
+    > **sigue iterando minuto a minuto**. Antes de dar esto por cerrado, mide: una simulación
+    > con muchos casos y ventanas de calendario amplias todavía puede degradarse.
+*   **Fuente Única de Verdad para la Configuración**: Un bug de bucle infinito fue causado por tener la configuración dividida en dos lugares (el `runValue` en el Proceso y el resto en el Evento de Inicio). Centralizar toda la configuración en el Evento de Inicio Raíz solucionó el problema. Es un principio de diseño clave. **Consecuencia:** no existe fallback; sin evento raíz marcado, la simulación aborta con error.
+*   **Unidades de Medida**: Un error crítico que causaba resultados de miles de años fue pasar milisegundos a una función (`addWorkingTime`) que esperaba minutos. Se debe tener extremo cuidado con las unidades de medida, especialmente al interactuar entre diferentes módulos. **Añadido:** usa el singular en las unidades (`"minute"`, no `"minutes"`); el motor no reconoce el plural, y `RandomDataGenerator.js` todavía lo emite en plural.
 *   **Visión a Futuro del Usuario (Modo Planificación)**: El usuario ha expresado un gran interés en una futura funcionalidad de "Modo Planificación". Esto implicaría que el usuario proporciona una **fecha límite** y el sistema debe simular si es posible cumplirla, usando proactivamente las horas extras como un recurso para acelerar las tareas. Este sería el siguiente gran paso lógico en la evolución de esta herramienta.
-*   **Diferencia entre Tiempo de Calendario y Tiempo de Trabajo**: Los usuarios pueden confundirse si los resultados muestran el tiempo de calendario bruto (incluyendo noches y fines de semana). Es importante que los resultados, como la "Duración Total", se presenten como **Tiempo de Trabajo Neto**, calculado a través del `BusinessCalendar`.
+    > ℹ️ **Estado:** no implementado. No hay ningún campo de fecha límite ni lógica de
+    > planificación en el código (`startDate` es solo la fecha de arranque de la simulación,
+    > no un plazo). Es una idea registrada, no una funcionalidad.
+*   **Diferencia entre Tiempo de Calendario y Tiempo de Trabajo**: Los usuarios pueden confundirse si los resultados muestran el tiempo de calendario bruto (incluyendo noches y fines de semana). Por eso el resumen presenta el **Tiempo de Trabajo Neto**, calculado a través del `BusinessCalendar`.
+    > **Etiquetas reales en el resumen** (no "Duración Total"): "Tiempo Total (Horas Netas)",
+    > "Días Laborales Totales", "Tiempo de Reparación Total" y "Total de Horas Extra".
+    > Búscalas en `SimulationController.js` si necesitas referenciarlas.
 ---
 
 *El resto de la guía original se mantiene sin cambios.*
