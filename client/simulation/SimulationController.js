@@ -6,7 +6,7 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
-import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel } from './util';
+import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -41,6 +41,15 @@ const TableIcon = `
   <span class="bts-icon">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
       <path fill="currentColor" d="M20 3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 2v2H4V5h16zM4 10h3v3H4v-3zm0 5h3v3H4v-3zm5 3v-3h3v3H9zm3-5H9v-3h3v3zm2 0v-3h3v3h-3zm3 2v3h-3v-3h3zm2-2h-2v-3h3v3h-1z"/>
+    </svg>
+  </span>
+`;
+
+// Icono de informe (Material Symbols "description") para el informe tecnico.
+const ReportIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
     </svg>
   </span>
 `;
@@ -152,17 +161,22 @@ export default class SimulationController {
     const showButton = domify(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
     const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
     const tableButton = domify(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
+    const reportButton = domify(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
     domEvent.bind(chartButton, 'click', () => this._chartPanel.toggle());
     domEvent.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
+    // Por evento y no llamando al panel: el modulo del informe se registra
+    // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
+    domEvent.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
 
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
     this._tokenSimulationPalette.addEntry(tableButton, 15);
+    this._tokenSimulationPalette.addEntry(reportButton, 16);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
@@ -173,6 +187,26 @@ export default class SimulationController {
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
     this._eventBus.on('simulation.summary.requested', () => this.showSummaryModal());
     this._eventBus.on('simulation.comparison.requested', () => this.showPlanBreakdown());
+  }
+
+  /**
+   * Datos que necesita el informe tecnico: los dos planes y los elementos del
+   * modelo.
+   *
+   * Se expone como metodo (y no como campo publico) para que el modulo del
+   * informe no dependa de la estructura interna del controlador. Es lo que
+   * rompe la dependencia circular: el controlador avisa por evento y el informe
+   * pide los datos cuando los necesita.
+   */
+  getReportData() {
+    return {
+      normal: this.normalReport,
+      overtime: this.overtimeReport,
+      tareas: this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:Task')),
+      flujos: this._elementRegistry.filter(
+        (el) => !isLabel(el) && is(el, 'bpmn:SequenceFlow') && el.source && is(el.source, 'bpmn:ExclusiveGateway')
+      )
+    };
   }
 
   showSummaryModal() {
@@ -276,9 +310,46 @@ export default class SimulationController {
         dailyCompletions: new Map(this._simulationEngine.dailyCompletions),
         createdAt: new Date(),
         totalWorkingDays: totalWorkingDays,
-        totalCost: totalCost
+        totalCost: totalCost,
+
+        // --- datos de distribucion y de capacidad (graficos e informe) ---
+        // Muestras por caso: permiten percentiles e histograma. La media sola
+        // esconde la cola.
+        cycleTimes: (this._simulationEngine.instanceCycleTimes || []).slice(),
+
+        // Utilizacion (rho) por piscina, ya calculada por el motor con el
+        // calendario de ESTE plan.
+        utilization: new Map(this._simulationEngine.utilization || []),
+
+        // Reparto del tiempo extra por tramo: lo imprime el informe.
+        overtimeBreakdown: { ...(this._simulationEngine.overtimeBreakdown || {}) },
+        overtimeCalendar: this._simulationEngine.overtimeCalendarConfig
+            ? JSON.parse(JSON.stringify(this._simulationEngine.overtimeCalendarConfig))
+            : null,
+
+        // Configuracion CONGELADA (copia, no referencia). El informe la imprime,
+        // y no debe cambiar si despues el usuario edita el diagrama.
+        config: this._configSnapshot(),
+
+        // Piscinas declaradas en el proceso, tal como las leyo el motor.
+        resourcePools: Array.from(this._simulationEngine.resourcePools.values())
+            .map((p) => ({ name: p.name, quantity: p.quantity }))
     };
     return report;
+  }
+
+  /** Copia de la configuracion global que el informe puede imprimir sin riesgo. */
+  _configSnapshot() {
+    const c = this._simulationEngine.rootConfig || {};
+    const copia = (o) => (o ? JSON.parse(JSON.stringify(o)) : null);
+    return {
+      arrivalRate: copia(c.arrivalRate),
+      calendar: copia(c.calendar),
+      cost: copia(c.cost),
+      overtime: copia(c.overtime),
+      simulationConfig: copia(c.simulationConfig),
+      startDate: c.startDate || ''
+    };
   }
 
   runSimulation() {
@@ -883,12 +954,16 @@ export default class SimulationController {
     };
 
     // Los ejes de tiempo se rotulan en MINUTOS porque getChartData() ya ha
-    // convertido la serie a minutos (ver METRICAS_TIEMPO). Antes decian "(s)"
-    // sobre valores en milisegundos.
+    // convertido la serie a minutos (ver METRICAS_TIEMPO).
     const yAxisTitle =
-        metric === 'cost' ? 'Costo Total ($)' :
+        metric === 'cost' ? 'Costo ($) por componente' :
+        metric === 'costCompare' ? 'Costo ($)' :
+        metric === 'cycleHistogram' ? 'Casos' :
+        metric === 'utilization' ? 'Utilización (%)' :
+        metric === 'flowVolume' ? 'Casos que pasaron' :
+        metric === 'dailyRun' || metric === 'cumulative' ? 'Piezas' :
         metric === 'processTime' ? 'Tiempo de Proceso Total (min)' :
-        metric === 'waitTime' || metric === 'allWaitTimes' ? 'Tiempo de Espera Total (min)' :
+        metric === 'waitTime' || metric === 'allWaitTimes' || metric === 'paretoWait' ? 'Tiempo de Espera Total (min)' :
         metric === 'resourceQuantity' ? 'Cantidad de Recursos' :
         metric === 'pareto' ? 'Número de Fallos' :
         metric === 'paretoTime' ? 'Tiempo de Proceso Total (min)' :
@@ -900,7 +975,14 @@ export default class SimulationController {
         'Valor';
     options.scales.y.title.text = yAxisTitle;
 
-    if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') {
+    // Barras APILADAS del desglose de costo: cada tarea es un monton.
+    if (metric === 'cost') {
+        options.scales.x = { stacked: true };
+        options.scales.y.stacked = true;
+    }
+
+    // Eje derecho de porcentaje acumulado, comun a los cuatro Pareto.
+    if ([ 'pareto', 'paretoTime', 'paretoCost', 'paretoWait' ].includes(metric)) {
         options.scales.y1 = {
             type: 'linear',
             display: true,
@@ -912,6 +994,14 @@ export default class SimulationController {
                 text: 'Porcentaje Acumulado (%)'
             },
             grid: { drawOnChartArea: false },
+        };
+    }
+
+    // Titulo del eje X donde la unidad no se deduce del contexto.
+    if (metric === 'cycleHistogram') {
+        options.scales.x = {
+            ...(options.scales.x || {}),
+            title: { display: true, text: 'Tiempo de ciclo (min)' }
         };
     }
 
@@ -932,23 +1022,106 @@ export default class SimulationController {
         borderWidth: 1
     }];
 
-    // Series de tiempo: se formatean con formatMinutes() porque la serie ya
-    // viene en minutos, no en milisegundos.
-    if (METRICAS_TIEMPO[metric]) {
+    // Tooltips. Cada familia de metricas necesita su formato: tiempo, dinero,
+    // conteos o porcentaje. En los Pareto, el eje derecho (y1) es un porcentaje y
+    // se distingue por `yAxisID`; el resto usa el formato de su unidad.
+    const tooltipTiempo = () => ({
+        tooltip: {
+            callbacks: {
+                label: function(context) {
+                    let label = context.dataset.label || '';
+                    if (label) { label += ': '; }
+                    if (context.parsed.y === null) return label;
+                    if (context.dataset.yAxisID === 'y1') return label + context.parsed.y.toFixed(1) + ' %';
+                    return label + formatMinutes(context.parsed.y);
+                }
+            }
+        }
+    });
+
+    const tooltipDinero = () => ({
+        tooltip: {
+            callbacks: {
+                label: function(context) {
+                    let label = context.dataset.label || '';
+                    if (label) { label += ': '; }
+                    if (context.parsed.y === null) return label;
+                    if (context.dataset.yAxisID === 'y1') return label + context.parsed.y.toFixed(1) + ' %';
+                    return label + formatCurrency(context.parsed.y, 'MXN');
+                }
+            }
+        }
+    });
+
+    // Series de tiempo (ya en MINUTOS) y el Pareto de esperas, que comparte forma.
+    if (METRICAS_TIEMPO[metric] || metric === 'paretoWait') {
+        options.plugins = tooltipTiempo();
+    }
+
+    if (metric === 'costCompare') {
+        options.plugins = tooltipDinero();
+    }
+
+    // Costo apilado: el pie suma el monton, que es el costo total de la tarea.
+    if (metric === 'cost') {
         options.plugins = {
             tooltip: {
                 callbacks: {
                     label: function(context) {
-                        let label = context.dataset.label || '';
-                        if (label) { label += ': '; }
-                        if (context.parsed.y !== null) {
-                          if (context.dataset.yAxisID === 'y1') {
-                            label += context.parsed.y.toFixed(1) + '%';
-                          } else {
-                            label += formatMinutes(context.parsed.y);
-                          }
-                        }
-                        return label;
+                        return `${context.dataset.label}: ${formatCurrency(context.parsed.y, 'MXN')}`;
+                    },
+                    footer: function(items) {
+                        const total = items.reduce((a, i) => a + (i.parsed.y || 0), 0);
+                        return `Total: ${formatCurrency(total, 'MXN')}`;
+                    }
+                }
+            }
+        };
+    }
+
+    if (metric === 'cumulative') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        const pct = (context.dataset.porcentajes || [])[context.dataIndex];
+                        return `${context.parsed.y} pieza(s)`
+                            + (pct == null ? '' : ` — ${pct.toFixed(1)} % del total`);
+                    }
+                }
+            }
+        };
+    }
+
+    if (metric === 'flowVolume') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        const pct = (context.dataset.porcentajes || [])[context.dataIndex];
+                        return `${context.parsed.y} caso(s)`
+                            + (pct == null ? '' : ` — ${pct.toFixed(1)} % de los completados`);
+                    }
+                }
+            }
+        };
+    }
+
+    // Utilizacion: se muestra rho, su lectura en palabras y el detalle del
+    // calculo, porque rho es la metrica que mas se malinterpreta.
+    if (metric === 'utilization') {
+        options.plugins = {
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        const detalle = (context.dataset.detalle || [])[context.dataIndex];
+                        if (!detalle) return `${context.parsed.y.toFixed(1)} %`;
+
+                        const lectura = describirUtilizacion(detalle.utilization);
+                        return [
+                            `ρ = ${detalle.utilization.toFixed(3)} (${(detalle.utilization * 100).toFixed(1)} %): ${lectura.etiqueta}`,
+                            `${detalle.quantity} unidad(es) · ${detalle.busyMinutes} de ${detalle.availableMinutes} min-recurso`
+                        ];
                     }
                 }
             }
@@ -987,6 +1160,20 @@ export default class SimulationController {
                         return `${context.chart.data.labels[context.dataIndex]}: (${time}, ${cost})`;
                     }
                 }
+            }
+        };
+    }
+
+    // El histograma lleva sus percentiles en el titulo: sin ellos hay que
+    // estimar la cola a ojo, que es justo lo que el histograma viene a evitar.
+    if (metric === 'cycleHistogram' && chartData.resumen) {
+        const r = chartData.resumen;
+        options.plugins = {
+            ...(options.plugins || {}),
+            title: {
+                display: true,
+                text: `${r.n} casos · p50 ${formatMinutes(r.p50)} · p90 ${formatMinutes(r.p90)}`
+                    + ` · p95 ${formatMinutes(r.p95)} · máximo ${formatMinutes(r.max)}`
             }
         };
     }
@@ -1217,6 +1404,100 @@ export default class SimulationController {
     return tableHtml;
   }
 
+  /**
+   * Produccion diaria ordenada por dia: [{ dia, piezas }].
+   *
+   * El mapa del motor viene con claves "AAAA-MM-DD" y NO en orden garantizado
+   * (se insertan segun se completan los casos), asi que se ordena siempre. Sin
+   * esto, la curva acumulada saldria en zigzag.
+   */
+  _produccionDiaria(report) {
+    const mapa = (report && report.dailyCompletions) || new Map();
+    return Array.from(mapa.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(([dia, piezas]) => ({ dia, piezas }));
+  }
+
+  /**
+   * Desglose del costo por tarea, ordenado de mayor a menor.
+   *
+   * La suma de los cuatro componentes coincide con `totalCost` (asi lo acumula el
+   * motor), de modo que la altura de la barra apilada ES el costo total: no hay
+   * una barra "total" aparte que pueda contradecir al monton.
+   */
+  _costoPorTarea(report, max) {
+    const tareas = [];
+    (report ? report.results : new Map()).forEach((r, id) => {
+      const el = this._elementRegistry.get(id);
+      if (!el || isLabel(el) || !is(el, 'bpmn:Task')) return;
+
+      const operacion = r.totalOperationCost || 0;
+      const doble = r.totalDoubleOvertimeCost || 0;
+      const triple = r.totalTripleOvertimeCost || 0;
+      const espera = r.totalWaitTimeCost || 0;
+
+      tareas.push({
+        name: nombreElemento(el),
+        operacion, doble, triple, espera,
+        total: operacion + doble + triple + espera
+      });
+    });
+
+    tareas.sort((a, b) => b.total - a.total);
+    return tareas.slice(0, max || 8);
+  }
+
+  /** Volumen por camino: casos que pasaron por cada flujo del diagrama. */
+  _volumenPorCamino(report, max) {
+    const caminos = [];
+    (report ? report.results : new Map()).forEach((r, id) => {
+      const el = this._elementRegistry.get(id);
+      if (!el || isLabel(el) || !is(el, 'bpmn:SequenceFlow')) return;
+      if (!r.executionCount) return;
+
+      caminos.push({
+        name: `${nombreElemento(el.source)} → ${nombreElemento(el.target)}`,
+        total: r.executionCount
+      });
+    });
+
+    caminos.sort((a, b) => b.total - a.total);
+    return caminos.slice(0, max || 12);
+  }
+
+  /** Utilizacion por piscina, de mayor a menor (lo primero que hay que mirar). */
+  _utilizacion(report) {
+    const mapa = (report && report.utilization) || new Map();
+    return Array.from(mapa.values()).sort((a, b) => b.utilization - a.utilization);
+  }
+
+  /**
+   * Comparativa de costos por componente entre los dos planes.
+   *
+   * Se comparan los cuatro componentes mas el total, y NO las piezas: mezclar
+   * pesos y unidades en el mismo grafico no se puede leer.
+   */
+  _comparativaCostos() {
+    const suma = (report, campo) => {
+      let t = 0;
+      (report ? report.results : new Map()).forEach((r) => { t += r[campo] || 0; });
+      return t;
+    };
+    const componentes = (report) => ([
+      suma(report, 'totalOperationCost'),
+      suma(report, 'totalDoubleOvertimeCost'),
+      suma(report, 'totalTripleOvertimeCost'),
+      suma(report, 'totalWaitTimeCost')
+    ]);
+    const cerrar = (v) => v.concat([v.reduce((a, b) => a + b, 0)]);
+
+    return {
+      labels: ['Operación', 'Prima doble', 'Prima triple', 'Espera', 'Costo total'],
+      normal: cerrar(componentes(this.normalReport)),
+      overtime: cerrar(componentes(this.overtimeReport))
+    };
+  }
+
   getChartData(metric) {
     if (metric === 'dailyProduction') {
       if (!this.normalReport) {
@@ -1241,6 +1522,67 @@ export default class SimulationController {
           backgroundColor: 'rgba(153, 102, 255, 0.2)',
           borderColor: 'rgba(153, 102, 255, 1)',
           borderWidth: 1
+        }]
+      };
+    }
+
+    // Run chart: la produccion diaria en LINEA, con la media de referencia. La
+    // barra compara dias entre si; la linea deja ver el arranque (transitorio) y
+    // si el ritmo se estabiliza, que es lo que se quiere saber.
+    if (metric === 'dailyRun') {
+      const dias = this._produccionDiaria(this.normalReport);
+      const media = dias.length ? dias.reduce((a, d) => a + d.piezas, 0) / dias.length : 0;
+
+      return {
+        labels: dias.map((d) => d.dia),
+        datasets: [
+          {
+            type: 'line',
+            label: 'Piezas completadas',
+            data: dias.map((d) => d.piezas),
+            borderColor: 'rgba(21, 101, 192, 1)',
+            backgroundColor: 'rgba(21, 101, 192, .15)',
+            borderWidth: 2,
+            pointRadius: 3,
+            tension: .25,
+            fill: true
+          },
+          {
+            type: 'line',
+            label: `Media (${media.toFixed(1)}/día)`,
+            data: dias.map(() => media),
+            borderColor: 'rgba(198, 40, 40, .85)',
+            borderWidth: 1,
+            borderDash: [ 6, 4 ],
+            pointRadius: 0,
+            fill: false
+          }
+        ]
+      };
+    }
+
+    // Curva S: el avance acumulado. Responde "cuando lleve el 50 %/90 % del
+    // trabajo", que es la pregunta de planificacion, no "cuanto hice el martes".
+    if (metric === 'cumulative') {
+      const dias = this._produccionDiaria(this.normalReport);
+      let acumulado = 0;
+      const datos = dias.map((d) => (acumulado += d.piezas));
+      const total = acumulado;
+
+      return {
+        labels: dias.map((d) => d.dia),
+        datasets: [{
+          type: 'line',
+          label: 'Piezas acumuladas',
+          data: datos,
+          borderColor: 'rgba(46, 125, 50, 1)',
+          backgroundColor: 'rgba(46, 125, 50, .15)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: .2,
+          fill: true,
+          // El % viaja con el dato para que el tooltip no repita la division.
+          porcentajes: total > 0 ? datos.map((v) => (v / total) * 100) : []
         }]
       };
     }
@@ -1389,9 +1731,167 @@ export default class SimulationController {
         };
     }
 
+    // Costo APILADO por tarea: operacion + primas + espera. Responde "por que es
+    // caro eso", que una barra de total no responde. La altura del monton es el
+    // costo total, asi que no hace falta una barra de total aparte.
+    if (metric === 'cost') {
+      const t = this._costoPorTarea(this.overtimeReport, 8);
+      const capa = (etiqueta, color, campo) => ({
+        type: 'bar',
+        label: etiqueta,
+        data: t.map((x) => x[campo]),
+        backgroundColor: color,
+        stack: 'costo'
+      });
+
+      return {
+        labels: t.map((x) => x.name),
+        datasets: [
+          capa('Operación', 'rgba(21, 101, 192, .75)', 'operacion'),
+          capa('Prima doble', 'rgba(255, 159, 64, .85)', 'doble'),
+          capa('Prima triple', 'rgba(198, 40, 40, .8)', 'triple'),
+          capa('Espera', 'rgba(117, 117, 117, .7)', 'espera')
+        ]
+      };
+    }
+
+    if (metric === 'costCompare') {
+      const c = this._comparativaCostos();
+      return {
+        labels: c.labels,
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Plan normal',
+            data: c.normal,
+            backgroundColor: 'rgba(54, 162, 235, .6)',
+            borderColor: 'rgba(54, 162, 235, 1)'
+          },
+          {
+            type: 'bar',
+            label: 'Plan con horas extra',
+            data: c.overtime,
+            backgroundColor: 'rgba(255, 159, 64, .6)',
+            borderColor: 'rgba(255, 159, 64, 1)'
+          }
+        ]
+      };
+    }
+
+    // Pareto de esperas: el Pareto del CUELLO DE BOTELLA. Las tareas que se llevan
+    // la mayor parte de la espera son las que hay que atacar primero.
+    if (metric === 'paretoWait') {
+      const conEspera = tasks.filter((t) => t.totalWaitTime > 0);
+      conEspera.sort((a, b) => b.totalWaitTime - a.totalWaitTime);
+
+      const labels = conEspera.map((t) => t.name);
+      const datos = conEspera.map((t) => t.totalWaitTime);
+      const total = datos.reduce((a, b) => a + b, 0);
+
+      let acumulado = 0;
+      const pct = datos.map((v) => {
+        acumulado += v;
+        return total > 0 ? (acumulado / total) * 100 : 0;
+      });
+
+      return {
+        labels,
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Tiempo de espera (min)',
+            data: datos,
+            backgroundColor: 'rgba(255, 99, 132, .25)',
+            borderColor: 'rgba(255, 99, 132, 1)',
+            yAxisID: 'y'
+          },
+          {
+            type: 'line',
+            label: 'Porcentaje acumulado',
+            data: pct,
+            borderColor: 'rgba(75, 192, 192, 1)',
+            backgroundColor: 'rgba(75, 192, 192, .2)',
+            fill: false,
+            yAxisID: 'y1'
+          }
+        ]
+      };
+    }
+
+    // Volumen por camino. Sustituye al Sankey: para ANALIZAR, una barra ordenada
+    // se lee mejor y no necesita dependencias; el diagrama BPMN ya dibuja la red.
+    if (metric === 'flowVolume') {
+      const caminos = this._volumenPorCamino(this.overtimeReport, 12);
+      const casos = this.overtimeReport ? this.overtimeReport.completedInstances : 0;
+
+      return {
+        labels: caminos.map((c) => c.name),
+        datasets: [{
+          type: 'bar',
+          label: 'Casos que pasaron',
+          data: caminos.map((c) => c.total),
+          backgroundColor: 'rgba(21, 101, 192, .55)',
+          borderColor: 'rgba(21, 101, 192, 1)',
+          porcentajes: casos > 0 ? caminos.map((c) => (c.total / casos) * 100) : []
+        }]
+      };
+    }
+
+    // Distribucion del tiempo de ciclo: la media esconde la cola.
+    if (metric === 'cycleHistogram') {
+      const muestras = (this.overtimeReport && this.overtimeReport.cycleTimes) || [];
+      const h = histograma(muestras, 14);
+      const res = resumenMuestras(muestras);
+
+      return {
+        labels: h.etiquetas,
+        datasets: [{
+          type: 'bar',
+          label: 'Casos',
+          data: h.conteos,
+          backgroundColor: 'rgba(21, 101, 192, .55)',
+          borderColor: 'rgba(21, 101, 192, 1)'
+        }],
+        // El resumen viaja con los datos para que el titulo del grafico muestre
+        // los percentiles: un histograma sin ellos obliga a estimarlos a ojo.
+        resumen: res
+      };
+    }
+
+    // Utilizacion (rho) por piscina. Es LA metrica de capacidad.
+    if (metric === 'utilization') {
+      const u = this._utilizacion(this.overtimeReport);
+
+      return {
+        labels: u.map((x) => x.name),
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Utilización (ρ)',
+            data: u.map((x) => x.utilization * 100),
+            // Color por tramo: el mismo criterio que describirUtilizacion().
+            backgroundColor: u.map((x) => (x.utilization >= 0.9
+              ? 'rgba(198, 40, 40, .7)'
+              : x.utilization >= 0.8 ? 'rgba(249, 168, 37, .75)' : 'rgba(46, 125, 50, .65)')),
+            borderColor: 'rgba(0, 0, 0, .2)',
+            detalle: u
+          },
+          {
+            type: 'line',
+            label: 'Límite de capacidad (100 %)',
+            data: u.map(() => 100),
+            borderColor: 'rgba(198, 40, 40, .85)',
+            borderWidth: 1,
+            borderDash: [ 6, 4 ],
+            pointRadius: 0,
+            fill: false
+          }
+        ]
+      };
+    }
+
     let dataProperty, label;
-    if (metric === 'cost') { dataProperty = 'totalCost'; label = 'Costo Total por Tarea'; }
-    else if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
+    if (metric === 'processTime') { dataProperty = 'totalProcessingTime'; label = 'Tiempo de Proceso Total'; }
     else if (metric === 'waitTime') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'allWaitTimes') { dataProperty = 'totalWaitTime'; label = 'Tiempo de Espera Total (Recursos)'; }
     else if (metric === 'resourceQuantity') { dataProperty = 'value'; label = 'Cantidad de Recursos por Tarea'; }

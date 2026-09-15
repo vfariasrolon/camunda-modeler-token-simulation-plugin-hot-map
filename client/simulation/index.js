@@ -4,6 +4,7 @@ import SimulationEngine from './SimulationEngine';
 import ChartPanel from './ChartPanel';
 import DataTablePanel from './DataTablePanel';
 import MatrixLoader from './MatrixLoader';
+import ReportPanel from './ReportPanel';
 
 export default {
   __init__: [
@@ -11,7 +12,10 @@ export default {
     'simulationPalette',
     'chartPanel',
     'dataTablePanel',
-    'matrixLoader'
+    'matrixLoader',
+    // DESPUES de simulationController: lo inyecta para leer los informes de la
+    // corrida, y didi instancia los modulos en orden de __init__.
+    'reportPanel'
   ],
   simulationController: [ 'type', SimulationController ],
   simulationPalette: [ 'type', SimulationPalette ],
@@ -21,5 +25,6 @@ export default {
   // SimulationController lo inyecta: didi instancia los modulos en orden de
   // __init__, y un modulo registrado despues no estaria disponible.
   dataTablePanel: [ 'type', DataTablePanel ],
-  matrixLoader: [ 'type', MatrixLoader ]
+  matrixLoader: [ 'type', MatrixLoader ],
+  reportPanel: [ 'type', ReportPanel ]
 };

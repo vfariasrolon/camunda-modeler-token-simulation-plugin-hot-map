@@ -32,21 +32,38 @@ export default class ChartPanel {
       <div class="${PALETTE_CLS}">
         <div class="header">
           <select class="chart-select">
-            <option value="overallSummary">Resumen General</option>
-            <option value="dailyProduction">Producción Diaria</option>
-            <option value="productionCompare">Análisis de Producción (Normal vs. Extras)</option>
-            <option value="inputParams">Parámetros de Entrada (Tabla)</option>
-            <option value="resultsTable">Resultados de Simulación (Tabla)</option>
-            <option value="cost">Top 5 por Costo</option>
-            <option value="processTime">Top 5 por Tiempo de Proceso</option>
-            <option value="waitTime">Top 5 por Tiempo de Espera (Recursos)</option>
-            <option value="overtime">Top 5 por Tiempo Extra</option>
-            <option value="resourceQuantity">Recursos Asignados por Tarea</option>
-            <option value="scatter">Diagrama de Dispersión (Tiempo vs. Costo)</option>
-            <option value="pareto">Diagrama de Pareto (Fallos)</option>
-            <option value="paretoTime">Diagrama de Pareto (Tiempos)</option>
-            <option value="paretoCost">Diagrama de Pareto (Costos)</option>
-            <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
+            <optgroup label="Resumen">
+              <option value="overallSummary">Resumen General</option>
+              <option value="resultsTable">Resultados de Simulación (Tabla)</option>
+              <option value="inputParams">Parámetros de Entrada (Tabla)</option>
+            </optgroup>
+            <optgroup label="Producción">
+              <option value="dailyProduction">Producción Diaria</option>
+              <option value="dailyRun">Producción Diaria (tendencia y media)</option>
+              <option value="cumulative">Avance Acumulado (curva S)</option>
+              <option value="productionCompare">Comparativa de Producción (Normal vs. Extras)</option>
+            </optgroup>
+            <optgroup label="Costos">
+              <option value="cost">Costo por Tarea (desglose)</option>
+              <option value="costCompare">Comparativa de Costos (Normal vs. Extras)</option>
+              <option value="paretoCost">Pareto (Costos)</option>
+            </optgroup>
+            <optgroup label="Tiempos y capacidad">
+              <option value="cycleHistogram">Distribución del Tiempo de Ciclo</option>
+              <option value="utilization">Utilización de Recursos (ρ)</option>
+              <option value="processTime">Top 5 por Tiempo de Proceso</option>
+              <option value="waitTime">Top 5 por Tiempo de Espera</option>
+              <option value="allWaitTimes">Tiempos de Espera por Tarea (completo)</option>
+              <option value="overtime">Top 5 por Tiempo Extra</option>
+            </optgroup>
+            <optgroup label="Calidad y flujos">
+              <option value="pareto">Pareto (Fallos)</option>
+              <option value="paretoTime">Pareto (Tiempos)</option>
+              <option value="paretoWait">Pareto (Esperas)</option>
+              <option value="flowVolume">Volumen por Camino</option>
+              <option value="scatter">Dispersión (Tiempo vs. Costo)</option>
+              <option value="resourceQuantity">Recursos Asignados por Tarea</option>
+            </optgroup>
           </select>
           <div class="header-buttons">
             <button class="summary-button" title="Ver Resumen General" data-tip="Resumen General — métricas totales de la simulación">${icon(SummaryIcon)}</button>

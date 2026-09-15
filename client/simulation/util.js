@@ -14,6 +14,17 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 export const isLabel = (element) =>
   Boolean(element && (element.labelTarget || element.type === 'label'));
 
+/**
+ * Nombre legible de un elemento: el del diagrama o, si no lo tiene, su id.
+ *
+ * Compartido entre el controlador (etiquetas de graficos) y el informe (tablas).
+ * Antes cada uno tenia su copia y la del informe no existia: el metodo se llamaba
+ * desde el informe pero solo estaba definido en el controlador, asi que generar
+ * el informe lanzaba "this._nombre is not a function".
+ */
+export const nombreElemento = (element) =>
+  (element ? (element.businessObject.name || element.id) : '?');
+
 export const getExtensionProperty = (element, name) => {
   if (!element || !element.businessObject) return null;
   const bo = element.businessObject;
@@ -113,4 +124,111 @@ export const formatCurrency = (amount, currency = 'MXN') => {
     style: 'currency',
     currency: currency,
   }).format(amount);
+};
+
+// ---------------------------------------------------------------------------
+// Estadistica descriptiva.
+//
+// El motor acumula TOTALES por elemento (espera total, costo total...), que dan
+// medias pero esconden la cola de la distribucion. Con las muestras por caso
+// (tiempo de ciclo) se pueden calcular percentiles, y el p95 es lo que de verdad
+// rompe un plazo: la media puede estar bien con una cola desastrosa.
+//
+// Viven aqui (y no en el motor ni en el panel) porque las usan los dos: los
+// graficos y el informe.
+// ---------------------------------------------------------------------------
+
+/**
+ * Percentil por interpolacion lineal sobre una lista YA ORDENADA de menor a mayor.
+ *
+ * Interpolar (en vez de tomar el elemento mas cercano) es lo correcto para una
+ * muestra pequena: con 10 datos, el "p95" por vecino seria el maximo, que
+ * exagera la cola.
+ */
+export const percentil = (ordenados, p) => {
+  const n = ordenados ? ordenados.length : 0;
+  if (!n) return 0;
+  if (n === 1) return ordenados[0];
+
+  const pos = (n - 1) * (p / 100);
+  const bajo = Math.floor(pos);
+  const alto = Math.min(bajo + 1, n - 1);
+  return ordenados[bajo] + (ordenados[alto] - ordenados[bajo]) * (pos - bajo);
+};
+
+/**
+ * Resumen descriptivo de una muestra. Devuelve null si esta vacia.
+ *
+ * Incluye el coeficiente de variacion (cv = desviacion / media): es la
+ * variabilidad RELATIVA, y es lo que permite comparar la dispersion de un
+ * proceso rapido con uno lento.
+ */
+export const resumenMuestras = (muestras) => {
+  const datos = (muestras || []).slice().sort((a, b) => a - b);
+  const n = datos.length;
+  if (!n) return null;
+
+  const media = datos.reduce((a, b) => a + b, 0) / n;
+  const varianza = n > 1 ? datos.reduce((a, b) => a + (b - media) ** 2, 0) / (n - 1) : 0;
+  const desviacion = Math.sqrt(varianza);
+
+  return {
+    n,
+    min: datos[0],
+    max: datos[n - 1],
+    media,
+    desviacion,
+    p50: percentil(datos, 50),
+    p90: percentil(datos, 90),
+    p95: percentil(datos, 95),
+    p99: percentil(datos, 99),
+    cv: media > 0 ? desviacion / media : 0
+  };
+};
+
+/**
+ * Histograma de cubetas de ancho uniforme (regla de Sturges, con topes).
+ *
+ * Devuelve `etiquetas` (una por cubeta, con el rango) y `conteos`. Si todos los
+ * valores son iguales devuelve una sola cubeta: sin ese caso, el ancho saldria 0
+ * y las etiquetas serian NaN.
+ */
+export const histograma = (muestras, cubetas) => {
+  const datos = (muestras || []).filter((v) => Number.isFinite(v));
+  if (!datos.length) return { etiquetas: [], conteos: [], min: 0, max: 0, ancho: 0 };
+
+  const min = Math.min(...datos);
+  const max = Math.max(...datos);
+  if (max === min) {
+    return { etiquetas: [ String(Math.round(min * 100) / 100) ], conteos: [ datos.length ], min, max, ancho: 0 };
+  }
+
+  const n = cubetas || Math.min(20, Math.max(6, Math.ceil(Math.log2(datos.length) + 1)));
+  const ancho = (max - min) / n;
+  const conteos = new Array(n).fill(0);
+  datos.forEach((v) => {
+    const i = Math.min(n - 1, Math.floor((v - min) / ancho));
+    conteos[i]++;
+  });
+
+  const num = (v) => String(Math.round(v * 100) / 100);
+  const etiquetas = conteos.map((_, i) => `${num(min + i * ancho)}–${num(min + (i + 1) * ancho)}`);
+
+  return { etiquetas, conteos, min, max, ancho };
+};
+
+/**
+ * Descripcion legible de una utilizacion (rho).
+ *
+ * Se rotula con palabras y no solo con el numero porque rho es contraintuitivo:
+ * un 0,90 parece "queda un 10 % libre" cuando en realidad es saturacion, y las
+ * colas crecen de forma no lineal segun se acerca a 1.
+ */
+export const describirUtilizacion = (rho) => {
+  if (!Number.isFinite(rho)) return { etiqueta: 'sin datos', nivel: 'nd' };
+  if (rho >= 1) return { etiqueta: 'saturado (la cola crece sin límite)', nivel: 'mal' };
+  if (rho >= 0.9) return { etiqueta: 'al límite', nivel: 'mal' };
+  if (rho >= 0.8) return { etiqueta: 'alta', nivel: 'aviso' };
+  if (rho >= 0.6) return { etiqueta: 'saludable', nivel: 'ok' };
+  return { etiqueta: 'holgado', nivel: 'ok' };
 };

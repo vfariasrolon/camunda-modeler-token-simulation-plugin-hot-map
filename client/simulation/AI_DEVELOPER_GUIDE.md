@@ -129,6 +129,9 @@ Esta sección detalla las funcionalidades avanzadas añadidas al motor de simula
     normaliza las unidades de los gráficos (ver `METRICAS_TIEMPO`).
 *   **`client/simulation/ChartPanel.js`**: El panel de gráficos y tablas, con el resumen, el
     comparativo de planes y la ayuda extensa.
+*   **`client/simulation/ReportPanel.js`**: El **informe técnico de evaluación** y su
+    impresión a PDF. Ver §5 más abajo: tiene tres decisiones no obvias (los estilos como
+    cadena, el iframe de impresión y el scorecard auditable).
 *   **`client/simulation/DataTablePanel.js`**: **La única interfaz de edición de datos.**
     Cuatro pestañas (Tareas, Flujos, Recursos, Global), exportación/importación de CSV con
     validación bloqueante, botón de datos de prueba y el icono de lápiz que abre la tabla
@@ -506,3 +509,104 @@ la triangular, cupo semanal, fórmula exacta de costos, método de validación y
 explícita de lo que el plugin **no** hace (sin semilla, sin réplicas, sin intervalos de
 confianza, sin periodo de calentamiento). Si cambias la semántica del motor, **actualiza ese
 documento**: es lo que lee quien va a decidir con los números.
+
+---
+
+## 5. El informe técnico (`ReportPanel.js`) y su impresión a PDF
+
+### 5.1 Datos nuevos que produce el motor
+
+Tres campos más en `SimulationEngine`, disponibles en el objeto de resultado del motor y en
+el informe de la corrida (`_runAndGetReport`):
+
+| Campo | Qué es | Para qué |
+|---|---|---|
+| `instanceCycleTimes` | Array con el tiempo de ciclo de **cada caso**, en minutos laborables | Percentiles (p50/p95/p99), histograma. Los totales por elemento solo dan medias, y una media esconde la cola. |
+| `utilization` | `Map<piscina, {quantity, windowMinutes, busyMinutes, availableMinutes, utilization}>` | La utilización (ρ) por recurso, que es *la* métrica de capacidad. |
+| `overtimeCalendarConfig` | La jornada extendida del plan con horas extra | Se guarda porque `run()` restaura el calendario al terminar y el dato se perdía. |
+
+> ⚠️ **`utilization` se calcula ANTES de restaurar el calendario**, en
+> `_calcularUtilizacion()`. Los minutos disponibles se miden en el calendario ACTIVO: con
+> horas extra la jornada es más larga y ρ baja. Esa es precisamente la contrapartida de las
+> horas extra, y por eso no se usa una constante.
+>
+> ⚠️ El tiempo ocupado (`pool.busyMinutes`) se acumula **al completar** la tarea, no al pedir
+> el recurso: solo al completar consta que el recurso trabajó esa duración. Si se acumulara al
+> pedirlo, una tarea que se queda en cola al final de la simulación contaría como trabajo
+> hecho.
+
+El ciclo se mide siempre con el **calendario estándar**, en los dos planes, para que los
+tiempos de ciclo de ambos sean comparables entre sí.
+
+### 5.2 Las figuras del informe se dibujan con `getChartConfig()`
+
+`ReportPanel._figura(metrica, ancho, alto)` crea un lienzo **fuera de pantalla**, llama a
+`getChartConfig()` del controlador y devuelve un `data:image/png`.
+
+**No dupliques configuraciones de gráfico en el informe.** Si el informe dibujara sus propias
+figuras habría dos implementaciones del mismo gráfico y acabarían discrepando: el panel
+mostraría una cosa y el PDF otra. Aquí solo se sobreescriben las opciones que no tienen
+sentido fuera de pantalla (`responsive: false`, `animation: false`, fondo blanco).
+
+Por eso `ReportPanel` **sí** inyecta `simulationController` (se registra después en `__init__`),
+mientras que el controlador **no** inyecta `ReportPanel`: se comunican por el evento
+`simulation.report.requested` para no crear una dependencia circular.
+
+**Claves de gráfico vigentes** (el `<select>` de `ChartPanel.js` y las ramas de
+`getChartData`/`getChartConfig` deben ir siempre a la par):
+
+`overallSummary`, `resultsTable`, `inputParams`, `dailyProduction`, `dailyRun`, `cumulative`,
+`productionCompare`, `cost` (apilado), `costCompare`, `paretoCost`, `cycleHistogram`,
+`utilization`, `processTime`, `waitTime`, `allWaitTimes`, `overtime`, `pareto`, `paretoTime`,
+`paretoWait`, `flowVolume`, `scatter`, `resourceQuantity`.
+
+En la colección de compuertas, el informe **no** usa Sankey: para analizar, una barra ordenada
+de volumen por camino (`flowVolume`) se lee mejor, no necesita dependencias y el diagrama BPMN
+ya dibuja la red.
+
+### 5.3 El scorecard: por qué es una rampa lineal
+
+`rampa(valor, bueno, malo)` da 100 puntos en el umbral *bueno* y 0 en el *malo*, interpolando
+en medio. Lineal **a propósito**: es la única curva que el lector puede rehacer mentalmente a
+partir del valor y de los dos umbrales, que es la condición para que la nota sea auditable.
+Funciona en las dos direcciones (mayor-mejor o menor-mejor) porque los umbrales se dan en la
+escala de la propia métrica.
+
+Dos reglas del diseño que conviene no romper:
+
+1. **Una dimensión que no se ha medido no vale cero.** Se renormaliza el peso entre las
+   medidas y el informe lo dice. Dar cero a lo no medido falsearía el total.
+2. **No se puntúa lo que depende de un objetivo del negocio.** El costo unitario y el plazo se
+   informan con su valor pero sin nota: sin un objetivo declarado, ponerles una calificación
+   sería inventar el criterio. Si algún día se añaden objetivos al modelo, se puntúan con la
+   misma rampa y ya está.
+
+Los pesos de las siete dimensiones **deben sumar 100** cuando todas son medibles. Hay una
+comprobación en el arnés de pruebas que lo verifica.
+
+### 5.4 La impresión: por qué un iframe
+
+El informe se imprime **dentro de un `iframe`** con su propio documento, no con
+`window.print()` sobre la ventana.
+
+Motivo: el plugin vive dentro de la ventana de Camunda Modeler, y `window.print()` imprimiría
+**toda** la aplicación (la paleta, el panel de propiedades, el diagrama). Ese DOM **no es
+nuestro**: no podemos ocultarlo con CSS de forma estable entre versiones. Un iframe tiene su
+propio documento, con `ESTILOS_INFORME` como única fuente de estilo.
+
+Consecuencias de diseño:
+
+- Los estilos del informe son **una cadena de texto** (`ESTILOS_INFORME`) y no un `.css`
+  importado: dentro del iframe no llegan las hojas del bundle. Se inyectan también en la
+  ventana de la aplicación para que la vista previa y el papel compartan fuente de verdad.
+- `@page { size: A4; margin: 15mm 13mm }` y `break-inside: avoid` en tablas, figuras y en el
+  bloque del veredicto.
+- El nombre de fichero por defecto del diálogo se controla con el **título del documento**, que
+  se cambia justo antes de imprimir y se restaura con `afterprint` (con un temporizador de
+  respaldo, porque el diálogo puede ser modal y no disparar el evento).
+- Los gráficos son `<canvas>` convertidos a PNG, así que viajan dentro del HTML: no hay rutas
+  ni ficheros que se puedan perder al mover el informe.
+
+**Limitación conocida:** Chromium no soporta elementos corrientes de página en CSS
+(`position: running()`), así que los números de página dependen de la opción de cabecera y pie
+del diálogo de impresión. No los genera el plugin.

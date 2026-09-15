@@ -23,11 +23,13 @@
 8. [Costos: la fórmula exacta](#8-costos-la-fórmula-exacta)
 9. [Recursos y colas: teoría de espera aplicada](#9-recursos-y-colas-teoría-de-espera-aplicada)
 10. [Las métricas del mapa de calor](#10-las-métricas-del-mapa-de-calor)
-11. [Cómo validar una corrida a mano](#11-cómo-validar-una-corrida-a-mano)
-12. [Método estadístico: lo que el plugin hace y lo que no](#12-método-estadístico-lo-que-el-plugin-hace-y-lo-que-no)
-13. [Limitaciones conocidas](#13-limitaciones-conocidas)
-14. [Ejemplo resuelto de principio a fin](#14-ejemplo-resuelto-de-principio-a-fin)
-15. [Glosario](#15-glosario)
+11. [Los gráficos y cómo leerlos](#11-los-gráficos-y-cómo-leerlos)
+12. [El informe de evaluación y su puntaje](#12-el-informe-de-evaluación-y-su-puntaje)
+13. [Cómo validar una corrida a mano](#13-cómo-validar-una-corrida-a-mano)
+14. [Método estadístico: lo que el plugin hace y lo que no](#14-método-estadístico-lo-que-el-plugin-hace-y-lo-que-no)
+15. [Limitaciones conocidas](#15-limitaciones-conocidas)
+16. [Ejemplo resuelto de principio a fin](#16-ejemplo-resuelto-de-principio-a-fin)
+17. [Glosario](#17-glosario)
 
 ---
 
@@ -45,7 +47,7 @@ Sirve para responder preguntas del tipo:
 
 **No** sirve para:
 
-- Predecir con precisión estadística (una corrida = **una** réplica; ver §12).
+- Predecir con precisión estadística (una corrida = **una** réplica; ver §14).
 - Optimizar automáticamente (no busca soluciones; evalúa la que le des).
 - Modelar turnos múltiples, averías, lotes o transporte real: el motor no los tiene.
 
@@ -55,7 +57,8 @@ Sirve para responder preguntas del tipo:
 1. Rellenas datos  →  pestaña "Datos de simulación por tabla"
 2. Ejecutas        →  ▶  (corre DOS planes: normal y con horas extra)
 3. Analizas        →  mapa de calor (☯) y panel de gráficos (📊)
-4. Compruebas      →  el informe de la consola del navegador (§11)
+4. Compruebas      →  el informe de la consola del navegador (§13)
+5. Documentas      →  el informe PDF, con figuras, cuadre y puntaje (§12)
 ```
 
 ---
@@ -266,7 +269,7 @@ con `s` la desviación típica observada, `E` el margen de error que toleras y
 `z ≈ 1,96` para el 95 %. Y la media de `n` réplicas es más fiable que una sola, porque
 su error estándar es `s/√n`.
 
-El plugin **no hace esto automáticamente** (§12).
+El plugin **no hace esto automáticamente** (§14).
 
 ---
 
@@ -484,7 +487,136 @@ calor lo dibuja sobre los eventos de fin y no sobre las tareas.
 
 ---
 
-## 11. Cómo validar una corrida a mano
+## 11. Los gráficos y cómo leerlos
+
+El desplegable del panel de gráficos está agrupado por familias. Cada uno responde a una
+pregunta distinta, y usarlos en el orden equivocado lleva a conclusiones equivocadas.
+
+### Producción
+
+| Gráfico | Qué pregunta responde |
+|---|---|
+| **Producción Diaria** (barras) | Cómo se repartió el trabajo entre los días: comparación directa día a día. |
+| **Producción Diaria, tendencia y media** (línea) | Si el ritmo se **estabiliza** o va a la deriva. La línea roja es la media. El tramo inicial bajo es el arranque del sistema vacío, no un problema. |
+| **Avance Acumulado** (curva S) | Cuándo se alcanza cada porcentaje del total. Es la curva de entrega. |
+| **Comparativa Normal vs. Extras** | Cuántas piezas más aportan realmente las horas extra. |
+
+### Costos
+
+| Gráfico | Qué pregunta responde |
+|---|---|
+| **Costo por Tarea, desglose** (apilado) | **Por qué** es cara una tarea: la altura es el costo total y los colores dicen si es trabajo, horas extra o espera. |
+| **Comparativa de Costos** | Dónde se va el dinero extra del plan con horas extra, componente a componente. |
+| **Pareto (Costos)** | Qué pocas tareas concentran el gasto. |
+
+### Tiempos y capacidad
+
+| Gráfico | Qué pregunta responde |
+|---|---|
+| **Distribución del Tiempo de Ciclo** (histograma) | La forma de la distribución. El título lleva **p50, p90, p95 y máximo**: si el p95 está muy lejos de la media, hay cola, y la cola es lo que rompe un plazo. |
+| **Utilización de Recursos (ρ)** | **Dónde está el cuello de botella.** La línea roja es el 100 %. Barra por encima del 90 % = al límite; por encima del 100 % = saturado. |
+| **Top 5 Tiempo de Proceso / Espera / Horas extra** | Los mayores consumos por tarea. |
+
+### Calidad y flujos
+
+| Gráfico | Qué pregunta responde |
+|---|---|
+| **Pareto (Fallos / Tiempos / Esperas)** | Qué pocas tareas explican la mayor parte del problema. El de **esperas** es el del cuello de botella. |
+| **Volumen por Camino** | Por dónde se va el trabajo de verdad, en casos y en % de los completados. |
+| **Dispersión (Tiempo vs. Costo)** | Si una tarea es cara por durar mucho o por otra cosa. |
+
+> **Sobre el Sankey.** Un diagrama de Sankey es muy vistoso, pero en BPMN el diagrama ya es el
+> mapa de flujo: duplicaría lo que ya se ve. Para *analizar*, una barra ordenada de volumen
+> por camino compara y ordena mejor. Por eso el plugin trae `flowVolume` y no un Sankey.
+
+---
+
+## 12. El informe de evaluación y su puntaje
+
+El botón **«Informe PDF»** compone un documento técnico con el modelo, las figuras, las tablas
+de resultados y una evaluación por puntos, y lo manda al diálogo de impresión para guardarlo
+como PDF.
+
+### Estructura
+
+1. **Portada** — ficha del modelo y de la corrida.
+2. **Resumen ejecutivo** — veredicto, puntaje y los ocho indicadores clave.
+3. **Metodología y supuestos** — y, de forma explícita, lo que el modelo **no** hace.
+4. **Entradas** — tareas, reparto de compuertas y recursos, tal como se simularon.
+5. **Resultados** — figuras y tabla por tarea.
+6. **Capacidad y cuello de botella** — utilización por recurso y Pareto de esperas.
+7. **Evaluación por puntos** — el scorecard con el cálculo de cada nota.
+8. **Hallazgos y recomendaciones** — derivados de los datos, no redactados a mano.
+9. **Anexos** — percentiles del ciclo, producción diaria y resultados por elemento.
+
+### El apartado de comprobación
+
+El informe dedica una sección a **recomponer el costo total a partir de sus cuatro
+componentes** y a declarar si cuadra. Un informe que presenta números es una cosa; uno que
+demuestra que sus números son correctos es otra. Esa sección es el aval del resto del documento.
+
+### Cómo se puntúa
+
+Cada dimensión se puntúa con una **rampa lineal entre dos umbrales declarados**: el umbral
+*bueno* vale 100 puntos, el *malo* vale 0, y en medio se interpola.
+
+```
+puntos = 100 × (1 − (valor − bueno) / (malo − bueno))     recortado a [0, 100]
+```
+
+Ejemplo real: utilización ρ = 0,85 con umbrales 0,70 (bueno) y 1,00 (malo):
+
+```
+100 × (1 − (0,85 − 0,70) / (1,00 − 0,70)) = 100 × (1 − 0,5) = 50 puntos
+```
+
+La nota final es la **media ponderada**, y el informe imprime valor, umbrales, peso, puntos y
+aporte de cada dimensión: con esos cinco datos cualquiera puede rehacer la cuenta.
+
+| Dimensión | Métrica | Umbrales (bueno → malo) | Peso |
+|---|---|---|---|
+| Saturación de recursos | ρ del recurso más cargado | 0,70 → 1,00 | 20 % |
+| Variabilidad del tiempo de ciclo | coeficiente de variación | 0,05 → 0,50 | 15 % |
+| Peso de la espera | espera media ÷ ciclo medio | 0 % → 40 % | 15 % |
+| Coste indirecto de horas extra | primas ÷ coste de operación | 0 % → 30 % | 15 % |
+| Calidad (retrabajo) | fallos por ejecución | 0 % → 10 % | 15 % |
+| Estabilidad del ritmo | CV de la producción diaria | 0,00 → 0,40 | 10 % |
+| Consistencia del modelo | incidencias detectadas | 0 → 1 | 10 % |
+
+Los pesos suman 100 %.
+
+### Tres reglas del puntaje que conviene entender
+
+1. **Una dimensión que no se ha medido no vale cero.** Si el modelo no declara recursos, no hay
+   ρ que juzgar: la dimensión se marca *sin medir*, el peso se reparte entre las demás y el
+   informe lo dice. Poner un cero a algo que no se ha medido hundiría la nota sin motivo.
+2. **El costo unitario y el plazo se informan SIN nota.** Un costo o un plazo no son buenos ni
+   malos en abstracto: dependen del objetivo del negocio. Sin un objetivo declarado,
+   calificarlos sería inventar el criterio. Se muestran con su valor para que los juzgue quien
+   decide.
+3. **El puntaje es orientativo.** Sale de **una sola réplica**, sin intervalo de confianza. El
+   informe lo advierte en el resumen ejecutivo y lo repite en los hallazgos: el titular es el
+   veredicto en palabras y el puntaje va como respaldo, no al revés.
+
+### Veredicto por tramos
+
+| Puntaje | Veredicto |
+|---|---|
+| 85 – 100 | Proceso sólido |
+| 70 – 84 | Apto con reservas |
+| 50 – 69 | Requiere mejoras antes de operar |
+| 0 – 49 | No apto: hay un problema estructural |
+
+### Cómo guardarlo como PDF
+
+Al pulsar «Guardar como PDF» se abre el diálogo de impresión del sistema con el informe ya
+compuesto. Elige **«Guardar como PDF»** como destino. El nombre del fichero sale propuesto a
+partir del nombre del diagrama y la fecha. Los encabezados y pies de página (con los números
+de página) los añade ese diálogo, no el plugin: actívalos si los quieres.
+
+---
+
+## 13. Cómo validar una corrida a mano
 
 El motor imprime un informe en la **consola del navegador** (DevTools → Console) con
 cuatro bloques: entradas globales, entradas por tarea, salidas por tarea y totales. Con
@@ -529,7 +661,7 @@ bloque mirar.
 
 ---
 
-## 12. Método estadístico: lo que el plugin hace y lo que no
+## 14. Método estadístico: lo que el plugin hace y lo que no
 
 Esto es lo más importante del documento para quien vaya a **decidir** con estos números.
 
@@ -578,11 +710,11 @@ Esto es lo más importante del documento para quien vaya a **decidir** con estos
 
 ---
 
-## 13. Limitaciones conocidas
+## 15. Limitaciones conocidas
 
 Deliberadamente explícitas, para que no se confundan con funcionalidad ausente:
 
-1. **Sin semilla ni réplicas** (§12). Es la limitación metodológica principal.
+1. **Sin semilla ni réplicas** (§14). Es la limitación metodológica principal.
 2. **`calculateBusinessDurationInMinutes` recorre el rango minuto a minuto.** Es
    correcto pero su coste crece con la duración simulada. En corridas de decenas de
    miles de minutos puede notarse.
@@ -597,7 +729,7 @@ Deliberadamente explícitas, para que no se confundan con funcionalidad ausente:
 
 ---
 
-## 14. Ejemplo resuelto de principio a fin
+## 16. Ejemplo resuelto de principio a fin
 
 **El caso.** Un taller recibe pedidos, los inspecciona y los procesa.
 
@@ -666,7 +798,7 @@ la utilización es máxima.
 
 ---
 
-## 15. Glosario
+## 17. Glosario
 
 | Término | Significado |
 |---|---|

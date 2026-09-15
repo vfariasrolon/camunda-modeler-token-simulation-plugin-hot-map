@@ -4,6 +4,29 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **informe técnico de evaluación** (botón «Informe PDF» en la barra). Se compone en
+  HTML con las tablas del modelo, las figuras y un **scorecard auditable**, y se guarda como
+  PDF con el diálogo de impresión. Incluye un apartado de **comprobación** que recompone el
+  coste total a partir de sus componentes. Se imprime dentro de un `iframe` con su propio
+  documento para que el PDF salga limpio sin depender del DOM de la aplicación.
+* `FEAT`: **puntuación por dimensiones** con rampa lineal entre dos umbrales declarados (el
+  umbral *bueno* vale 100 puntos, el *malo* 0). Siete dimensiones: saturación de recursos,
+  variabilidad del ciclo, peso de la espera, coste indirecto de horas extra, calidad,
+  estabilidad del ritmo y consistencia del modelo. El peso y el cálculo de cada punto se
+  imprimen, y la nota se renormaliza sobre las dimensiones realmente medidas en lugar de dar
+  cero a lo que no se ha medido. El **costo unitario y el plazo se informan sin calificar**:
+  sin un objetivo declarado por el negocio, ponerles nota sería inventar el criterio.
+* `FEAT`: el motor guarda **muestras por caso** del tiempo de ciclo y calcula la
+  **utilización (ρ) por piscina de recursos**. Con eso se pueden dar percentiles
+  (p50/p90/p95/p99) y juzgar capacidad, que con los totales por elemento no era posible.
+* `FEAT`: siete gráficos nuevos — **desglose del costo apilado** (operación + primas +
+  espera), **run chart** de producción con su media, **curva S** acumulada, **Pareto de
+  esperas** (el del cuello de botella), **volumen por camino**, **distribución del tiempo de
+  ciclo** (histograma con los percentiles en el título) y **utilización por recurso** con la
+  línea de capacidad. El desplegable se agrupa por familias.
+* `FEAT`: el informe de consola añade la utilización por piscina, la lectura de ρ en palabras
+  y los percentiles del tiempo de ciclo.
+* `CHORE`: `nombreElemento` pasa a `util.js` (lo comparten el controlador y el informe).
 * `FEAT`: el reparto de las compuertas exclusivas se muestra y edita en **%** en vez de en
   fracciones (0-1), con un indicador de la suma por compuerta. Al cambiar una salida, **el
   resto se ajusta solo** para mantener el 100 %: a partes iguales si estaban iguales, y en

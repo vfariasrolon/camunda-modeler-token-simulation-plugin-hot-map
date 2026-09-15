@@ -1,0 +1,1044 @@
+import { domify, event as domEvent } from 'min-dom';
+import { is } from 'bpmn-js/lib/util/ModelUtil';
+import Chart from 'chart.js/auto';
+import {
+  getSimulationData, isLabel, nombreElemento, formatMinutes, formatMilliseconds, formatCurrency,
+  resumenMuestras, describirUtilizacion
+} from './util';
+
+const OPEN_CLS = 'sim-report-open';
+
+// ---------------------------------------------------------------------------
+// Estilos del informe.
+//
+// Van como cadena de texto (y no en un .css importado) porque el informe se
+// imprime dentro de un iframe con SU PROPIO documento: alli no llegan las hojas
+// del bundle. Tener una sola cadena garantiza que lo que se ve en pantalla y lo
+// que se imprime son el mismo diseno, sin duplicar la fuente de verdad.
+// ---------------------------------------------------------------------------
+const ESTILOS_INFORME = `
+.sim-report { font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1a1a1a; }
+.sim-report h1 { font-size: 24px; margin: 0 0 4px; }
+.sim-report h2 { font-size: 17px; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 2px solid #1565c0; color: #0d47a1; }
+.sim-report h3 { font-size: 14px; margin: 18px 0 6px; color: #333; }
+.sim-report h4 { font-size: 13px; margin: 14px 0 4px; color: #444; }
+.sim-report p { margin: 6px 0; }
+.sim-report .sub { color: #666; margin: 0 0 14px; }
+.sim-report table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
+.sim-report th { background: #eef3f9; border: 1px solid #cfd8e3; padding: 6px 8px; text-align: left; font-weight: 600; }
+.sim-report td { border: 1px solid #dfe5ec; padding: 5px 8px; }
+.sim-report td.num, .sim-report th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.sim-report tr:nth-child(even) td { background: #fafbfd; }
+.sim-report figure { margin: 12px 0 18px; break-inside: avoid; page-break-inside: avoid; }
+.sim-report figure img { width: 100%; height: auto; border: 1px solid #dde3ea; border-radius: 4px; }
+.sim-report figcaption { font-size: 11.5px; color: #666; margin-top: 4px; }
+.sim-report .aviso { border-left: 4px solid #f9a825; background: #fff8e1; padding: 10px 13px; margin: 12px 0; border-radius: 4px; }
+.sim-report .aviso.ok { border-color: #2e7d32; background: #edf7ee; }
+.sim-report .aviso.mal { border-color: #c62828; background: #fdecea; }
+.sim-report .veredicto { display: flex; align-items: center; gap: 18px; border: 1px solid #cfd8e3; border-radius: 8px; padding: 16px 18px; margin: 14px 0; break-inside: avoid; }
+.sim-report .veredicto .puntos { font-size: 34px; font-weight: 700; line-height: 1; color: #1565c0; }
+.sim-report .veredicto .puntos small { display: block; font-size: 11px; font-weight: 400; color: #777; }
+.sim-report .veredicto .texto { flex: 1; }
+.sim-report .veredicto .texto strong { font-size: 15px; }
+.sim-report .barra { height: 8px; background: #e8edf3; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+.sim-report .barra > span { display: block; height: 100%; background: #1565c0; }
+.sim-report .etiqueta { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 11px; font-weight: 600; background: #eee; color: #555; }
+.sim-report .etiqueta.ok { background: #e6f4ea; color: #0a7d32; }
+.sim-report .etiqueta.aviso { background: #fff4e0; color: #a35b00; }
+.sim-report .etiqueta.mal { background: #fdecea; color: #c62828; }
+.sim-report .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+.sim-report .kpi { border: 1px solid #dfe5ec; border-radius: 6px; padding: 9px 11px; break-inside: avoid; }
+.sim-report .kpi .k { font-size: 11px; color: #666; }
+.sim-report .kpi .v { font-size: 17px; font-weight: 600; color: #0d47a1; }
+.sim-report .pie { margin-top: 30px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 11px; color: #777; }
+.sim-report ul { margin: 6px 0; padding-left: 20px; }
+.sim-report li { margin-bottom: 5px; }
+
+@page { size: A4; margin: 15mm 13mm; }
+@media print {
+  .sim-report h1, .sim-report h2 { break-after: avoid; page-break-after: avoid; }
+  .sim-report table, .sim-report .kpis, .sim-report .veredicto { break-inside: avoid; page-break-inside: avoid; }
+  .sim-report .salto { break-before: page; page-break-before: always; }
+  .sim-report figure img { box-shadow: none; }
+}
+`;
+
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+const num = (v, dec = 2) => (Number.isFinite(v) ? v.toFixed(dec) : '—');
+const ent = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString('es-MX') : '—');
+
+/**
+ * Rampa lineal de puntuacion: `bueno` vale 100 puntos, `malo` vale 0.
+ *
+ * Lineal y no una curva "bonita" a proposito: la lineal es la unica que el lector
+ * puede rehacer mentalmente a partir del valor y de los dos umbrales. Esa es la
+ * condicion para que el puntaje sea auditable y no una cifra con aire de
+ * autoridad. Funciona en cualquier direccion (mayor-mejor o menor-mejor) porque
+ * los umbrales se dan en la escala de la propia metrica.
+ */
+const rampa = (valor, bueno, malo) => {
+  if (!Number.isFinite(valor)) return null;
+  if (bueno === malo) return valor <= bueno ? 100 : 0;
+  const t = (valor - bueno) / (malo - bueno);
+  return Math.max(0, Math.min(100, (1 - t) * 100));
+};
+
+const veredictoDe = (puntos) => {
+  if (puntos == null) return { titulo: 'Sin datos suficientes', nivel: '' };
+  if (puntos >= 85) return { titulo: 'Proceso sólido', nivel: 'ok' };
+  if (puntos >= 70) return { titulo: 'Apto con reservas', nivel: 'aviso' };
+  if (puntos >= 50) return { titulo: 'Requiere mejoras antes de operar', nivel: 'aviso' };
+  return { titulo: 'No apto: hay un problema estructural', nivel: 'mal' };
+};
+
+export default class ReportPanel {
+
+  constructor(canvas, eventBus, elementRegistry, notifications, simulationController) {
+    this._canvas = canvas;
+    this._eventBus = eventBus;
+    this._elementRegistry = elementRegistry;
+    this._notifications = notifications;
+    this._controller = simulationController;
+
+    this._overlay = null;
+
+    this._eventBus.on('canvas.init', () => this._init());
+    this._eventBus.on('diagram.destroy', () => this.destroy());
+    this._eventBus.on('simulation.report.requested', () => this.toggle());
+  }
+
+  _init() {
+    if (this._overlay) return;
+
+    const overlay = this._overlay = domify(`
+      <div class="sim-report-overlay">
+        <div class="sim-report-barra">
+          <span class="sim-report-titulo">Informe técnico de evaluación</span>
+          <div class="sim-report-acciones">
+            <button class="btn-imprimir" title="Guardar como PDF" data-tip="Guardar como PDF (elige «Guardar como PDF» en el diálogo)">Guardar como PDF</button>
+            <button class="btn-cerrar" title="Cerrar" data-tip="Cerrar el informe" data-tip-pos="left">×</button>
+          </div>
+        </div>
+        <div class="sim-report-lienzo"></div>
+      </div>
+    `);
+
+    // Los estilos se inyectan una sola vez y son los MISMOS que usa el iframe de
+    // impresion (ver ESTILOS_INFORME).
+    if (!document.getElementById('sim-report-estilos')) {
+      const estilo = domify(`<style id="sim-report-estilos">${ESTILOS_INFORME}</style>`);
+      document.head.appendChild(estilo);
+    }
+
+    this._lienzo = overlay.querySelector('.sim-report-lienzo');
+    this._canvas.getContainer().appendChild(overlay);
+
+    domEvent.bind(overlay.querySelector('.btn-cerrar'), 'click', () => this.close());
+    domEvent.bind(overlay.querySelector('.btn-imprimir'), 'click', () => this._imprimir());
+
+    // Estilo minimo del contenedor en pantalla (no va en ESTILOS_INFORME porque
+    // solo aplica a la ventana de la aplicacion, no al papel).
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2500;display:none;flex-direction:column;background:#f4f6f9;';
+    overlay.querySelector('.sim-report-barra').style.cssText =
+      'display:flex;align-items:center;gap:12px;padding:10px 16px;background:#fff;border-bottom:1px solid #dde3ea;';
+    overlay.querySelector('.sim-report-titulo').style.cssText = 'font-weight:600;flex:1;';
+    overlay.querySelector('.sim-report-acciones').style.cssText = 'display:flex;gap:6px;align-items:center;';
+    overlay.querySelector('.btn-imprimir').style.cssText =
+      'padding:7px 14px;font-size:13px;font-weight:600;color:#fff;background:#1565c0;border:0;border-radius:4px;cursor:pointer;';
+    overlay.querySelector('.btn-cerrar').style.cssText =
+      'width:30px;height:30px;font-size:18px;line-height:1;background:none;border:0;border-radius:4px;cursor:pointer;color:#555;';
+    overlay.querySelector('.sim-report-lienzo').style.cssText =
+      'flex:1;min-height:0;overflow:auto;padding:24px;';
+  }
+
+  isOpen() { return this._overlay && this._overlay.style.display === 'flex'; }
+  toggle() { this.isOpen() ? this.close() : this.open(); }
+
+  close() {
+    if (this._overlay) this._overlay.style.display = 'none';
+  }
+
+  open() {
+    const datos = this._controller.getReportData();
+
+    if (!datos.normal || !datos.overtime) {
+      this._notifications.showNotification({
+        text: 'Ejecuta una simulación antes de generar el informe.',
+        type: 'warning',
+        duration: 5000
+      });
+      return;
+    }
+
+    if (!this._overlay) this._init();
+    this._overlay.style.display = 'flex';
+    this._lienzo.innerHTML = '<p style="padding:20px;color:#666">Generando informe y figuras…</p>';
+
+    // Se aplaza un frame para que el aviso de "generando" se pinte antes de que
+    // Chart.js dibuje las figuras (que es sincrono y bloquea el hilo).
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      this._construir(datos);
+    }));
+  }
+
+  // -- contenido ------------------------------------------------------------
+
+  _construir(datos) {
+    const contexto = this._contexto(datos);
+    const figuras = this._figuras();
+
+    this._lienzo.innerHTML = `<div class="sim-report">
+      ${this._portada(contexto)}
+      ${this._resumen(contexto)}
+      ${this._metodologia()}
+      ${this._comprobacion(contexto)}
+      ${this._entradas()}
+      ${this._resultados(contexto, figuras)}
+      ${this._capacidad(contexto, figuras)}
+      ${this._scorecard(contexto)}
+      ${this._hallazgos(contexto)}
+      ${this._anexos(contexto)}
+    </div>`;
+
+    this._htmlInforme = this._documentoImprimible(this._lienzo.innerHTML);
+  }
+
+  /**
+   * Reune todo lo que necesitan el informe y sus puntajes, en un solo sitio.
+   *
+   * Cualquier metrica que use el scorecard sale de aqui: asi el documento y la
+   * puntuacion no pueden discrepar, porque leen el mismo numero.
+   */
+  _contexto(datos) {
+    const { normal, overtime, tareas, flujos } = datos;
+
+    const suma = (report, campo) => {
+      let t = 0;
+      (report ? report.results : new Map()).forEach((r) => { t += r[campo] || 0; });
+      return t;
+    };
+
+    const operacion = suma(overtime, 'totalOperationCost');
+    const doble = suma(overtime, 'totalDoubleOvertimeCost');
+    const triple = suma(overtime, 'totalTripleOvertimeCost');
+    const costoEspera = suma(overtime, 'totalWaitTimeCost');
+    const costoTotal = operacion + doble + triple + costoEspera;
+
+    const completadas = overtime ? overtime.completedInstances : 0;
+    const minutosLaborables = overtime ? (overtime.calendarDuration || 0) / 60000 : 0;
+
+    const ciclo = resumenMuestras((overtime && overtime.cycleTimes) || []);
+    const cicloNormal = resumenMuestras((normal && normal.cycleTimes) || []);
+
+    const utilizacion = Array.from((overtime && overtime.utilization) || [])
+      .sort((a, b) => b.utilization - a.utilization);
+    const utilizacionMax = utilizacion.length ? utilizacion[0].utilization : null;
+
+    // La espera solo se puntua si el modelo usa recursos: sin restriccion de
+    // recursos no hay cola que juzgar, y puntuar un 0 seria enganoso.
+    const esperaTotal = suma(overtime, 'totalWaitTime');
+    const esperaPorCaso = utilizacion.length && completadas ? esperaTotal / completadas : null;
+    const esperaRelativa = (esperaPorCaso != null && ciclo && ciclo.media > 0)
+      ? esperaPorCaso / ciclo.media
+      : null;
+
+    const ejecucionesTareas = tareas.reduce((a, t) => a + ((overtime && overtime.results.get(t.id) || {}).executionCount || 0), 0);
+    const fallos = suma(overtime, 'failureCount');
+    const tasaFallos = ejecucionesTareas > 0 ? fallos / ejecucionesTareas : null;
+
+    const primaRelativa = operacion > 0 ? (doble + triple) / operacion : null;
+
+    // Estabilidad: coeficiente de variacion de la produccion diaria.
+    const porDia = Array.from((normal && normal.dailyCompletions) || [])
+      .map(([, v]) => v)
+      .sort((a, b) => a - b);
+    const mediaDia = porDia.length ? porDia.reduce((a, b) => a + b, 0) / porDia.length : 0;
+    const varDia = porDia.length > 1
+      ? porDia.reduce((a, b) => a + (b - mediaDia) ** 2, 0) / (porDia.length - 1)
+      : 0;
+    const cvProduccion = mediaDia > 0 ? Math.sqrt(varDia) / mediaDia : null;
+
+    const incidencias = this._incidencias(tareas, flujos);
+
+    return {
+      normal, overtime, tareas, flujos,
+      operacion, doble, triple, costoEspera, costoTotal,
+      completadas, minutosLaborables, dias: porDia.length,
+      costoUnitario: completadas > 0 ? costoTotal / completadas : null,
+      primas: doble + triple,
+      primaRelativa,
+      esperaTotal, esperaPorCaso, esperaRelativa,
+      utilizacion, utilizacionMax,
+      ciclo, cicloNormal,
+      tasaFallos, ejecucionesTareas,
+      cvProduccion,
+      incidencias
+    };
+  }
+
+  /**
+   * Incidencias del MODELO (no de los resultados).
+   *
+   * Se revisan a proposito porque son errores silenciosos: el motor no avisa de
+   * nada de esto, simplemente da numeros peores.
+   */
+  _incidencias(tareas, flujos) {
+    const lista = [];
+
+    // Un reparto de compuerta que no sume 100 % desvia casos a la ultima rama.
+    const porCompuerta = new Map();
+    flujos.forEach((f) => {
+      const p = getSimulationData(f);
+      const valor = p && typeof p.branchingProbability === 'number'
+        ? p.branchingProbability
+        : 1 / ((f.source && f.source.outgoing ? f.source.outgoing.length : 1));
+      const lista2 = porCompuerta.get(f.source.id) || { gateway: f.source, suma: 0, flujos: [] };
+      lista2.suma += valor;
+      lista2.flujos.push(f);
+      porCompuerta.set(f.source.id, lista2);
+    });
+
+    porCompuerta.forEach((g) => {
+      if (g.flujos.length <= 1) return;
+      const pct = Math.round(g.suma * 10000) / 100;
+      if (Math.abs(pct - 100) > 0.5) {
+        lista.push(`La compuerta «${nombreElemento(g.gateway)}» reparte ${pct} % y debería sumar 100 %`
+          + ' (el sobrante se desvía a la última salida).');
+      }
+    });
+
+    tareas.forEach((t) => {
+      const d = getSimulationData(t);
+      if (!d || !d.processingTime) {
+        lista.push(`La tarea «${nombreElemento(t)}» no tiene tiempo de proceso configurado: se simula como 0.`);
+      }
+    });
+
+    return lista;
+  }
+
+  // -- secciones ------------------------------------------------------------
+
+  _portada(ctx) {
+    const ahora = new Date();
+    const fichero = (String(document.title || '').split(/\s[-–|]\s/)[0] || '').trim() || '(sin nombre)';
+    const porDia = ctx.dias > 0 ? ctx.completadas / ctx.dias : null;
+
+    return `
+      <h1>Informe técnico de evaluación de proceso</h1>
+      <p class="sub">Modelo BPMN simulado por eventos discretos · ${esc(fichero)}</p>
+      <table>
+        <tr><th>Generado</th><td>${ahora.toLocaleString('es-MX')}</td>
+            <th class="num">Instancias completadas</th><td class="num">${ent(ctx.completadas)}</td></tr>
+        <tr><th>Plan evaluado</th><td>Con horas extra (frente al plan normal)</td>
+            <th>Jornada</th><td>${esc(this._jornada(ctx))}</td></tr>
+        <tr><th>Días laborables simulados</th><td class="num">${ent(ctx.dias)}</td>
+            <th class="num">Media de piezas por día</th><td class="num">${num(porDia, 1)}</td></tr>
+        <tr><th>Reparto de llegadas</th><td colspan="3">${esc(this._llegada(ctx))}</td></tr>
+      </table>
+    `;
+  }
+
+  _jornada(ctx) {
+    const cal = ctx.overtime && ctx.overtime.config && ctx.overtime.config.calendar;
+    if (!cal || !cal.workingHours) return '(sin calendario)';
+    const h = (t) => `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`;
+    const ext = ctx.overtime.overtimeCalendar && ctx.overtime.overtimeCalendar.workingHours
+      ? ` (extendida: ${h(ctx.overtime.overtimeCalendar.workingHours.end)})`
+      : '';
+    return `${h(cal.workingHours.start)}–${h(cal.workingHours.end)}${ext}`;
+  }
+
+  _llegada(ctx) {
+    const r = ctx.overtime && ctx.overtime.config && ctx.overtime.config.arrivalRate;
+    if (!r || !(r.value > 0)) return 'sin llegadas (solo la instancia inicial)';
+    const seg = r.unit === 'hour' ? 3600 / r.value : r.unit === 'second' ? 1 / r.value : 60 / r.value;
+    const cada = seg < 1 ? `una cada ${(seg * 1000).toFixed(0)} ms`
+      : seg < 90 ? `una cada ${seg.toFixed(1)} s`
+      : `una cada ${(seg / 60).toFixed(1)} min`;
+    return `${r.value} por ${r.unit || 'minute'} → ${cada}`;
+  }
+
+  _resumen(ctx) {
+    const puntos = this._puntajeTotal(ctx);
+    const v = veredictoDe(puntos);
+
+    return `
+      <h2>1 · Resumen ejecutivo</h2>
+      <div class="veredicto ${v.nivel}">
+        <div class="puntos">${puntos == null ? '—' : Math.round(puntos)}<small>de 100 (orientativo)</small></div>
+        <div class="texto">
+          <strong>${esc(v.titulo)}</strong>
+          <div class="barra"><span style="width:${puntos == null ? 0 : Math.max(2, Math.min(100, puntos))}%"></span></div>
+          <p class="sub" style="margin:6px 0 0">Puntaje de dimensiones estructurales (capacidad, colas, calidad,
+          coste indirecto, estabilidad y consistencia del modelo). Excluye costo unitario y plazo porque exigirían
+          un objetivo declarado por el negocio; se informan abajo sin calificar.</p>
+        </div>
+      </div>
+
+      <div class="kpis">
+        ${this._kpi('Piezas terminadas', ent(ctx.completadas))}
+        ${this._kpi('Costo total', formatCurrency(ctx.costoTotal, 'MXN'))}
+        ${this._kpi('Costo por pieza', ctx.costoUnitario == null ? '—' : formatCurrency(ctx.costoUnitario, 'MXN'))}
+        ${this._kpi('Tiempo de ciclo medio', ctx.ciclo ? formatMinutes(ctx.ciclo.media) : '—')}
+        ${this._kpi('Tiempo de ciclo p95', ctx.ciclo ? formatMinutes(ctx.ciclo.p95) : '—')}
+        ${this._kpi('Primas de horas extra', formatCurrency(ctx.primas, 'MXN'))}
+        ${this._kpi('Utilización máxima (ρ)', ctx.utilizacionMax == null ? '— (sin recursos)' : num(ctx.utilizacionMax, 3))}
+        ${this._kpi('Tasa de fallos', ctx.tasaFallos == null ? '—' : `${num(ctx.tasaFallos * 100, 1)} %`)}
+      </div>
+
+      <div class="aviso">
+        <strong>Advertencia metodológica.</strong> Estos resultados salen de <strong>una sola
+        réplica</strong> del modelo, sin semilla fija y sin intervalo de confianza. El motor no repite
+        corridas ni reporta error estadístico, así que diferencias pequeñas entre escenarios pueden ser
+        ruido. Con distribución de duración <em>fija</em> y sin fallos el modelo es determinista y no hay
+        tal incertidumbre. Antes de decidir con una diferencia concreta, repita la corrida.
+      </div>
+    `;
+  }
+
+  _kpi(etiqueta, valor) {
+    return `<div class="kpi"><div class="k">${esc(etiqueta)}</div><div class="v">${valor}</div></div>`;
+  }
+
+  _metodologia() {
+    return `
+      <h2>2 · Metodología y supuestos</h2>
+      <ul>
+        <li><strong>Método:</strong> simulación de eventos discretos sobre el diagrama BPMN. El reloj avanza
+        de suceso en suceso, no en pasos fijos.</li>
+        <li><strong>Duración de las tareas:</strong> determinista (<em>fija</em>) o <em>triangular</em>, muestreada
+        por inversa de la función de distribución acumulada.</li>
+        <li><strong>Calendario:</strong> el tiempo se mide en minutos <em>laborables</em>. Las noches, los fines de
+        semana y los festivos no consumen jornada: una tarea de 2 h que empieza a las 16:00 termina a las 10:00 del
+        día siguiente, con 2 h de trabajo y 18 h de reloj.</li>
+        <li><strong>Recursos:</strong> la tarea toma las unidades que necesita antes de empezar y las devuelve al
+        terminar. Si no hay unidades libres espera en cola (FIFO). La espera no se penaliza si el costo de espera es 0.</li>
+        <li><strong>Horas extra:</strong> el límite semanal se reparte en extensión diaria
+        (límite ÷ días laborables). El cupo se acumula por semana ISO; lo que lo excede pasa al tramo de prima
+        superior.</li>
+        <li><strong>Calidad:</strong> un fallo añade <em>retrabajo</em> (tiempo extra) y el caso continúa. El modelo
+        <strong>no</strong> representa chatarra ni pérdida de piezas.</li>
+      </ul>
+      <div class="aviso">
+        <strong>Limitaciones conocidas.</strong> Sin turnos múltiples, sin lotes ni transporte, sin averías, sin
+        prioridades en las colas, sin periodo de calentamiento excluido y sin réplicas ni intervalos de confianza.
+      </div>
+    `;
+  }
+
+  /**
+   * La comprobacion del cuadre.
+   *
+   * Es el apartado que separa un informe que solo presenta numeros de otro que
+   * demuestra que los numeros son correctos: cada total se recompone a partir de
+   * sus partes y se declara si coincide.
+   */
+  _comprobacion(ctx) {
+    const suma = ctx.operacion + ctx.primas + ctx.costoEspera;
+    const cuadra = Math.abs(suma - ctx.costoTotal) < 0.01;
+
+    const tramos = ctx.overtime && ctx.overtime.overtimeBreakdown;
+    const dobleH = tramos ? tramos.normalMs / 3600000 : 0;
+    const tripleH = tramos ? tramos.excessMs / 3600000 : 0;
+
+    return `
+      <h2>3 · Comprobación de los resultados</h2>
+      <p>El coste total se recompone a partir de sus cuatro componentes. Si esta tabla no cuadra, ninguno de
+      los demás números del informe es fiable.</p>
+      <table>
+        <thead><tr><th>Componente</th><th class="num">Importe</th><th>Origen</th></tr></thead>
+        <tbody>
+          <tr><td>Operación (trabajo a tarifa base)</td><td class="num">${formatCurrency(ctx.operacion, 'MXN')}</td>
+              <td>duracion × tarifa base</td></tr>
+          <tr><td>Prima de horas extra doble</td><td class="num">${formatCurrency(ctx.doble, 'MXN')}</td>
+              <td>horas × tarifa × (mult − 1)</td></tr>
+          <tr><td>Prima de horas extra triple</td><td class="num">${formatCurrency(ctx.triple, 'MXN')}</td>
+              <td>horas × tarifa × (mult − 1)</td></tr>
+          <tr><td>Espera de recursos</td><td class="num">${formatCurrency(ctx.costoEspera, 'MXN')}</td>
+              <td>horas de espera × costo de espera</td></tr>
+          <tr><th>Suma de componentes</th><th class="num">${formatCurrency(suma, 'MXN')}</th><td></td></tr>
+          <tr><th>Coste total del motor</th><th class="num">${formatCurrency(ctx.costoTotal, 'MXN')}</th><td></td></tr>
+        </tbody>
+      </table>
+      <div class="aviso ${cuadra ? 'ok' : 'mal'}">
+        ${cuadra
+          ? 'La suma de componentes coincide con el coste total: el cuadre es correcto.'
+          : 'La suma de componentes NO coincide con el coste total. Revise la configuración antes de usar el informe.'}
+      </div>
+      ${tramos ? `
+        <h3>Reparto del tiempo extra</h3>
+        <table>
+          <thead><tr><th>Tramo</th><th class="num">Horas</th></tr></thead>
+          <tbody>
+            <tr><td>Tramo doble</td><td class="num">${num(dobleH, 2)}</td></tr>
+            <tr><td>Tramo triple</td><td class="num">${num(tripleH, 2)}</td></tr>
+            <tr><th>Total</th><th class="num">${num(dobleH + tripleH, 2)}</th></tr>
+          </tbody>
+        </table>
+        <p class="sub">El reparto entre tramos depende de en cuántas semanas ISO caen las horas extra: el cupo se
+        agota una vez por semana. Concentrar la carga en pocas semanas manda más horas al tramo triple.</p>
+      ` : ''}
+    `;
+  }
+
+  _entradas() {
+    const tareas = this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:Task'));
+    const flujos = this._elementRegistry.filter(
+      (el) => !isLabel(el) && is(el, 'bpmn:SequenceFlow') && el.source && is(el.source, 'bpmn:ExclusiveGateway')
+    );
+    const proceso = this._elementRegistry.find((el) => is(el, 'bpmn:Process') || is(el, 'bpmn:Participant'));
+    const pools = (getSimulationData(proceso) || {}).resourcePools || [];
+
+    const filasTareas = tareas.map((el) => {
+      const d = getSimulationData(el) || {};
+      const pt = d.processingTime || {};
+      const rt = d.reworkTime || {};
+      const tri = pt.distribution === 'triangular';
+      return `<tr>
+        <td>${esc(nombreElemento(el))}</td>
+        <td>${tri ? 'triangular' : 'fija'}</td>
+        <td>${tri ? `mín ${num(pt.min, 2)} / moda ${num(pt.mode, 2)} / máx ${num(pt.max, 2)}` : num(pt.value, 2)}</td>
+        <td>${esc(pt.unit || '—')}</td>
+        <td class="num">${d.failureRate == null ? '—' : num(d.failureRate * 100, 1) + ' %'}</td>
+        <td class="num">${num(rt.value, 2)}</td>
+        <td>${esc(rt.unit || '—')}</td>
+        <td>${esc(d.resources ? `${d.resources.pool} ×${d.resources.quantityRequired || 1}` : '—')}</td>
+      </tr>`;
+    }).join('');
+
+    const filasFlujos = flujos.map((el) => {
+      const p = getSimulationData(el);
+      const valor = p && typeof p.branchingProbability === 'number' ? p.branchingProbability * 100 : null;
+      return `<tr>
+        <td>${esc(nombreElemento(el.source))}</td>
+        <td>${esc(el.target ? nombreElemento(el.target) : '(sin destino)')}</td>
+        <td class="num">${valor == null ? '—' : num(valor, 2) + ' %'}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <h2 class="salto">4 · Entradas del modelo</h2>
+
+      <h3>Tareas</h3>
+      <table>
+        <thead><tr><th>Tarea</th><th>Distribución</th><th>Tiempo</th><th>Unidad</th><th class="num">Fallo</th>
+        <th class="num">Retrabajo</th><th>Unidad</th><th>Recurso</th></tr></thead>
+        <tbody>${filasTareas || '<tr><td colspan="8">Sin tareas.</td></tr>'}</tbody>
+      </table>
+
+      <h3>Reparto de compuertas</h3>
+      <table>
+        <thead><tr><th>Compuerta</th><th>Hacia</th><th class="num">Reparto</th></tr></thead>
+        <tbody>${filasFlujos || '<tr><td colspan="3">Sin compuertas exclusivas con varias salidas.</td></tr>'}</tbody>
+      </table>
+
+      <h3>Recursos</h3>
+      <table>
+        <thead><tr><th>Piscina</th><th class="num">Unidades</th></tr></thead>
+        <tbody>${pools.length
+          ? pools.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${ent(p.quantity)}</td></tr>`).join('')
+          : '<tr><td colspan="2">El modelo no declara recursos.</td></tr>'}</tbody>
+      </table>
+    `;
+  }
+
+  _resultados(ctx, figuras) {
+    const filas = [];
+    ctx.tareas.forEach((t) => {
+      const r = (ctx.overtime && ctx.overtime.results.get(t.id)) || {};
+      filas.push(`<tr>
+        <td>${esc(nombreElemento(t))}</td>
+        <td class="num">${ent(r.executionCount || 0)}</td>
+        <td class="num">${ent(r.failureCount || 0)}</td>
+        <td class="num">${formatMinutes(r.totalWaitTime || 0)}</td>
+        <td class="num">${formatMilliseconds(r.totalProcessingTime || 0)}</td>
+        <td class="num">${formatMilliseconds(r.totalOvertime || 0)}</td>
+        <td class="num">${formatCurrency((r.totalOperationCost || 0) + (r.totalDoubleOvertimeCost || 0) + (r.totalTripleOvertimeCost || 0) + (r.totalWaitTimeCost || 0), 'MXN')}</td>
+      </tr>`);
+    });
+
+    return `
+      <h2 class="salto">5 · Resultados</h2>
+
+      <h3>Producción y ciclo</h3>
+      ${this._figuraHtml(figuras, 'dailyRun', 'Producción diaria con su media', 'El tramo inicial es el arranque del sistema vacío; a partir de ahí el ritmo se estabiliza.')}
+      ${this._figuraHtml(figuras, 'cumulative', 'Avance acumulado (curva S)', 'Cuándo se alcanza cada porcentaje del trabajo total.')}
+      ${this._figuraHtml(figuras, 'cycleHistogram', 'Distribución del tiempo de ciclo', 'La cola del histograma es lo que rompe un plazo: la media no la muestra.')}
+
+      <h3>Costos</h3>
+      ${this._figuraHtml(figuras, 'cost', 'Costo por tarea, desglosado', 'La altura del montón es el costo total de la tarea; los colores, su composición.')}
+      ${this._figuraHtml(figuras, 'costCompare', 'Comparativa de costos: normal frente a horas extra', 'Diferencia por componente entre los dos planes.')}
+
+      <h3>Por tarea</h3>
+      <table>
+        <thead><tr><th>Tarea</th><th class="num">Ejecuciones</th><th class="num">Fallos</th><th class="num">Espera</th>
+        <th class="num">Proceso</th><th class="num">Horas extra</th><th class="num">Costo</th></tr></thead>
+        <tbody>${filas.join('') || '<tr><td colspan="7">Sin tareas.</td></tr>'}</tbody>
+      </table>
+    `;
+  }
+
+  _capacidad(ctx, figuras) {
+    if (!ctx.utilizacion.length) {
+      return `
+        <h2>6 · Capacidad y cuello de botella</h2>
+        <div class="aviso">El modelo no declara recursos, así que no hay utilización que evaluar. Las tareas
+        se ejecutan sin restricción de capacidad y las esperas serán cero: el modelo no puede mostrar cuellos de
+        botella de recursos. Para evaluarlos, declare piscinas en la pestaña <strong>Recursos</strong> y asígnelas
+        en <strong>Tareas</strong>.</div>
+      `;
+    }
+
+    const filas = ctx.utilizacion.map((u) => {
+      const lec = describirUtilizacion(u.utilization);
+      return `<tr>
+        <td>${esc(u.name)}</td>
+        <td class="num">${ent(u.quantity)}</td>
+        <td class="num">${ent(u.busyMinutes)}</td>
+        <td class="num">${ent(u.availableMinutes)}</td>
+        <td class="num">${num(u.utilization, 3)}</td>
+        <td><span class="etiqueta ${lec.nivel}">${esc(lec.etiqueta)}</span></td>
+      </tr>`;
+    }).join('');
+
+    const critico = ctx.utilizacion[0];
+
+    return `
+      <h2>6 · Capacidad y cuello de botella</h2>
+      <p>La utilización (ρ) es la fracción del tiempo disponible que el recurso está ocupado:
+      minutos-recurso ocupados ÷ minutos-recurso disponibles. Se mide en el calendario del plan evaluado, así que
+      las horas extra <em>añaden capacidad</em> y bajan ρ.</p>
+      ${this._figuraHtml(figuras, 'utilization', 'Utilización por recurso', 'La línea roja es el límite de capacidad.')}
+      <table>
+        <thead><tr><th>Piscina</th><th class="num">Unidades</th><th class="num">Min·recurso ocupados</th>
+        <th class="num">Min·recurso disponibles</th><th class="num">ρ</th><th>Lectura</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      <div class="aviso ${critico.utilization >= 0.9 ? 'mal' : critico.utilization >= 0.8 ? '' : 'ok'}">
+        <strong>Recurso crítico: ${esc(critico.name)} (ρ = ${num(critico.utilization, 3)}).</strong>
+        ${critico.utilization >= 1
+          ? ' Está saturado: la cola crece sin límite y el sistema no alcanza el régimen estable. Es el primer punto que hay que resolver.'
+          : critico.utilization >= 0.9
+            ? ' Está al límite: la espera se dispara de forma no lineal en este tramo. Cualquier variabilidad se convierte en cola.'
+            : critico.utilization >= 0.8
+              ? ' Está alto: funciona, pero con poca holgura ante picos.'
+              : ' Tiene holgura suficiente.'}
+      </div>
+      ${this._figuraHtml(figuras, 'paretoWait', 'Pareto de esperas', 'Las tareas que se llevan la mayor parte de la espera son las que hay que atacar primero.')}
+      <p class="sub">Nota: si las tareas no comparten piscina, la espera observada señala el efecto, pero no
+      identifica por sí sola el recurso saturado. La tabla de utilización sí lo identifica.</p>
+    `;
+  }
+
+  /**
+   * Scorecard. Cada dimension declara su metrica, su origen, sus dos umbrales y
+   * su peso: con esos cuatro datos el lector puede recalcular la nota.
+   *
+   * Los pesos suman 100 cuando todas las dimensiones son evaluables. Si alguna no
+   * lo es (por ejemplo, no hay recursos), los pesos se renormalizan y el informe
+   * lo dice: no se reparte una nota que no se ha medido.
+   */
+  _dimensionesScorable(ctx) {
+    return [
+      {
+        nombre: 'Saturación de recursos',
+        valor: ctx.utilizacionMax,
+        formato: (v) => num(v, 3),
+        bueno: 0.70, malo: 1.00, peso: 20,
+        como: 'Utilización del recurso más cargado (ρ).',
+        origen: 'ρ = minutos-recurso ocupados ÷ disponibles'
+      },
+      {
+        nombre: 'Variabilidad del tiempo de ciclo',
+        valor: ctx.ciclo ? ctx.ciclo.cv : null,
+        formato: (v) => num(v, 3),
+        bueno: 0.05, malo: 0.50, peso: 15,
+        como: 'Coeficiente de variación del tiempo de ciclo (desviación ÷ media).',
+        origen: 'muestras por caso'
+      },
+      {
+        nombre: 'Peso de la espera',
+        valor: ctx.esperaRelativa,
+        formato: (v) => num(v * 100, 1) + ' %',
+        bueno: 0.00, malo: 0.40, peso: 15,
+        como: 'Espera media por caso ÷ tiempo de ciclo medio.',
+        origen: 'espera total acumulada y muestras de ciclo'
+      },
+      {
+        nombre: 'Coste indirecto de las horas extra',
+        valor: ctx.primaRelativa,
+        formato: (v) => num(v * 100, 1) + ' %',
+        bueno: 0.00, malo: 0.30, peso: 15,
+        como: 'Primas de horas extra ÷ coste de operación.',
+        origen: 'componentes de costo'
+      },
+      {
+        nombre: 'Calidad (retrabajo)',
+        valor: ctx.tasaFallos,
+        formato: (v) => num(v * 100, 1) + ' %',
+        bueno: 0.00, malo: 0.10, peso: 15,
+        como: 'Fallos por ejecución de tarea.',
+        origen: 'failureCount ÷ ejecuciones'
+      },
+      {
+        nombre: 'Estabilidad del ritmo productivo',
+        valor: ctx.cvProduccion,
+        formato: (v) => num(v, 3),
+        bueno: 0.00, malo: 0.40, peso: 10,
+        como: 'Coeficiente de variación de la producción diaria (incluye el arranque).',
+        origen: 'completados por día'
+      },
+      {
+        nombre: 'Consistencia del modelo',
+        valor: ctx.incidencias.length,
+        formato: (v) => `${ent(v)} incidencia(s)`,
+        bueno: 0, malo: 1, peso: 10,
+        como: 'Errores silenciosos de configuración detectados.',
+        origen: 'revisión de repartos y datos de tarea'
+      }
+    ];
+  }
+
+  /** Nota de 0 a 100, renormalizando los pesos de las dimensiones medidas. */
+  _puntajeTotal(ctx) {
+    const dimensiones = this._dimensionesScorable(ctx)
+      .map((d) => ({ ...d, puntos: rampa(d.valor, d.bueno, d.malo) }))
+      .filter((d) => d.puntos != null);
+
+    if (!dimensiones.length) return null;
+
+    const pesoTotal = dimensiones.reduce((a, d) => a + d.peso, 0);
+    return dimensiones.reduce((a, d) => a + d.puntos * (d.peso / pesoTotal), 0);
+  }
+
+  _scorecard(ctx) {
+    const dimensiones = this._dimensionesScorable(ctx)
+      .map((d) => ({ ...d, puntos: rampa(d.valor, d.bueno, d.malo) }));
+    const medidas = dimensiones.filter((d) => d.puntos != null);
+    const pesoTotal = medidas.reduce((a, d) => a + d.peso, 0);
+    const total = this._puntajeTotal(ctx);
+
+    const filas = dimensiones.map((d) => {
+      const medida = d.puntos != null;
+      const aporte = medida ? d.puntos * (d.peso / pesoTotal) : null;
+      return `<tr>
+        <td>${esc(d.nombre)}<br><span class="sub">${esc(d.como)}</span></td>
+        <td class="num">${d.valor == null ? '—' : d.formato(d.valor)}</td>
+        <td class="num">${esc(d.bueno)} – ${esc(d.malo)}</td>
+        <td class="num">${d.peso} %</td>
+        <td class="num">${medida ? Math.round(d.puntos) : '—'}</td>
+        <td class="num">${medida ? num(aporte, 1) : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    const sinMedir = dimensiones.filter((d) => d.puntos == null);
+
+    return `
+      <h2 class="salto">7 · Evaluación por puntos</h2>
+      <p>Cada dimensión se puntúa con una <strong>rampa lineal</strong> entre dos umbrales declarados: el umbral
+      <em>bueno</em> vale 100 puntos y el <em>malo</em> vale 0. La nota final es la media ponderada. Con el valor,
+      los dos umbrales y el peso, cualquiera puede rehacer la cuenta.</p>
+      <table>
+        <thead><tr><th>Dimensión</th><th class="num">Valor</th><th class="num">Umbrales (bueno – malo)</th>
+        <th class="num">Peso</th><th class="num">Puntos</th><th class="num">Aporte</th></tr></thead>
+        <tbody>${filas}</tbody>
+        <tfoot><tr><th colspan="5">Puntaje total (sobre las ${medidas.length} dimensiones medidas)</th>
+        <th class="num">${total == null ? '—' : num(total, 1)}</th></tr></tfoot>
+      </table>
+      ${sinMedir.length ? `
+        <div class="aviso">
+          <strong>Sin medir: ${sinMedir.map((d) => esc(d.nombre)).join(', ')}.</strong>
+          No se les asigna nota en lugar de darles un cero: dar cero a algo que no se ha medido falsearía el total.
+          El puntaje se ha renormalizado sobre el resto, así que sigue siendo comparable entre corridas del mismo modelo.
+        </div>` : ''}
+
+      <h3>Sin calificar a propósito</h3>
+      <table>
+        <thead><tr><th>Métrica</th><th class="num">Valor</th><th>Por qué no se puntúa</th></tr></thead>
+        <tbody>
+          <tr><td>Costo por pieza</td>
+              <td class="num">${ctx.costoUnitario == null ? '—' : formatCurrency(ctx.costoUnitario, 'MXN')}</td>
+              <td>Un costo no es bueno ni malo en abstracto: depende del objetivo del negocio. Calificarlo sin un objetivo declarado sería inventar el criterio.</td></tr>
+          <tr><td>Tiempo de ciclo p95</td>
+              <td class="num">${ctx.ciclo ? formatMinutes(ctx.ciclo.p95) : '—'}</td>
+              <td>Igual que el costo: hace falta un plazo objetivo para poder juzgarlo.</td></tr>
+        </tbody>
+      </table>
+      <p class="sub">Ambas se informan con su valor para que el lector las juzgue con su propio criterio. Si se
+      declaran objetivos (costo por pieza y plazo), pasan a puntuarse con la misma rampa.</p>
+    `;
+  }
+
+  _hallazgos(ctx) {
+    const puntos = [];
+
+    if (ctx.utilizacionMax != null && ctx.utilizacionMax >= 0.9) {
+      const u = ctx.utilizacion[0];
+      puntos.push(`<strong>Capacidad crítica.</strong> El recurso «${esc(u.name)}» está a ρ = ${num(u.utilization, 3)}
+        (${num(u.utilization * 100, 1)} %). En este tramo la espera crece de forma no lineal: la cola absorbe
+        cualquier variabilidad. Prioridad: añadir capacidad o mover trabajo fuera de ese recurso.`);
+    }
+
+    if (ctx.ciclo && ctx.ciclo.p95 > ctx.ciclo.media * 1.5) {
+      puntos.push(`<strong>Cola larga.</strong> El p95 del ciclo (${formatMinutes(ctx.ciclo.p95)}) supera en más de
+        un 50 % a la media (${formatMinutes(ctx.ciclo.media)}). El caso típico va bien, pero uno de cada veinte se
+        desvía: hay que mirar la variabilidad, no la media.`);
+    }
+
+    if (ctx.triple > 0) {
+      puntos.push(`<strong>Se está pagando el tramo triple.</strong> La prima triple supone
+        ${formatCurrency(ctx.triple, 'MXN')}. El cupo semanal se agota, lo que indica que la carga está concentrada
+        en pocas semanas: repartirla bajaría la factura sin trabajar menos horas.`);
+    }
+
+    if (ctx.tasaFallos != null && ctx.tasaFallos > 0.05) {
+      puntos.push(`<strong>Calidad.</strong> Tasa de fallos del ${num(ctx.tasaFallos * 100, 1)} % por ejecución de tarea,
+        con el retrabajo correspondiente sumado al tiempo de ciclo.`);
+    }
+
+    if (ctx.incidencias.length) {
+      puntos.push(`<strong>Modelo incompleto.</strong> ${ctx.incidencias.length} incidencia(s) de configuración:
+        <ul>${ctx.incidencias.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`);
+    }
+
+    if (!puntos.length) {
+      puntos.push('No se han detectado problemas estructurales: capacidad con holgura, calidad dentro de lo '
+        + 'razonable y modelo consistente.');
+    }
+
+    return `
+      <h2>8 · Hallazgos y recomendaciones</h2>
+      <ul>${puntos.map((p) => `<li>${p}</li>`).join('')}</ul>
+      <h3>Qué haría a continuación</h3>
+      <ul>
+        <li>Repetir la corrida varias veces antes de dar por buena cualquier diferencia pequeña (una sola réplica
+        no tiene intervalo de confianza).</li>
+        <li>Validar el escenario con duración <em>fija</em> y sin fallos: así todo resultado se recalcula a mano.</li>
+        <li>Probar el escenario alternativo que ataque el hallazgo principal y comparar coste por pieza, no coste total.</li>
+      </ul>
+    `;
+  }
+
+  _anexos(ctx) {
+    const filas = [];
+    (ctx.overtime ? ctx.overtime.results : new Map()).forEach((r, id) => {
+      const el = this._elementRegistry.get(id);
+      if (!el || isLabel(el)) return;
+      filas.push(`<tr><td>${esc(r.name || id)}</td><td>${esc(String(el.type).replace('bpmn:', ''))}</td>
+        <td class="num">${ent(r.executionCount || 0)}</td>
+        <td class="num">${ent(r.failureCount || 0)}</td>
+        <td class="num">${formatMinutes(r.totalWaitTime || 0)}</td>
+        <td class="num">${formatMilliseconds(r.totalProcessingTime || 0)}</td>
+        <td class="num">${formatCurrency(r.totalCost || 0, 'MXN')}</td></tr>`);
+    });
+
+    const produccion = Array.from((ctx.normal && ctx.normal.dailyCompletions) || [])
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([dia, n]) => `<tr><td>${esc(dia)}</td><td class="num">${ent(n)}</td></tr>`).join('');
+
+    const muestra = (ctx.overtime && ctx.overtime.cycleTimes) || [];
+    const percentiles = ctx.ciclo ? `
+      <table>
+        <thead><tr><th class="num">Casos</th><th class="num">Mín</th><th class="num">p50</th><th class="num">p90</th>
+        <th class="num">p95</th><th class="num">p99</th><th class="num">Máx</th><th class="num">Media</th>
+        <th class="num">Desv.</th><th class="num">CV</th></tr></thead>
+        <tbody><tr>
+          <td class="num">${ent(ctx.ciclo.n)}</td>
+          <td class="num">${num(ctx.ciclo.min, 1)}</td>
+          <td class="num">${num(ctx.ciclo.p50, 1)}</td>
+          <td class="num">${num(ctx.ciclo.p90, 1)}</td>
+          <td class="num">${num(ctx.ciclo.p95, 1)}</td>
+          <td class="num">${num(ctx.ciclo.p99, 1)}</td>
+          <td class="num">${num(ctx.ciclo.max, 1)}</td>
+          <td class="num">${num(ctx.ciclo.media, 1)}</td>
+          <td class="num">${num(ctx.ciclo.desviacion, 1)}</td>
+          <td class="num">${num(ctx.ciclo.cv, 3)}</td>
+        </tr></tbody>
+      </table>
+      <p class="sub">Tiempos de ciclo en minutos laborables. Calculados sobre ${ent(muestra.length)} muestras individuales.</p>
+    ` : '<p class="sub">Sin muestras de tiempo de ciclo.</p>';
+
+    return `
+      <h2 class="salto">9 · Anexos</h2>
+
+      <h3>Tiempo de ciclo: percentiles</h3>
+      ${percentiles}
+
+      <h3>Producción diaria (plan normal)</h3>
+      <table><thead><tr><th>Día</th><th class="num">Piezas</th></tr></thead><tbody>${produccion || '<tr><td colspan="2">Sin datos.</td></tr>'}</tbody></table>
+
+      <h3>Resultados por elemento</h3>
+      <table>
+        <thead><tr><th>Elemento</th><th>Tipo</th><th class="num">Ejecuciones</th><th class="num">Fallos</th>
+        <th class="num">Espera</th><th class="num">Proceso</th><th class="num">Costo</th></tr></thead>
+        <tbody>${filas.join('') || '<tr><td colspan="7">Sin datos.</td></tr>'}</tbody>
+      </table>
+    `;
+  }
+
+  // -- figuras --------------------------------------------------------------
+
+  _figuras() {
+    const metricas = [
+      [ 'dailyRun', 1000, 340 ],
+      [ 'cumulative', 1000, 340 ],
+      [ 'cycleHistogram', 1000, 360 ],
+      [ 'cost', 1000, 400 ],
+      [ 'costCompare', 1000, 380 ],
+      [ 'utilization', 1000, 360 ],
+      [ 'paretoWait', 1000, 380 ]
+    ];
+    const figuras = {};
+    metricas.forEach(([metrica, ancho, alto]) => {
+      const url = this._figura(metrica, ancho, alto);
+      if (url) figuras[metrica] = url;
+    });
+    return figuras;
+  }
+
+  /**
+   * Dibuja un grafico fuera de pantalla y lo devuelve como PNG en data URL.
+   *
+   * Se reutiliza `getChartConfig()` del controlador a proposito: si el informe
+   * dibujara sus propias figuras habria dos implementaciones del mismo grafico, y
+   * acabararian discrepando. Aqui solo se cambian las opciones que no tienen
+   * sentido fuera de pantalla (animacion, tamano, fondo).
+   */
+  _figura(metric, ancho, alto) {
+    const config = this._controller.getChartConfig(metric);
+    if (!config || !config.data || !config.data.datasets || !config.data.datasets.length) return null;
+
+    const contenedor = document.createElement('div');
+    contenedor.style.cssText = `position:fixed;left:-10000px;top:0;width:${ancho}px;height:${alto}px;`;
+    const lienzo = document.createElement('canvas');
+    lienzo.width = ancho;
+    lienzo.height = alto;
+    contenedor.appendChild(lienzo);
+    document.body.appendChild(contenedor);
+
+    let url = null;
+    try {
+      const ctx = lienzo.getContext('2d');
+      // Fondo blanco: un PNG con transparencia se ve sucio al imprimir.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, ancho, alto);
+
+      config.options = {
+        ...config.options,
+        responsive: false,
+        animation: false,
+        devicePixelRatio: 1,
+        plugins: {
+          ...(config.options.plugins || {}),
+          legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
+        }
+      };
+
+      const grafico = new Chart(ctx, config);
+      grafico.draw();
+      url = lienzo.toDataURL('image/png');
+      grafico.destroy();
+    } catch (err) {
+      console.error('[informe] no se pudo dibujar la figura', metric, err);
+      url = null;
+    } finally {
+      contenedor.remove();
+    }
+
+    return url;
+  }
+
+  _figuraHtml(figuras, clave, titulo, pie) {
+    if (!figuras[clave]) return '';
+    return `<figure>
+      <img src="${figuras[clave]}" alt="${esc(titulo)}">
+      <figcaption><strong>${esc(titulo)}.</strong> ${esc(pie)}</figcaption>
+    </figure>`;
+  }
+
+  // -- impresion ------------------------------------------------------------
+
+  /** Documento HTML completo y autonomo, listo para el iframe de impresion. */
+  _documentoImprimible(cuerpoHtml) {
+    return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+      <title>${esc(this._nombreFichero())}</title>
+      <style>body { margin: 0; padding: 0; } ${ESTILOS_INFORME}</style>
+      </head><body><div class="sim-report">${cuerpoHtml}</div></body></html>`;
+  }
+
+  _nombreFichero() {
+    const fichero = (String(document.title || '').split(/\s[-–|]\s/)[0] || '').trim() || 'proceso';
+    const hoy = new Date().toISOString().slice(0, 10);
+    return `informe-simulacion-${fichero}-${hoy}`;
+  }
+
+  /**
+   * Imprime el informe usando un IFRAME oculto.
+   *
+   * Se imprime el iframe y no la ventana porque `window.print()` imprimiria TODA
+   * la aplicacion (paleta, panel de propiedades, diagrama...), y ese DOM no es
+   * nuestro: no podemos ocultarlo con CSS de forma estable. Un iframe con su
+   * propio documento tiene nuestro CSS como unica fuente de estilo, asi que el
+   * PDF sale limpio. El titulo se pone para que el nombre de fichero por defecto
+   * del dialogo sea el del informe.
+   */
+  _imprimir() {
+    if (!this._htmlInforme) {
+      this._notifications.showNotification({ text: 'El informe aún se está generando.', type: 'info', duration: 3000 });
+      return;
+    }
+
+    const marco = document.createElement('iframe');
+    marco.setAttribute('aria-hidden', 'true');
+    marco.style.cssText = 'position:fixed;left:-10000px;top:0;width:1024px;height:768px;border:0;';
+    document.body.appendChild(marco);
+
+    const doc = marco.contentDocument;
+    doc.open();
+    doc.write(this._htmlInforme);
+    doc.close();
+
+    const tituloOriginal = document.title;
+    const nombre = this._nombreFichero();
+    const restaurar = () => { document.title = tituloOriginal; };
+
+    window.addEventListener('afterprint', restaurar, { once: true });
+
+    const disparar = () => {
+      document.title = nombre;
+      try {
+        marco.contentWindow.focus();
+        marco.contentWindow.print();
+      } finally {
+        // El dialogo puede ser modal (bloquea hasta cerrarse) o no; se programa
+        // la limpieza por si no llega el evento `afterprint`.
+        setTimeout(() => { restaurar(); marco.remove(); }, 2000);
+      }
+    };
+
+    if (doc.readyState === 'complete') {
+      requestAnimationFrame(() => requestAnimationFrame(disparar));
+    } else {
+      marco.addEventListener('load', () => requestAnimationFrame(() => requestAnimationFrame(disparar)));
+    }
+  }
+
+  destroy() {
+    if (this._overlay && this._overlay.parentNode) {
+      this._overlay.parentNode.removeChild(this._overlay);
+      this._overlay = null;
+    }
+  }
+}
+
+ReportPanel.$inject = [
+  'canvas',
+  'eventBus',
+  'elementRegistry',
+  'notifications',
+  'simulationController'
+];

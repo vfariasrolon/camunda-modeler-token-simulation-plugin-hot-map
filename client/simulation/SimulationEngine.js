@@ -1,5 +1,5 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
-import { getSimulationData, isLabel } from './util';
+import { getSimulationData, isLabel, resumenMuestras } from './util';
 import BusinessCalendar from './BusinessCalendar.js';
 
 /**
@@ -49,8 +49,14 @@ class EventQueue {
 class ResourcePool {
   constructor(config) {
     this.name = config.name;
+    // `quantity` se guarda aparte de `available` porque `available` cambia con el
+    // uso y la capacidad total hace falta para calcular la utilizacion.
+    this.quantity = config.quantity;
     this.available = config.quantity;
     this.queue = [];
+    // Minutos-recurso consumidos: lo que ocupan las tareas que usan esta piscina
+    // (duracion x unidades tomadas). Es el numerador de la utilizacion.
+    this.busyMinutes = 0;
   }
   request(quantity, task) {
     if (this.available >= quantity) {
@@ -121,6 +127,15 @@ export default class SimulationEngine {
     this.instanceStates = new Map();
     this.weeklyStats = new Map();
     this.dailyCompletions = new Map();
+
+    // Muestras por caso. Los totales por elemento dan medias, pero una media
+    // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
+    this.instanceCycleTimes = [];
+
+    // Utilizacion por piscina. Se rellena al final de run(), cuando ya se conoce
+    // la ventana simulada (que depende del calendario activo).
+    this.utilization = new Map();
+    this.overtimeCalendarConfig = null;
 
     // Desglose explicito del tiempo extra por tramo. Se acumula aqui (y no se
     // deduce de la prima) para poder COMPROBARLO en el informe: prima = horas x
@@ -200,7 +215,12 @@ export default class SimulationEngine {
 
       // console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
       const standardCalendar = this.standardCalendar;
-      elementResults.totalCycleTime += standardCalendar.calculateBusinessDurationInMinutes(new Date(startTime), new Date(this.clock));
+      const cicloMin = standardCalendar.calculateBusinessDurationInMinutes(new Date(startTime), new Date(this.clock));
+      elementResults.totalCycleTime += cicloMin;
+      // Muestra individual, para percentiles e histograma. Se mide en el
+      // calendario ESTANDAR en los dos planes, para que los tiempos de ciclo del
+      // plan normal y del de horas extra sean comparables entre si.
+      this.instanceCycleTimes.push(cicloMin);
       this.instanceStates.delete(instanceId);
       return;
     }
@@ -365,6 +385,10 @@ export default class SimulationEngine {
         }
       }
       this.calendar = new BusinessCalendar(overtimeCalendarConfig);
+
+      // Se guarda porque el calendario se restaura al terminar `run()`: sin esto,
+      // la jornada extendida (dato que imprime el informe) se perderia.
+      this.overtimeCalendarConfig = overtimeCalendarConfig;
     }
 
     console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
@@ -444,6 +468,12 @@ export default class SimulationEngine {
         const data = getSimulationData(event.element);
         if (data && data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
           const pool = this.resourcePools.get(data.resources.pool);
+
+          // Utilizacion: minutos-recurso consumidos. Se cuentan al COMPLETAR la
+          // tarea (no al pedir el recurso) porque solo entonces consta que el
+          // recurso trabajo de verdad esa duracion.
+          pool.busyMinutes += (event.totalDuration / 60000) * event.quantityRequired;
+
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
             const nextTaskResults = this.results.get(nextTask.element.id);
@@ -480,11 +510,48 @@ export default class SimulationEngine {
 
     console.log("--- Simulation Finished ---");
 
+    this._calcularUtilizacion();
+
     this._logReport(options.useOvertime, runValue);
 
     this.calendar = originalCalendar;
 
     return this.results;
+  }
+
+  /**
+   * Calcula la utilizacion (rho) de cada piscina de recursos.
+   *
+   *   rho = minutos-recurso ocupados / minutos-recurso disponibles
+   *
+   * Los disponibles se miden en el calendario ACTIVO: con horas extra la jornada
+   * es mas larga, asi que hay mas capacidad y rho baja. Esa es precisamente la
+   * razon de abrir horas extra, y por eso se usa el calendario de cada plan y no
+   * una constante.
+   *
+   * Se debe llamar ANTES de restaurar el calendario original.
+   */
+  _calcularUtilizacion() {
+    const ventanaMin = this.calendar.calculateBusinessDurationInMinutes(
+      new Date(this.simulationStartTime),
+      new Date(this.clock)
+    );
+
+    this.utilization = new Map();
+
+    this.resourcePools.forEach((pool, nombre) => {
+      const cantidad = pool.quantity || 0;
+      const disponible = ventanaMin * cantidad;
+
+      this.utilization.set(nombre, {
+        name: nombre,
+        quantity: cantidad,
+        windowMinutes: Math.round(ventanaMin),
+        busyMinutes: Math.round(pool.busyMinutes),
+        availableMinutes: Math.round(disponible),
+        utilization: disponible > 0 ? pool.busyMinutes / disponible : 0
+      });
+    });
   }
 
   /**
@@ -619,6 +686,39 @@ export default class SimulationEngine {
       espera_total_min: Math.round(suma('totalWaitTime')),
       fallos_totales: suma('failureCount')
     });
+
+    // Utilizacion por piscina. Es LA metrica de capacidad y es contraintuitiva
+    // (un 0,90 parece "queda un 10 %" cuando es saturacion), asi que se imprime
+    // tambien la lectura en palabras.
+    if (this.utilization.size) {
+      console.log('SALIDAS · utilización de recursos');
+      console.table(Array.from(this.utilization.values()).map((u) => ({
+        piscina: u.name,
+        unidades: u.quantity,
+        minutos_ocupados: u.busyMinutes,
+        minutos_disponibles: u.availableMinutes,
+        utilizacion: Number(u.utilization.toFixed(4)),
+        lectura: `${(u.utilization * 100).toFixed(1)} %`
+      })));
+    }
+
+    // Percentiles del tiempo de ciclo: la media esconde la cola, y la cola es lo
+    // que rompe un plazo.
+    const resumenCiclo = resumenMuestras(this.instanceCycleTimes);
+    if (resumenCiclo) {
+      console.log('SALIDAS · tiempo de ciclo por caso (min)', {
+        casos: resumenCiclo.n,
+        minimo: Math.round(resumenCiclo.min),
+        p50: Math.round(resumenCiclo.p50),
+        p90: Math.round(resumenCiclo.p90),
+        p95: Math.round(resumenCiclo.p95),
+        p99: Math.round(resumenCiclo.p99),
+        maximo: Math.round(resumenCiclo.max),
+        media: Math.round(resumenCiclo.media),
+        desviacion: Math.round(resumenCiclo.desviacion),
+        coeficiente_variacion: Number(resumenCiclo.cv.toFixed(3))
+      });
+    }
 
     console.groupEnd();
   }
