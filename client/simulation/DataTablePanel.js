@@ -1,6 +1,7 @@
 import { domify, event as domEvent, classes as domClasses } from 'min-dom';
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData, setSimulationData, isLabel } from './util';
+import { WARMUP_SHAPES, WARMUP_DEFAULTS, curvePoints, describeWarmup } from './WarmupCurve';
 import './data-table.css';
 
 const PANEL_CLS = 'sim-data-table-panel';
@@ -50,7 +51,17 @@ const GLOBAL_FIELDS = [
   { key: 'overtime.excessPayMultiplier', label: 'Multiplicador de exceso (x)', kind: 'number', path: [ 'overtime', 'excessPayMultiplier' ], min: 1 },
   { key: 'calendar.workingDays', label: 'Días laborables (0=Dom … 6=Sáb)', kind: 'days', path: [ 'calendar', 'workingDays' ] },
   { key: 'calendar.workingHours.start', label: 'Hora de entrada', kind: 'time', path: [ 'calendar', 'workingHours', 'start' ] },
-  { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ] }
+  { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ] },
+
+  // --- curva de arranque -----------------------------------------------------
+  // Se DECLARA, no se mide. La vista previa de abajo existe porque un parametro
+  // abstracto no se puede discutir y una curva si: se mueve el valor, se ve la
+  // forma, y se decide si se parece a la planta.
+  { key: 'warmup.shape', label: 'Arranque: forma', kind: 'select', options: WARMUP_SHAPES, path: [ 'warmup', 'shape' ] },
+  { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1 },
+  { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1 },
+  { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ] },
+  { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] }
 ];
 
 const DEFAULT_GLOBAL = () => ({
@@ -65,8 +76,14 @@ const DEFAULT_GLOBAL = () => ({
   isRoot: true,
   calendar: {
     workingDays: [ 1, 2, 3, 4, 5 ],
-    workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }
+    workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } },
+    // Sin descansos por defecto: son propios de cada sitio, y ponerlos en
+    // silencio cambiaria los resultados sin que nadie lo haya pedido.
+    breaks: []
   },
+  // La curva de arranque SI trae valores por defecto: se declara, no se mide, y
+  // un valor de partida razonable es mejor que ninguno. Todo ajustable.
+  warmup: { ...WARMUP_DEFAULTS },
   cost: { baseRatePerHour: 50, waitCostPerHour: 0 },
   overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 }
 });
@@ -978,6 +995,11 @@ export default class DataTablePanel {
           + `${activos.includes(i) ? ' checked' : ''}> ${nombre}</label>`
         ).join('')}</span>`;
       }
+      // Casilla booleana (los interruptores de la curva de arranque).
+      if (field.kind === 'checkbox') {
+        return `<label class="casilla"><input type="checkbox" data-field="${field.key}"`
+          + `${value === false ? '' : ' checked'}> activado</label>`;
+      }
       // Selector de hora nativo: mismo motivo, y evita el formato invalido.
       if (field.kind === 'time') {
         const text = value && typeof value === 'object' ? `${pad(value.hour)}:${pad(value.minute)}` : '';
@@ -1011,7 +1033,150 @@ export default class DataTablePanel {
         Marca los días laborables y ajusta las horas con los selectores.
         La hora de entrada debe ser anterior a la de salida.
       </p>
+
+      <h4 class="subtitulo">Descansos</h4>
+      <p class="hint">
+        Un descanso <strong>parte la jornada en tramos</strong>: la tarea que lo pilla a medias
+        se pausa y se retoma al volver. Un descanso <strong>nunca es tiempo productivo</strong> (baja la
+        capacidad y sube ρ), y sus dos casillas dicen dos cosas distintas:
+        <em>¿cuenta como jornada?</em> afecta al umbral de horas extra (la ley lo exige cuando
+        <strong>no</strong> se puede salir del centro), y <em>¿también en horas extra?</em> decide si el
+        descanso se toma cuando la jornada se alarga.
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Desde</th><th>Hasta</th>
+            <th>¿Cuenta como jornada?</th><th>¿También en horas extra?</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="filas-descanso">
+          ${(data.calendar && Array.isArray(data.calendar.breaks) ? data.calendar.breaks : [])
+            .map((b) => this._filaDescanso(b)).join('')}
+        </tbody>
+      </table>
+      <button class="btn-anadir-fila" type="button" data-accion="anadir-descanso">+ Añadir descanso</button>
+
+      <h4 class="subtitulo">Curva de arranque</h4>
+      <p class="hint">
+        El arranque lento <strong>no se mide, se declara</strong>, y con una curva es más realista que
+        con un porcentaje fijo: el porcentaje plano repartiría la pérdida por <em>toda</em> la jornada,
+        incluida la tarde, donde no ocurre. Ajusta los valores y mira la forma: si no se parece a tu
+        planta, la curva está mal puesta.
+      </p>
+      <div class="caja-curva">${this._svgArranque(data.warmup)}</div>
+      <p class="hint" data-resumen-arranque>${esc(describeWarmup(data.warmup))}</p>
     `;
+
+    this._bindGlobalExtras();
+  }
+
+  /**
+   * Una fila del editor de descansos.
+   *
+   * `existeEnExtra` va marcado por defecto: lo normal es que el descanso se tome
+   * tambien cuando la jornada se alarga, y desmarcarlo es la excepcion.
+   */
+  _filaDescanso(b) {
+    const hora = (t) => (t && Number.isFinite(t.hour) ? `${pad(t.hour)}:${pad(t.minute)}` : '');
+    return `
+      <tr>
+        <td><input type="time" class="cell" data-descanso="start" value="${esc(hora(b && b.start))}"></td>
+        <td><input type="time" class="cell" data-descanso="end" value="${esc(hora(b && b.end))}"></td>
+        <td class="centro"><input type="checkbox" data-descanso="cuentaComoJornada"
+          ${b && b.cuentaComoJornada ? 'checked' : ''}></td>
+        <td class="centro"><input type="checkbox" data-descanso="existeEnExtra"
+          ${!(b && b.existeEnExtra === false) ? 'checked' : ''}></td>
+        <td><button class="btn-quitar-pool" type="button" title="Quitar este descanso" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
+  }
+
+  /**
+   * Dibuja la curva de arranque declarada. SVG en linea: no necesita ninguna
+   * libreria de graficos y se imprime igual de bien que en pantalla.
+   */
+  _svgArranque(cfg) {
+    const ancho = 320;
+    const alto = 110;
+    const margen = 10;
+    const puntos = curvePoints(cfg, undefined, 40);
+    const tMax = Math.max(1, puntos[puntos.length - 1].t);
+
+    const x = (t) => margen + (t / tMax) * (ancho - margen * 2);
+    const y = (e) => alto - margen - e * (alto - margen * 2);
+    const trazo = puntos.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.efficiency).toFixed(1)}`).join(' ');
+
+    return `
+      <svg viewBox="0 0 ${ancho} ${alto}" class="curva-arranque" role="img"
+           aria-label="Curva de arranque declarada">
+        <line x1="${margen}" y1="${alto - margen}" x2="${ancho - margen}" y2="${alto - margen}" class="eje"></line>
+        <line x1="${margen}" y1="${margen}" x2="${margen}" y2="${alto - margen}" class="eje"></line>
+        <line x1="${margen}" y1="${y(1)}" x2="${ancho - margen}" y2="${y(1)}" class="referencia"></line>
+        <path d="${trazo}" class="linea"></path>
+        <text x="${ancho - margen}" y="${y(1) - 3}" text-anchor="end" class="rotulo">100 %</text>
+        <text x="${margen + 2}" y="${alto - margen - 2}" class="rotulo">0 min</text>
+        <text x="${ancho - margen}" y="${alto - margen - 2}" text-anchor="end" class="rotulo">${Math.round(tMax)} min</text>
+      </svg>`;
+  }
+
+  /** Lee la curva de arranque del DOM (para la vista previa en vivo). */
+  _leerArranqueDelDom() {
+    const valor = (clave) => {
+      const campo = this._body.querySelector(`[data-field="${clave}"]`);
+      return campo ? campo.value : undefined;
+    };
+    const marcado = (clave) => {
+      const campo = this._body.querySelector(`[data-field="${clave}"]`);
+      return campo ? campo.checked : false;
+    };
+
+    return {
+      shape: valor('warmup.shape') || 'none',
+      initialEfficiency: Number(String(valor('warmup.initialEfficiency')).replace(',', '.')),
+      recoveryMinutes: Number(String(valor('warmup.recoveryMinutes')).replace(',', '.')),
+      onShiftStart: marcado('warmup.onShiftStart'),
+      onBreakReturn: marcado('warmup.onBreakReturn')
+    };
+  }
+
+  /** Redibuja la curva con lo que hay AHORA en pantalla, aunque no se haya guardado. */
+  _refrescarCurvaArranque() {
+    const caja = this._body.querySelector('.caja-curva');
+    if (caja) caja.innerHTML = this._svgArranque(this._leerArranqueDelDom());
+
+    const resumen = this._body.querySelector('[data-resumen-arranque]');
+    if (resumen) resumen.textContent = describeWarmup(this._leerArranqueDelDom());
+  }
+
+  /** Conecta el editor de descansos y la vista previa de la curva. */
+  _bindGlobalExtras() {
+    const boton = this._body.querySelector('[data-accion="anadir-descanso"]');
+    if (boton) {
+      domEvent.bind(boton, 'click', () => {
+        const tbody = this._body.querySelector('.filas-descanso');
+        // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al parseo
+        // de un contenedor que no sea <table>/<tbody>.
+        tbody.insertAdjacentHTML('beforeend', this._filaDescanso(null));
+      });
+    }
+
+    const tbody = this._body.querySelector('.filas-descanso');
+    if (tbody) {
+      domEvent.bind(tbody, 'click', (e) => {
+        const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
+        if (!btn) return;
+        const tr = btn.closest('tr');
+        if (tr) tr.remove();
+      });
+    }
+
+    GLOBAL_FIELDS.forEach((f) => {
+      if (!f.key.startsWith('warmup.')) return;
+      const campo = this._body.querySelector(`[data-field="${f.key}"]`);
+      if (!campo) return;
+      domEvent.bind(campo, 'input', () => this._refrescarCurvaArranque());
+      domEvent.bind(campo, 'change', () => this._refrescarCurvaArranque());
+    });
   }
 
   // -- guardar --------------------------------------------------------------
@@ -1222,7 +1387,10 @@ export default class DataTablePanel {
       if (field.kind === 'number') {
         const n = this._num(raw, field.label);
         if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
+        if (field.max != null && n > field.max) throw new Error(`${field.label}: debe ser ≤ ${field.max}`);
         setByPath(data, field.path, n);
+      } else if (field.kind === 'checkbox') {
+        setByPath(data, field.path, Boolean(input.checked));
       } else if (field.kind === 'time') {
         // <input type="time"> ya entrega HH:MM, pero puede quedar vacio si el
         // usuario borra el campo, asi que se valida igualmente.
@@ -1244,6 +1412,60 @@ export default class DataTablePanel {
     if (entrada && salida && (entrada.hour * 60 + entrada.minute) >= (salida.hour * 60 + salida.minute)) {
       throw new Error('La hora de entrada debe ser anterior a la de salida');
     }
+
+    // Descansos: es una LISTA, no un campo escalar, asi que se recoge aparte de
+    // GLOBAL_FIELDS (mismo motivo que las piscinas de recursos).
+    const descansos = [];
+    const minutosDe = (t) => t.hour * 60 + t.minute;
+
+    this._body.querySelectorAll('.filas-descanso tr').forEach((tr, i) => {
+      const valor = (campo) => {
+        const el = tr.querySelector(`[data-descanso="${campo}"]`);
+        return el ? String(el.value).trim() : '';
+      };
+      const marcado = (campo) => {
+        const el = tr.querySelector(`[data-descanso="${campo}"]`);
+        return Boolean(el && el.checked);
+      };
+
+      const desde = valor('start');
+      const hasta = valor('end');
+      // Fila sin horas: se ignora, para que una fila recien anadida no bloquee.
+      if (!desde && !hasta) return;
+
+      const mDesde = desde.match(/^(\d{1,2}):(\d{2})$/);
+      const mHasta = hasta.match(/^(\d{1,2}):(\d{2})$/);
+      if (!mDesde) throw new Error(`Descanso ${i + 1}: hora de inicio no válida («${desde}»)`);
+      if (!mHasta) throw new Error(`Descanso ${i + 1}: hora de fin no válida («${hasta}»)`);
+
+      const inicio = { hour: Number(mDesde[1]), minute: Number(mDesde[2]) };
+      const fin = { hour: Number(mHasta[1]), minute: Number(mHasta[2]) };
+
+      if (minutosDe(fin) <= minutosDe(inicio)) {
+        throw new Error(`Descanso ${i + 1}: el fin debe ser posterior al inicio (${desde} → ${hasta})`);
+      }
+      // Un descanso FUERA de la jornada es casi siempre una errata, y el motor lo
+      // ignoraria en silencio (no parte ningun tramo). Mejor decirlo.
+      if (entrada && salida) {
+        const dentroDeLaJornada = minutosDe(fin) > minutosDe(entrada) && minutosDe(inicio) < minutosDe(salida);
+        if (!dentroDeLaJornada) {
+          throw new Error(
+            `Descanso ${i + 1} (${desde} → ${hasta}): queda fuera de la jornada `
+            + `(${pad(entrada.hour)}:${pad(entrada.minute)} - ${pad(salida.hour)}:${pad(salida.minute)}), `
+            + 'así que no partiría ningún tramo'
+          );
+        }
+      }
+
+      descansos.push({
+        start: inicio,
+        end: fin,
+        cuentaComoJornada: marcado('cuentaComoJornada'),
+        existeEnExtra: marcado('existeEnExtra')
+      });
+    });
+
+    setByPath(data, [ 'calendar', 'breaks' ], descansos);
 
     writes.push({ element: info.element, data });
     return writes;
@@ -1546,9 +1768,22 @@ export default class DataTablePanel {
       let text;
       if (f.kind === 'days') text = Array.isArray(v) ? v.join(',') : '';
       else if (f.kind === 'time') text = v && typeof v === 'object' ? `${pad(v.hour)}:${pad(v.minute)}` : '';
+      else if (f.kind === 'checkbox') text = v === false ? 'no' : 'si';
       else text = v == null ? '' : v;
       rows.push([ f.key, f.label, text ]);
     });
+
+    // Los descansos son una lista: una fila por dato, con clave `descanso.N.campo`.
+    // Asi sigue siendo editable en Excel y vuelve entera al importar.
+    const hhmm = (t) => (t && Number.isFinite(t.hour) ? `${pad(t.hour)}:${pad(t.minute)}` : '');
+    ((info.data.calendar && info.data.calendar.breaks) || []).forEach((b, i) => {
+      const n = i + 1;
+      rows.push([ `descanso.${n}.inicio`, `Descanso ${n}: desde`, hhmm(b.start) ]);
+      rows.push([ `descanso.${n}.fin`, `Descanso ${n}: hasta`, hhmm(b.end) ]);
+      rows.push([ `descanso.${n}.cuentaComoJornada`, `Descanso ${n}: ¿cuenta como jornada?`, b.cuentaComoJornada ? 'si' : 'no' ]);
+      rows.push([ `descanso.${n}.existeEnExtra`, `Descanso ${n}: ¿también en horas extra?`, b.existeEnExtra === false ? 'no' : 'si' ]);
+    });
+
     return rows;
   }
 
@@ -1764,7 +1999,24 @@ export default class DataTablePanel {
 
     const data = JSON.parse(JSON.stringify(info.data));
 
-    body.forEach((r, n) => {
+    // Los descansos se leen primero y se QUITAN de la lista de campos: si no,
+    // caerian en el bucle de abajo y saltaria «campo desconocido».
+    const filasDescanso = new Map();
+    const filasCampos = [];
+
+    body.forEach((r) => {
+      const clave = String(r[iKey]).trim();
+      const m = clave.match(/^descanso\.(\d+)\.(inicio|fin|cuentaComoJornada|existeEnExtra)$/);
+      if (!m) {
+        filasCampos.push(r);
+        return;
+      }
+      const idx = Number(m[1]);
+      if (!filasDescanso.has(idx)) filasDescanso.set(idx, {});
+      filasDescanso.get(idx)[m[2]] = String(r[iVal]).trim();
+    });
+
+    filasCampos.forEach((r, n) => {
       const line = n + 2;
       const field = GLOBAL_FIELDS.find((f) => f.key === String(r[iKey]).trim());
       if (!field) throw new Error(`Línea ${line}: campo desconocido «${r[iKey]}»`);
@@ -1789,10 +2041,47 @@ export default class DataTablePanel {
         const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})$/);
         if (!m) throw new Error(`Línea ${line}: ${field.label} debe ser HH:MM («${raw}»)`);
         setByPath(data, field.path, { hour: Number(m[1]), minute: Number(m[2]) });
+      } else if (field.kind === 'checkbox') {
+        // Se acepta «si/sí/s/true/1» y cualquier otra cosa es «no», para no
+        // pelearse con la hoja de calculo.
+        const texto = String(raw).trim().toLowerCase();
+        setByPath(data, field.path, /^(s|sí|si|true|1|x)/.test(texto));
       } else {
         setByPath(data, field.path, String(raw));
       }
     });
+
+    // Descansos: si el CSV trae alguno, se reconstruye la lista ENTERA con ellos.
+    // Si no trae ninguno, se dejan los que ya tuviera el modelo.
+    if (filasDescanso.size) {
+      const descansos = [];
+
+      Array.from(filasDescanso.keys()).sort((a, b) => a - b).forEach((idx) => {
+        const f = filasDescanso.get(idx);
+        const hora = (texto, cual) => {
+          const m = String(texto || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+          if (!m) throw new Error(`Descanso ${idx}: ${cual} «${texto}» no es HH:MM`);
+          return { hour: Number(m[1]), minute: Number(m[2]) };
+        };
+        const esSi = (v) => /^(s|sí|si|true|1|x)/.test(String(v || '').trim().toLowerCase());
+
+        const start = hora(f.inicio, 'desde');
+        const end = hora(f.fin, 'hasta');
+        if (end.hour * 60 + end.minute <= start.hour * 60 + start.minute) {
+          throw new Error(`Descanso ${idx}: el fin debe ser posterior al inicio`);
+        }
+
+        descansos.push({
+          start,
+          end,
+          cuentaComoJornada: esSi(f.cuentaComoJornada),
+          // Ausente = se toma tambien en horas extra, que es lo normal.
+          existeEnExtra: f.existeEnExtra === undefined ? true : esSi(f.existeEnExtra)
+        });
+      });
+
+      setByPath(data, [ 'calendar', 'breaks' ], descansos);
+    }
 
     updates.push({ element: info.element, data });
     return updates;

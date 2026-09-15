@@ -51,6 +51,32 @@ resultado es incorrecto aunque el programa funcione.**
 
 ## 3. A1 · Calendario
 
+> **Estado: IMPLEMENTADO.** `BusinessCalendar` con tramos, editor de descansos en la pestaña
+> Global, curva de arranque (`WarmupCurve.js`) con vista previa, los tres interruptores del
+> descanso y la jornada extendida que respeta `existeEnExtra`. Verificado con 23 comprobaciones
+> de integración sobre el motor real.
+>
+> **Dos decisiones tomadas al implementar** (no estaban en el diseño original):
+>
+> 1. **El descanso no se guarda como lista de tramos, sino como `workingHours` + `breaks[]`.**
+>    Es equivalente y más útil: un tramo suelto no puede llevar sus propios interruptores, y el
+>    descanso necesita dos. Los tramos se derivan (jornada menos descansos) y **sin `breaks` el
+>    comportamiento es exactamente el de antes**, así que no hay migración.
+> 2. **El coste de operación usa la duración EFECTIVA** (con la rampa), no la real. Si alguien va
+>    lento al arrancar está en el puesto más tiempo y ese tiempo se paga; además así **la rampa
+>    tiene coste**, que es justo lo que se quiere medir. El trabajo contabilizado
+>    (`processingTime`) sí sigue siendo el real, y las dos cifras se separan a propósito.
+>
+> **Pendiente de refinar (documentado, no olvidado):**
+>
+> - **El recurso se mantiene retenido durante el descanso.** Al pausar la tarea, la unidad de la
+>   piscina no se libera, así que otra tarea en cola no la puede aprovechar. Es defendible (el
+>   puesto queda ocupado con trabajo a medias), pero la versión «liberar y volver a tomar la
+>   unidad» es la que produce la *segunda espera* — y no está hecha.
+> - **El re-arranque tras descanso se aplica a las tareas que EMPIEZAN en el tramo posterior**,
+>   no a las que se reanudan a medias. Modelarlo por segmentos exige partir el trabajo en cada
+>   frontera de tramo.
+
 ### 3.1 Tramos de trabajo
 
 La jornada deja de ser **un bloque** y pasa a ser **varios tramos**:

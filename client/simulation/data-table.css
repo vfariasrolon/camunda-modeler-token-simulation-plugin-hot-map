@@ -272,6 +272,79 @@
   cursor: not-allowed;
 }
 
+/* --- pestaña Global: descansos y curva de arranque --- */
+
+.sim-data-table-panel .subtitulo {
+  margin: 22px 0 4px;
+  font-size: 13px;
+  color: #1565c0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+}
+
+/* Casilla booleana con su etiqueta a la derecha. */
+.sim-data-table-panel .casilla {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .casilla input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .data-table td.centro {
+  text-align: center;
+}
+
+.sim-data-table-panel .data-table td.centro input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */
+.sim-data-table-panel .caja-curva {
+  display: inline-block;
+  padding: 6px 10px;
+  background: #fbfcfe;
+  border: 1px solid #dfe5ec;
+  border-radius: 6px;
+}
+
+.sim-data-table-panel .curva-arranque {
+  display: block;
+  width: 320px;
+  max-width: 100%;
+  height: auto;
+}
+
+.sim-data-table-panel .curva-arranque .eje {
+  stroke: #c9d3de;
+  stroke-width: 1;
+}
+
+.sim-data-table-panel .curva-arranque .referencia {
+  stroke: #c62828;
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  opacity: .6;
+}
+
+.sim-data-table-panel .curva-arranque .linea {
+  fill: none;
+  stroke: #1565c0;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.sim-data-table-panel .curva-arranque .rotulo {
+  font-size: 9px;
+  fill: #8a94a0;
+}
+
 .sim-data-table-panel .data-table td.col-campo {
   width: 46%;
   color: #444;

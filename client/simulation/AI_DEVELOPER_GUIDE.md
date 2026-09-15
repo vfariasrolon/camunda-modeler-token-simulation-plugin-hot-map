@@ -248,7 +248,22 @@ La estructura del JSON varía según el tipo de elemento.
       "start": { "hour": 9, "minute": 0 },
       "end": { "hour": 17, "minute": 0 }
     },
+    "breaks": [
+      {
+        "start": { "hour": 13, "minute": 0 },
+        "end": { "hour": 14, "minute": 0 },
+        "cuentaComoJornada": false,
+        "existeEnExtra": true
+      }
+    ],
     "holidays": ["2026-01-01", "2026-12-25"]
+  },
+  "warmup": {
+    "shape": "exponential",
+    "initialEfficiency": 0.70,
+    "recoveryMinutes": 30,
+    "onShiftStart": true,
+    "onBreakReturn": true
   },
   "cost": {
     "baseRatePerHour": 50,
@@ -288,6 +303,44 @@ La estructura del JSON varía según el tipo de elemento.
 > Un `"2026-01-15T09:00"` (con hora) es un valor silenciosamente ignorado. La hora de
 > arranque no se toma de aquí, sino de `calendar.workingHours.start`.
 > Déjalo vacío (`""`) para simular desde hoy.
+
+### Los descansos parten la jornada en TRAMOS
+
+`breaks: []` es lo que hace que la jornada deje de ser un bloque. No se guarda una lista de
+tramos porque un tramo suelto no puede llevar sus interruptores, y el descanso necesita dos.
+Los tramos se **derivan** (jornada menos descansos) en `BusinessCalendar.tramosDelDia()`.
+
+| Campo | Qué controla |
+|---|---|
+| `cuentaComoJornada` | Si el descanso cuenta como tiempo de **jornada**, lo que corre el umbral de horas extra. La ley mexicana lo exige cuando **no** se puede salir del centro. **No** afecta a la capacidad. |
+| `existeEnExtra` | Si el descanso también se toma cuando la jornada se **extiende** por horas extra. Lo lee `SimulationEngine.run()` al montar el calendario extendido: los que están a `false` se filtran **antes** de construir el calendario (`BusinessCalendar` ignora ese campo, porque un calendario no sabe si es el extendido). |
+
+**Reglas que no hay que romper:**
+
+1. **La capacidad nunca incluye el descanso.** El reloj legal y el reloj de la planta son dos
+   cosas distintas: un descanso puede contar como jornada y seguir sin ser capacidad. Un
+   descanso siempre baja `minutosDeTrabajoDelDia()` y sube ρ.
+2. **El trabajo y el reloj van separados.** Una tarea que se parte por la comida **no** genera
+   horas extra por ese rato y su `totalProcessingTime` no cambia; lo que crece es su `endTime`.
+3. **Se llama `_tramoDe` minuto a minuto sin asignar memoria**: `isWorkingTime()` se invoca una
+   vez por minuto en `calculateBusinessDurationInMinutes`. Si le metes una llamada que asigne
+   arrays (como `tramosDelDia()`), el rendimiento se hunde.
+
+### La curva de arranque (`WarmupCurve.js`)
+
+El arranque lento **no se mide, se declara**. `shapes`: `exponential` (por defecto), `linear` o
+`none`. La logarítmica se descartó: nunca llega al 100 % y exigiría inventar un tope.
+
+- Cada **tramo** de trabajo es un disparador: el primero del día es el arranque de jornada y los
+  siguientes son el regreso de un descanso. `onShiftStart` y `onBreakReturn` deciden cuáles.
+- `effectiveDuration(workMinutes, elapsed, cfg)` resuelve por bisección cuánto **reloj** cuesta
+  el trabajo, y **se degrada sola** a «sin arranque» cuando la recuperación ya pasó.
+- Se aplica desde el inicio **efectivo** de la tarea, así que una tarea que espera una hora por un
+  recurso no sufre el arranque.
+- **El coste de operación usa la duración efectiva** (ir lento se paga), mientras que
+  `processingTime` sigue siendo el trabajo real. Las dos cifras se separan a propósito.
+- El configurador **dibuja la curva** mientras se ajusta: un parámetro abstracto no se puede
+  discutir, una curva sí. Es la forma correcta de ajustar algo que no se puede medir.
 
 **B. Para un `bpmn:Task` (o UserTask, ScriptTask, etc.):**
 ```json

@@ -414,8 +414,45 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "default": () => (/* binding */ BusinessCalendar)
 /* harmony export */ });
 /**
- * A business calendar that is aware of working days and hours.
+ * Calendario laboral: dias laborables, jornada, DESCANSOS y festivos.
+ *
+ * El descanso no se modela como un "hueco en el reloj", sino como lo que es: la
+ * jornada se parte en TRAMOS de trabajo, y el descanso es lo que queda entre
+ * ellos. Asi, todo el calendario usa un unico mecanismo —moverse al inicio del
+ * siguiente tramo— tanto para saltar una noche o un fin de semana como para
+ * saltar la comida. No hay dos logicas de tiempo, hay una.
+ *
+ * Estructura de la configuracion (compatible hacia atras):
+ *
+ *   workingDays:  [1, 2, 3, 4, 5]
+ *   workingHours: { start: {hour,minute}, end: {hour,minute} }
+ *   breaks: [ { start, end, cuentaComoJornada, existeEnExtra } ]   <- NUEVO
+ *   holidays: [ "2026-01-01", ... ]
+ *
+ * Sin `breaks` el comportamiento es EXACTAMENTE el de antes: una jornada
+ * continua. Eso importa: hay diagramas guardados y CSV en circulacion.
  */
+
+// Tope de seguridad al buscar el siguiente tramo. Sin el, un calendario sin
+// ningun dia laborable daria un bucle infinito en lugar de fallar.
+const LIMITE_DIAS_BUSQUEDA = 4000;
+
+/** Minutos desde medianoche de un { hour, minute } del motor. */
+const aMinutos = (t) => (t && Number.isFinite(t.hour) && Number.isFinite(t.minute)
+  ? t.hour * 60 + t.minute
+  : null);
+
+/**
+ * Clave de dia "AAAA-MM-DD" en hora LOCAL.
+ *
+ * ERROR CORREGIDO: se usaba `toISOString().slice(0, 10)`, que es UTC. En un huso
+ * negativo (Mexico), las 23:00 locales ya son el dia siguiente en UTC, asi que
+ * un festivo podia no aplicarse (o aplicarse un dia antes). Con jornadas de 9 a
+ * 17 casi nunca saltaba, pero el error estaba ahi y afectaba a `holidays` y a
+ * `calculateWorkingDays`.
+ */
+const claveDeDia = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 class BusinessCalendar {
   constructor(config = {}) {
     this.config = {
@@ -424,112 +461,221 @@ class BusinessCalendar {
         start: { hour: 9, minute: 0 },
         end: { hour: 17, minute: 0 }
       },
+      breaks: [],
       holidays: [],
       ...config
     };
+
+    // --- valores precalculados -------------------------------------------
+    // `isWorkingTime()` se llama MINUTO A MINUTO en calculateBusinessDuration
+    // InMinutes, asi que no puede asignar objetos. Todo lo que se pueda
+    // precalcular, se precalcula aqui una sola vez.
+    this._dias = new Set(this.config.workingDays || []);
+    this._festivos = new Set(this.config.holidays || []);
+    this._jornada = {
+      inicio: aMinutos(this.config.workingHours && this.config.workingHours.start),
+      fin: aMinutos(this.config.workingHours && this.config.workingHours.end)
+    };
+
+    const bruto = Array.isArray(this.config.breaks) ? this.config.breaks : [];
+    this._descansos = bruto
+      .map((b) => ({
+        inicio: aMinutos(b && b.start),
+        fin: aMinutos(b && b.end),
+        // Interruptor 1: si el descanso cuenta como tiempo de jornada (afecta a
+        // las horas extra). La ley lo exige cuando NO se puede salir del centro.
+        cuentaComoJornada: Boolean(b && b.cuentaComoJornada),
+        // Interruptor 3: si el descanso existe tambien en el tramo de horas
+        // extra (lo lee el motor al montar el calendario extendido).
+        existeEnExtra: !(b && b.existeEnExtra === false)
+      }))
+      // Un descanso sin horas validas o con fin <= inicio se ignora en vez de
+      // romper el calendario.
+      .filter((b) => Number.isFinite(b.inicio) && Number.isFinite(b.fin) && b.fin > b.inicio);
   }
 
-  isWorkingTime(date) {
-    const day = date.getDay();
-    if (!this.config.workingDays.includes(day)) {
-      return false;
-    }
-
-    const dateString = date.toISOString().slice(0, 10);
-    if (this.config.holidays && this.config.holidays.includes(dateString)) {
-      return false;
-    }
-
-    const { start, end } = this.config.workingHours;
-    const currentTime = date.getHours() * 60 + date.getMinutes();
-    const startTime = start.hour * 60 + start.minute;
-    const endTime = end.hour * 60 + end.minute;
-    return currentTime >= startTime && currentTime < endTime;
+  /** ¿El dia de esa fecha es laborable (dia de la semana y no festivo)? */
+  _esDiaLaborable(date) {
+    if (!this._dias.has(date.getDay())) return false;
+    return !this._festivos.has(claveDeDia(date));
   }
 
-  _moveToNextWorkingDayStart(date) {
-    const newDate = new Date(date.getTime());
-    const { start } = this.config.workingHours;
-    newDate.setHours(start.hour, start.minute, 0, 0);
+  /**
+   * Tramos de TRABAJO de un dia, en minutos desde medianoche y ordenados.
+   * Es la jornada menos los descansos. Un dia no laborable devuelve [].
+   */
+  tramosDelDia(date) {
+    if (!this._esDiaLaborable(date)) return [];
+    const { inicio, fin } = this._jornada;
+    if (!Number.isFinite(inicio) || !Number.isFinite(fin) || fin <= inicio) return [];
 
-    if (date >= newDate) {
-        newDate.setDate(newDate.getDate() + 1);
-    }
+    let tramos = [ { inicio, fin } ];
 
-    while (!this.isWorkingTime(newDate)) {
-      newDate.setDate(newDate.getDate() + 1);
-      newDate.setHours(start.hour, start.minute, 0, 0);
-    }
-    return newDate;
-  }
-
-  addWorkingTime(startDate, durationInMinutes) {
-    if (durationInMinutes <= 0) return new Date(startDate.getTime());
-
-    let currentDate = new Date(startDate.getTime());
-    let remainingMinutes = durationInMinutes;
-
-    if (!this.isWorkingTime(currentDate)) {
-      currentDate = this._moveToNextWorkingDayStart(currentDate);
-    }
-
-    const { start, end } = this.config.workingHours;
-    const minutesPerWorkDay = (end.hour - start.hour) * 60 + (end.minute - start.minute);
-
-    if (minutesPerWorkDay <= 0) return currentDate;
-
-    const minutesLeftInDay = ((end.hour * 60 + end.minute) - (currentDate.getHours() * 60 + currentDate.getMinutes()));
-
-    if (remainingMinutes <= minutesLeftInDay) {
-      currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
-      return currentDate;
-    }
-
-    remainingMinutes -= minutesLeftInDay;
-    currentDate = this._moveToNextWorkingDayStart(currentDate);
-
-    const numWorkDaysInWeek = this.config.workingDays.length;
-    if (numWorkDaysInWeek > 0) {
-        const fullDays = Math.floor(remainingMinutes / minutesPerWorkDay);
-        if (fullDays > 0) {
-            // ERROR CORREGIDO: el bucle contaba las jornadas completas pero no
-            // avanzaba mas alla de la ultima contada, asi que currentDate
-            // quedaba en el inicio del ULTIMO dia consumido en lugar del
-            // inicio del siguiente. Se perdia una jornada entera por tramo:
-            // una tarea de 16 h que empezaba el martes terminaba el miercoles
-            // en vez del jueves, y el resultado siempre caia dentro del horario
-            // laboral, por lo que el error no se veia en los resultados.
-            //
-            // currentDate ya es el inicio de un dia laborable, y
-            // _moveToNextWorkingDayStart() aplicado sobre ese inicio avanza
-            // exactamente un dia laborable.
-            let consumed = 0;
-            let tempDate = new Date(currentDate.getTime());
-            while (consumed < fullDays) {
-                consumed++;
-                tempDate = this._moveToNextWorkingDayStart(tempDate);
-            }
-            currentDate = tempDate;
-            remainingMinutes -= fullDays * minutesPerWorkDay;
+    this._descansos.forEach((b) => {
+      const siguientes = [];
+      tramos.forEach((t) => {
+        // Descanso que no toca este tramo: se queda igual.
+        if (b.fin <= t.inicio || b.inicio >= t.fin) {
+          siguientes.push(t);
+          return;
         }
-    }
+        // Si queda trabajo antes del descanso, ahi acaba este tramo...
+        if (b.inicio > t.inicio) siguientes.push({ inicio: t.inicio, fin: b.inicio });
+        // ...y si queda despues, ahi empieza el siguiente.
+        if (b.fin < t.fin) siguientes.push({ inicio: b.fin, fin: t.fin });
+      });
+      tramos = siguientes;
+    });
 
-    currentDate.setMinutes(currentDate.getMinutes() + remainingMinutes);
-
-    return currentDate;
+    return tramos.filter((t) => t.fin > t.inicio).sort((a, b) => a.inicio - b.inicio);
   }
 
+  /** Minutos de trabajo de un dia (jornada menos descansos). */
+  minutosDeTrabajoDelDia(date) {
+    return this.tramosDelDia(date).reduce((total, t) => total + (t.fin - t.inicio), 0);
+  }
+
+  /** Tramo de trabajo que contiene esa fecha, o null si cae fuera. */
+  _tramoDe(date) {
+    if (!this._esDiaLaborable(date)) return null;
+    const minuto = date.getHours() * 60 + date.getMinutes();
+    const tramos = this.tramosDelDia(date);
+    for (let i = 0; i < tramos.length; i++) {
+      if (minuto >= tramos[i].inicio && minuto < tramos[i].fin) return tramos[i];
+    }
+    return null;
+  }
+
+  /**
+   * ¿Es hora de trabajo? Incluye los descansos: dentro de un descanso NO se
+   * trabaja, aunque se este dentro de la jornada.
+   *
+   * Sin asignar memoria a proposito: se llama minuto a minuto.
+   */
+  isWorkingTime(date) {
+    if (!this._esDiaLaborable(date)) return false;
+
+    const minuto = date.getHours() * 60 + date.getMinutes();
+    if (minuto < this._jornada.inicio || minuto >= this._jornada.fin) return false;
+
+    for (let i = 0; i < this._descansos.length; i++) {
+      const b = this._descansos[i];
+      if (minuto >= b.inicio && minuto < b.fin) return false;
+    }
+    return true;
+  }
+
+  /** Inicio del primer tramo ESTRICTAMENTE posterior a esa fecha. */
+  _siguienteInicioDeTramo(date) {
+    const cursor = new Date(date.getTime());
+    const minutoActual = cursor.getHours() * 60 + cursor.getMinutes();
+
+    for (let dia = 0; dia < LIMITE_DIAS_BUSQUEDA; dia++) {
+      const tramos = this.tramosDelDia(cursor);
+      for (let i = 0; i < tramos.length; i++) {
+        const t = tramos[i];
+        if (dia > 0 || t.inicio > minutoActual) {
+          const destino = new Date(cursor.getTime());
+          destino.setHours(Math.floor(t.inicio / 60), t.inicio % 60, 0, 0);
+          return destino;
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+      cursor.setHours(0, 0, 0, 0);
+    }
+
+    // Sin ningun dia laborable configurado. Se devuelve null para que quien
+    // llame decida; antes esto era un bucle infinito.
+    return null;
+  }
+
+  /**
+   * Inicio del tramo de trabajo que contiene la fecha (o del siguiente).
+   *
+   * Es el DISPARADOR de la curva de arranque: cada tramo empieza con un
+   * arranque. El primero del dia es el de la jornada; los siguientes son los del
+   * regreso del descanso. Un solo concepto, dos usos.
+   */
+  inicioDeTramo(date) {
+    const tramo = this._tramoDe(date);
+    if (tramo) {
+      const inicio = new Date(date.getTime());
+      inicio.setHours(Math.floor(tramo.inicio / 60), tramo.inicio % 60, 0, 0);
+      return inicio;
+    }
+    return this._siguienteInicioDeTramo(date);
+  }
+
+  /** ¿La fecha cae en el PRIMER tramo del dia (arranque de jornada)? */
+  esPrimerTramo(date) {
+    const tramo = this._tramoDe(date);
+    if (!tramo) return false;
+    const tramos = this.tramosDelDia(date);
+    return tramos.length > 0 && tramos[0].inicio === tramo.inicio;
+  }
+
+  /**
+   * Suma minutos DE TRABAJO saltando noches, fines de semana y descansos.
+   *
+   * Se recorre tramo a tramo en lugar de calcular "dias completos" con una
+   * division: con varios tramos por dia (los descansos) esa division ya no tiene
+   * sentido, y era el origen de un error.
+   *
+   * ERROR CORREGIDO (regresion): la version anterior calculaba los dias completos
+   * DESPUES de haber avanzado ya al dia siguiente, asi que contaba una jornada de
+   * mas en cuanto la duracion cruzaba dias enteros. Una tarea de 16 h que
+   * empezaba el martes terminaba el jueves en lugar del miercoles. Solo afectaba
+   * a duraciones de dos jornadas o mas (con jornada de 8 h, a partir de 16 h),
+   * por eso no salia en las corridas normales.
+   *
+   * Tambien se conserva la milesima al sumar: antes se hacia con setMinutes(),
+   * que trunca los decimales, asi que una duracion de 10,5 min sumaba 10 y ese
+   * medio minuto perdido por tarea se acumulaba.
+   */
+  addWorkingTime(startDate, durationInMinutes) {
+    if (!(durationInMinutes > 0)) return new Date(startDate.getTime());
+
+    let restante = durationInMinutes;
+    let cursor = new Date(startDate.getTime());
+
+    for (let guarda = 0; guarda < LIMITE_DIAS_BUSQUEDA; guarda++) {
+      const tramo = this._tramoDe(cursor);
+
+      if (tramo) {
+        const minuto = cursor.getHours() * 60 + cursor.getMinutes();
+        const restanteEnTramo = tramo.fin - minuto;
+
+        if (restante <= restanteEnTramo) {
+          return new Date(cursor.getTime() + Math.round(restante * 60000));
+        }
+        restante -= restanteEnTramo;
+      }
+
+      const siguiente = this._siguienteInicioDeTramo(cursor);
+      if (!siguiente || siguiente.getTime() <= cursor.getTime()) return cursor;
+      cursor = siguiente;
+    }
+
+    return cursor;
+  }
+
+  /**
+   * Minutos de TRABAJO entre dos instantes. Cuenta minuto a minuto, y con
+   * descansos un minuto de descanso NO cuenta.
+   *
+   * Nota de rendimiento (limitacion conocida): esta funcion itera minuto a
+   * minuto, y es la que alimenta esperas y tiempos de ciclo. Es correcta pero su
+   * coste crece con la duracion simulada.
+   */
   calculateBusinessDurationInMinutes(startDate, endDate) {
     if (endDate <= startDate) return 0;
 
     let totalMinutes = 0;
     let cursor = new Date(startDate.getTime());
 
-    while(cursor < endDate) {
-        if(this.isWorkingTime(cursor)) {
-            totalMinutes++;
-        }
-        cursor.setMinutes(cursor.getMinutes() + 1);
+    while (cursor < endDate) {
+      if (this.isWorkingTime(cursor)) totalMinutes++;
+      cursor.setMinutes(cursor.getMinutes() + 1);
     }
 
     return totalMinutes;
@@ -549,6 +695,10 @@ class BusinessCalendar {
    *
    * Horas extra es el tiempo trabajado FUERA del horario estandar:
    *   overtime = duracion - (minutos de la tarea dentro del horario estandar)
+   *
+   * Con descansos el resultado sigue siendo correcto: el descanso no es trabajo,
+   * asi que no se cuenta en ninguna de las dos partes y una tarea que se parte
+   * por la comida no genera horas extra por ese rato.
    *
    * @param {Date}   startDate
    * @param {number} durationInMinutes duracion trabajada (segun el calendario de
@@ -575,43 +725,53 @@ class BusinessCalendar {
     };
   }
 
+  /** Igual que la version en minutos, pero devuelve milisegundos. */
   calculateBusinessDuration(startDate, endDate) {
     if (endDate <= startDate) return 0;
 
     let businessMs = 0;
-    let current = new Date(startDate.getTime());
 
-    while (current < endDate) {
-        const day = current.getDay();
+    // Se recorre por tramos (que ya excluyen los descansos) en lugar de por el
+    // bloque unico de jornada, que contaba el descanso como tiempo trabajado.
+    for (let guarda = 0; guarda < LIMITE_DIAS_BUSQUEDA; guarda++) {
+      const tramos = this.tramosDelDia(startDate);
+      let avanzado = false;
 
-        if (this.config.workingDays.includes(day)) {
-            const { start, end } = this.config.workingHours;
+      for (let i = 0; i < tramos.length; i++) {
+        const inicio = new Date(startDate.getTime());
+        inicio.setHours(Math.floor(tramos[i].inicio / 60), tramos[i].inicio % 60, 0, 0);
 
-            const startOfDay = new Date(current.getTime());
-            startOfDay.setHours(start.hour, start.minute, 0, 0);
+        const fin = new Date(startDate.getTime());
+        fin.setHours(Math.floor(tramos[i].fin / 60), tramos[i].fin % 60, 0, 0);
 
-            const endOfDay = new Date(current.getTime());
-            endOfDay.setHours(end.hour, end.minute, 0, 0);
+        if (fin <= startDate) continue;
 
-            const effectiveStart = Math.max(current.getTime(), startOfDay.getTime());
-            const effectiveEnd = Math.min(endDate.getTime(), endOfDay.getTime());
-
-            if (effectiveStart < effectiveEnd) {
-                businessMs += (effectiveEnd - effectiveStart);
-            }
+        const desde = Math.max(inicio.getTime(), startDate.getTime());
+        const hasta = Math.min(fin.getTime(), endDate.getTime());
+        if (desde < hasta) {
+          businessMs += (hasta - desde);
+          avanzado = true;
         }
+        if (hasta >= endDate.getTime()) return businessMs;
+      }
 
-        // Move to the start of the next day, robustly
-        current = new Date(current.getFullYear(), current.getMonth(), current.getDate() + 1);
+      // Avanzar un dia entero. `startDate` se reusa como cursor local.
+      startDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + 1);
+      if (!avanzado && startDate.getTime() > endDate.getTime()) return businessMs;
     }
+
     return businessMs;
   }
 
+  /** Fin del ULTIMO tramo de trabajo de ese dia (o null si no es laborable). */
   getWorkdayEnd(date) {
-    const { end } = this.config.workingHours;
-    const endOfDay = new Date(date.getTime());
-    endOfDay.setHours(end.hour, end.minute, 0, 0);
-    return endOfDay;
+    const tramos = this.tramosDelDia(date);
+    if (!tramos.length) return null;
+
+    const ultimo = tramos[tramos.length - 1];
+    const fin = new Date(date.getTime());
+    fin.setHours(Math.floor(ultimo.fin / 60), ultimo.fin % 60, 0, 0);
+    return fin;
   }
 
   getWeekNumber(date) {
@@ -626,10 +786,9 @@ class BusinessCalendar {
    * Clave unica de la semana ISO: "AAAA-Wnn" (p. ej. "2026-W03").
    *
    * getWeekNumber() devuelve SOLO el numero de semana, asi que la semana 1 de
-   * 2026 y la semana 1 de 2027 compartian contador. Quien use el numero como
-   * clave (el cupo semanal de horas extra del motor) sumaba entre si dos
-   * semanas separadas por un año, y la segunda heredaba el cupo ya agotado de
-   * la primera.
+   * 2026 y la de 2027 compartian contador. Quien use el numero como clave (el
+   * cupo semanal de horas extra del motor) sumaba entre si dos semanas separadas
+   * por un año, y la segunda heredaba el cupo ya agotado de la primera.
    *
    * El año que acompaña es el año ISO (el de la semana), no el natural: el 1 de
    * enero puede pertenecer a la ultima semana de diciembre del año anterior.
@@ -647,16 +806,8 @@ class BusinessCalendar {
     let currentDate = new Date(startDate.getTime());
     currentDate.setHours(0, 0, 0, 0); // Start of the day
 
-    const holidaysSet = new Set(this.config.holidays || []);
-
     while (currentDate <= endDate) {
-      const dayOfWeek = currentDate.getDay();
-      const dateString = currentDate.toISOString().slice(0, 10);
-
-      if (this.config.workingDays.includes(dayOfWeek) && !holidaysSet.has(dateString)) {
-        workingDaysCount++;
-      }
-
+      if (this._esDiaLaborable(currentDate)) workingDaysCount++;
       currentDate.setDate(currentDate.getDate() + 1);
     }
 
@@ -958,10 +1109,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ DataTablePanel)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
-/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+/* harmony import */ var _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./WarmupCurve */ "./client/simulation/WarmupCurve.js");
+/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+
 
 
 
@@ -1014,7 +1167,17 @@ const GLOBAL_FIELDS = [
   { key: 'overtime.excessPayMultiplier', label: 'Multiplicador de exceso (x)', kind: 'number', path: [ 'overtime', 'excessPayMultiplier' ], min: 1 },
   { key: 'calendar.workingDays', label: 'Días laborables (0=Dom … 6=Sáb)', kind: 'days', path: [ 'calendar', 'workingDays' ] },
   { key: 'calendar.workingHours.start', label: 'Hora de entrada', kind: 'time', path: [ 'calendar', 'workingHours', 'start' ] },
-  { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ] }
+  { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ] },
+
+  // --- curva de arranque -----------------------------------------------------
+  // Se DECLARA, no se mide. La vista previa de abajo existe porque un parametro
+  // abstracto no se puede discutir y una curva si: se mueve el valor, se ve la
+  // forma, y se decide si se parece a la planta.
+  { key: 'warmup.shape', label: 'Arranque: forma', kind: 'select', options: _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.WARMUP_SHAPES, path: [ 'warmup', 'shape' ] },
+  { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1 },
+  { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1 },
+  { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ] },
+  { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] }
 ];
 
 const DEFAULT_GLOBAL = () => ({
@@ -1029,8 +1192,14 @@ const DEFAULT_GLOBAL = () => ({
   isRoot: true,
   calendar: {
     workingDays: [ 1, 2, 3, 4, 5 ],
-    workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }
+    workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } },
+    // Sin descansos por defecto: son propios de cada sitio, y ponerlos en
+    // silencio cambiaria los resultados sin que nadie lo haya pedido.
+    breaks: []
   },
+  // La curva de arranque SI trae valores por defecto: se declara, no se mide, y
+  // un valor de partida razonable es mejor que ninguno. Todo ajustable.
+  warmup: { ..._WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.WARMUP_DEFAULTS },
   cost: { baseRatePerHour: 50, waitCostPerHour: 0 },
   overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 }
 });
@@ -1221,19 +1390,19 @@ class DataTablePanel {
    */
   _esEditable(element) {
     if (!element || (0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(element)) return false;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Task')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:StartEvent')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Participant')) return true;
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:SequenceFlow')
-      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element.source, 'bpmn:ExclusiveGateway'));
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:StartEvent')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Participant')) return true;
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:SequenceFlow')
+      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element.source, 'bpmn:ExclusiveGateway'));
   }
 
   _ponerLapiz(element) {
-    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(
+    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(
       `<div class="sim-data-table-overlay" title="Editar los datos de simulación de este elemento"`
       + ` data-tip="Editar en la tabla de datos">${svg(EditIcon)}</div>`
     );
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(nodo, 'click', () => this.openFor(element));
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(nodo, 'click', () => this.openFor(element));
     this._overlayId = this._overlays.add(element, 'sim-data-table', {
       position: { top: -12, left: -12 },
       html: nodo
@@ -1252,7 +1421,7 @@ class DataTablePanel {
   _init() {
     if (this._panel) return;
 
-    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`
+    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(`
       <div class="${PANEL_CLS}">
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
@@ -1284,27 +1453,27 @@ class DataTablePanel {
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
 
     panel.querySelectorAll('.panel-tabs button').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(btn, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
-        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
         this._render();
       });
     });
   }
 
-  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).has(OPEN_CLS); }
+  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(this._panel).has(OPEN_CLS); }
   toggle() { this.isOpen() ? this.close() : this.open(); }
   open() {
     if (!this._panel) this._init();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).add(OPEN_CLS);
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(this._panel).add(OPEN_CLS);
     this._render();
   }
 
@@ -1320,10 +1489,10 @@ class DataTablePanel {
   openFor(element) {
     if (!element) return this.open();
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
     else this._activeTab = 'tasks';
 
     this._focusId = element.id;
@@ -1332,17 +1501,17 @@ class DataTablePanel {
     // _render() reconstruye las pestañas sin conservar cual estaba activa, asi
     // que se marca aqui.
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     const fila = this._panel.querySelector(`tbody tr[data-el-id="${element.id}"]`);
     if (fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(fila).add('fila-foco');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(fila).add('fila-foco');
       if (fila.scrollIntoView) fila.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
   }
 
   close() {
-    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).remove(OPEN_CLS);
+    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(this._panel).remove(OPEN_CLS);
     this._focusId = null;
     this._quitarOferta();
   }
@@ -1381,11 +1550,11 @@ class DataTablePanel {
     this._quitarOferta();
     if (!this._panel) return;
 
-    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(
+    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(
       '<button class="btn-desactivar" type="button">Desactivar modo y reintentar</button>'
     );
 
-    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(boton, 'click', () => {
+    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(boton, 'click', () => {
       this._quitarOferta();
       try {
         this._editorActions.trigger('toggleTokenSimulation');
@@ -1411,17 +1580,17 @@ class DataTablePanel {
   // -- acceso a datos -------------------------------------------------------
 
   _getTasks() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Task'));
   }
 
   _getFlows() {
     return this._elementRegistry.filter(
-      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el.source, 'bpmn:ExclusiveGateway')
+      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el.source, 'bpmn:ExclusiveGateway')
     );
   }
 
   _getRootStartEvent() {
-    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:StartEvent'));
+    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
     return starts.find((el) => {
       const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el);
       return d && d.isRoot;
@@ -1437,7 +1606,7 @@ class DataTablePanel {
    * algun dia, tiene que cambiar en los dos sitios a la vez.
    */
   _getProcessRoot() {
-    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Participant')) || null;
+    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Participant')) || null;
   }
 
   /** Piscinas de recursos declaradas en el proceso. */
@@ -1504,7 +1673,7 @@ class DataTablePanel {
     if (this._getRootStartEvent()) return;
     if (!this._body) return;
 
-    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(
+    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(
       '<p class="aviso-raiz">Sin evento raíz configurado la simulación no se ejecutará. '
       + 'Ve a la pestaña <strong>Global</strong> para crearlo.</p>'
     );
@@ -1644,7 +1813,7 @@ class DataTablePanel {
 
     const boton = this._body.querySelector('.btn-anadir-fila');
     if (boton) {
-      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(boton, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(boton, 'click', () => {
         const tbody = this._body.querySelector('.filas-pool');
         // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
         // parseo de un contenedor que no sea <table>/<tbody>.
@@ -1656,7 +1825,7 @@ class DataTablePanel {
     // despues, y evita re-vincular los botones que ya existian.
     const tbody = this._body.querySelector('.filas-pool');
     if (tbody) {
-      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(tbody, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(tbody, 'click', (e) => {
         const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
         if (!btn) return;
         const tr = btn.closest('tr');
@@ -1771,7 +1940,7 @@ class DataTablePanel {
     this._body.querySelectorAll('[data-field="branchingProbability"]').forEach((input) => {
       if (input.disabled) return;
 
-      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(input, 'input', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(input, 'input', () => {
         this._equilibrar(input);
         this._refrescarSumas();
       });
@@ -1780,7 +1949,7 @@ class DataTablePanel {
       // rango -> al limite. Sin esto el campo podia quedarse en -10 y el
       // indicador decia "100 %" (la suma los recortaba) mientras el guardado lo
       // bloqueaba: indicador y validacion se contradecian.
-      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(input, 'change', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(input, 'change', () => {
         const crudo = String(input.value).replace(',', '.');
         const n = Number(crudo);
         if (crudo.trim() === '' || Number.isNaN(n)) input.value = '0';
@@ -1887,7 +2056,7 @@ class DataTablePanel {
       // que ya existiera, pero no habia forma de crearlo desde aqui. El usuario
       // rellenaba las tareas, guardaba, y al simular recibia "No root start
       // event found" sin saber que le faltaba. Ahora se puede crear desde aqui.
-      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:StartEvent'));
+      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
 
       if (!inicios.length) {
         this._body.innerHTML = `
@@ -1917,7 +2086,7 @@ class DataTablePanel {
       `;
 
       this._body.querySelectorAll('.btn-raiz').forEach((btn) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
+        min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
       });
       return;
     }
@@ -1941,6 +2110,11 @@ class DataTablePanel {
           `<label><input type="checkbox" data-days="${field.key}" value="${i}"`
           + `${activos.includes(i) ? ' checked' : ''}> ${nombre}</label>`
         ).join('')}</span>`;
+      }
+      // Casilla booleana (los interruptores de la curva de arranque).
+      if (field.kind === 'checkbox') {
+        return `<label class="casilla"><input type="checkbox" data-field="${field.key}"`
+          + `${value === false ? '' : ' checked'}> activado</label>`;
       }
       // Selector de hora nativo: mismo motivo, y evita el formato invalido.
       if (field.kind === 'time') {
@@ -1975,7 +2149,150 @@ class DataTablePanel {
         Marca los días laborables y ajusta las horas con los selectores.
         La hora de entrada debe ser anterior a la de salida.
       </p>
+
+      <h4 class="subtitulo">Descansos</h4>
+      <p class="hint">
+        Un descanso <strong>parte la jornada en tramos</strong>: la tarea que lo pilla a medias
+        se pausa y se retoma al volver. Un descanso <strong>nunca es tiempo productivo</strong> (baja la
+        capacidad y sube ρ), y sus dos casillas dicen dos cosas distintas:
+        <em>¿cuenta como jornada?</em> afecta al umbral de horas extra (la ley lo exige cuando
+        <strong>no</strong> se puede salir del centro), y <em>¿también en horas extra?</em> decide si el
+        descanso se toma cuando la jornada se alarga.
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Desde</th><th>Hasta</th>
+            <th>¿Cuenta como jornada?</th><th>¿También en horas extra?</th><th></th>
+          </tr>
+        </thead>
+        <tbody class="filas-descanso">
+          ${(data.calendar && Array.isArray(data.calendar.breaks) ? data.calendar.breaks : [])
+            .map((b) => this._filaDescanso(b)).join('')}
+        </tbody>
+      </table>
+      <button class="btn-anadir-fila" type="button" data-accion="anadir-descanso">+ Añadir descanso</button>
+
+      <h4 class="subtitulo">Curva de arranque</h4>
+      <p class="hint">
+        El arranque lento <strong>no se mide, se declara</strong>, y con una curva es más realista que
+        con un porcentaje fijo: el porcentaje plano repartiría la pérdida por <em>toda</em> la jornada,
+        incluida la tarde, donde no ocurre. Ajusta los valores y mira la forma: si no se parece a tu
+        planta, la curva está mal puesta.
+      </p>
+      <div class="caja-curva">${this._svgArranque(data.warmup)}</div>
+      <p class="hint" data-resumen-arranque>${esc((0,_WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.describeWarmup)(data.warmup))}</p>
     `;
+
+    this._bindGlobalExtras();
+  }
+
+  /**
+   * Una fila del editor de descansos.
+   *
+   * `existeEnExtra` va marcado por defecto: lo normal es que el descanso se tome
+   * tambien cuando la jornada se alarga, y desmarcarlo es la excepcion.
+   */
+  _filaDescanso(b) {
+    const hora = (t) => (t && Number.isFinite(t.hour) ? `${pad(t.hour)}:${pad(t.minute)}` : '');
+    return `
+      <tr>
+        <td><input type="time" class="cell" data-descanso="start" value="${esc(hora(b && b.start))}"></td>
+        <td><input type="time" class="cell" data-descanso="end" value="${esc(hora(b && b.end))}"></td>
+        <td class="centro"><input type="checkbox" data-descanso="cuentaComoJornada"
+          ${b && b.cuentaComoJornada ? 'checked' : ''}></td>
+        <td class="centro"><input type="checkbox" data-descanso="existeEnExtra"
+          ${!(b && b.existeEnExtra === false) ? 'checked' : ''}></td>
+        <td><button class="btn-quitar-pool" type="button" title="Quitar este descanso" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
+  }
+
+  /**
+   * Dibuja la curva de arranque declarada. SVG en linea: no necesita ninguna
+   * libreria de graficos y se imprime igual de bien que en pantalla.
+   */
+  _svgArranque(cfg) {
+    const ancho = 320;
+    const alto = 110;
+    const margen = 10;
+    const puntos = (0,_WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.curvePoints)(cfg, undefined, 40);
+    const tMax = Math.max(1, puntos[puntos.length - 1].t);
+
+    const x = (t) => margen + (t / tMax) * (ancho - margen * 2);
+    const y = (e) => alto - margen - e * (alto - margen * 2);
+    const trazo = puntos.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.efficiency).toFixed(1)}`).join(' ');
+
+    return `
+      <svg viewBox="0 0 ${ancho} ${alto}" class="curva-arranque" role="img"
+           aria-label="Curva de arranque declarada">
+        <line x1="${margen}" y1="${alto - margen}" x2="${ancho - margen}" y2="${alto - margen}" class="eje"></line>
+        <line x1="${margen}" y1="${margen}" x2="${margen}" y2="${alto - margen}" class="eje"></line>
+        <line x1="${margen}" y1="${y(1)}" x2="${ancho - margen}" y2="${y(1)}" class="referencia"></line>
+        <path d="${trazo}" class="linea"></path>
+        <text x="${ancho - margen}" y="${y(1) - 3}" text-anchor="end" class="rotulo">100 %</text>
+        <text x="${margen + 2}" y="${alto - margen - 2}" class="rotulo">0 min</text>
+        <text x="${ancho - margen}" y="${alto - margen - 2}" text-anchor="end" class="rotulo">${Math.round(tMax)} min</text>
+      </svg>`;
+  }
+
+  /** Lee la curva de arranque del DOM (para la vista previa en vivo). */
+  _leerArranqueDelDom() {
+    const valor = (clave) => {
+      const campo = this._body.querySelector(`[data-field="${clave}"]`);
+      return campo ? campo.value : undefined;
+    };
+    const marcado = (clave) => {
+      const campo = this._body.querySelector(`[data-field="${clave}"]`);
+      return campo ? campo.checked : false;
+    };
+
+    return {
+      shape: valor('warmup.shape') || 'none',
+      initialEfficiency: Number(String(valor('warmup.initialEfficiency')).replace(',', '.')),
+      recoveryMinutes: Number(String(valor('warmup.recoveryMinutes')).replace(',', '.')),
+      onShiftStart: marcado('warmup.onShiftStart'),
+      onBreakReturn: marcado('warmup.onBreakReturn')
+    };
+  }
+
+  /** Redibuja la curva con lo que hay AHORA en pantalla, aunque no se haya guardado. */
+  _refrescarCurvaArranque() {
+    const caja = this._body.querySelector('.caja-curva');
+    if (caja) caja.innerHTML = this._svgArranque(this._leerArranqueDelDom());
+
+    const resumen = this._body.querySelector('[data-resumen-arranque]');
+    if (resumen) resumen.textContent = (0,_WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.describeWarmup)(this._leerArranqueDelDom());
+  }
+
+  /** Conecta el editor de descansos y la vista previa de la curva. */
+  _bindGlobalExtras() {
+    const boton = this._body.querySelector('[data-accion="anadir-descanso"]');
+    if (boton) {
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(boton, 'click', () => {
+        const tbody = this._body.querySelector('.filas-descanso');
+        // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al parseo
+        // de un contenedor que no sea <table>/<tbody>.
+        tbody.insertAdjacentHTML('beforeend', this._filaDescanso(null));
+      });
+    }
+
+    const tbody = this._body.querySelector('.filas-descanso');
+    if (tbody) {
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(tbody, 'click', (e) => {
+        const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
+        if (!btn) return;
+        const tr = btn.closest('tr');
+        if (tr) tr.remove();
+      });
+    }
+
+    GLOBAL_FIELDS.forEach((f) => {
+      if (!f.key.startsWith('warmup.')) return;
+      const campo = this._body.querySelector(`[data-field="${f.key}"]`);
+      if (!campo) return;
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
+    });
   }
 
   // -- guardar --------------------------------------------------------------
@@ -2186,7 +2503,10 @@ class DataTablePanel {
       if (field.kind === 'number') {
         const n = this._num(raw, field.label);
         if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
+        if (field.max != null && n > field.max) throw new Error(`${field.label}: debe ser ≤ ${field.max}`);
         setByPath(data, field.path, n);
+      } else if (field.kind === 'checkbox') {
+        setByPath(data, field.path, Boolean(input.checked));
       } else if (field.kind === 'time') {
         // <input type="time"> ya entrega HH:MM, pero puede quedar vacio si el
         // usuario borra el campo, asi que se valida igualmente.
@@ -2208,6 +2528,60 @@ class DataTablePanel {
     if (entrada && salida && (entrada.hour * 60 + entrada.minute) >= (salida.hour * 60 + salida.minute)) {
       throw new Error('La hora de entrada debe ser anterior a la de salida');
     }
+
+    // Descansos: es una LISTA, no un campo escalar, asi que se recoge aparte de
+    // GLOBAL_FIELDS (mismo motivo que las piscinas de recursos).
+    const descansos = [];
+    const minutosDe = (t) => t.hour * 60 + t.minute;
+
+    this._body.querySelectorAll('.filas-descanso tr').forEach((tr, i) => {
+      const valor = (campo) => {
+        const el = tr.querySelector(`[data-descanso="${campo}"]`);
+        return el ? String(el.value).trim() : '';
+      };
+      const marcado = (campo) => {
+        const el = tr.querySelector(`[data-descanso="${campo}"]`);
+        return Boolean(el && el.checked);
+      };
+
+      const desde = valor('start');
+      const hasta = valor('end');
+      // Fila sin horas: se ignora, para que una fila recien anadida no bloquee.
+      if (!desde && !hasta) return;
+
+      const mDesde = desde.match(/^(\d{1,2}):(\d{2})$/);
+      const mHasta = hasta.match(/^(\d{1,2}):(\d{2})$/);
+      if (!mDesde) throw new Error(`Descanso ${i + 1}: hora de inicio no válida («${desde}»)`);
+      if (!mHasta) throw new Error(`Descanso ${i + 1}: hora de fin no válida («${hasta}»)`);
+
+      const inicio = { hour: Number(mDesde[1]), minute: Number(mDesde[2]) };
+      const fin = { hour: Number(mHasta[1]), minute: Number(mHasta[2]) };
+
+      if (minutosDe(fin) <= minutosDe(inicio)) {
+        throw new Error(`Descanso ${i + 1}: el fin debe ser posterior al inicio (${desde} → ${hasta})`);
+      }
+      // Un descanso FUERA de la jornada es casi siempre una errata, y el motor lo
+      // ignoraria en silencio (no parte ningun tramo). Mejor decirlo.
+      if (entrada && salida) {
+        const dentroDeLaJornada = minutosDe(fin) > minutosDe(entrada) && minutosDe(inicio) < minutosDe(salida);
+        if (!dentroDeLaJornada) {
+          throw new Error(
+            `Descanso ${i + 1} (${desde} → ${hasta}): queda fuera de la jornada `
+            + `(${pad(entrada.hour)}:${pad(entrada.minute)} - ${pad(salida.hour)}:${pad(salida.minute)}), `
+            + 'así que no partiría ningún tramo'
+          );
+        }
+      }
+
+      descansos.push({
+        start: inicio,
+        end: fin,
+        cuentaComoJornada: marcado('cuentaComoJornada'),
+        existeEnExtra: marcado('existeEnExtra')
+      });
+    });
+
+    setByPath(data, [ 'calendar', 'breaks' ], descansos);
 
     writes.push({ element: info.element, data });
     return writes;
@@ -2510,9 +2884,22 @@ class DataTablePanel {
       let text;
       if (f.kind === 'days') text = Array.isArray(v) ? v.join(',') : '';
       else if (f.kind === 'time') text = v && typeof v === 'object' ? `${pad(v.hour)}:${pad(v.minute)}` : '';
+      else if (f.kind === 'checkbox') text = v === false ? 'no' : 'si';
       else text = v == null ? '' : v;
       rows.push([ f.key, f.label, text ]);
     });
+
+    // Los descansos son una lista: una fila por dato, con clave `descanso.N.campo`.
+    // Asi sigue siendo editable en Excel y vuelve entera al importar.
+    const hhmm = (t) => (t && Number.isFinite(t.hour) ? `${pad(t.hour)}:${pad(t.minute)}` : '');
+    ((info.data.calendar && info.data.calendar.breaks) || []).forEach((b, i) => {
+      const n = i + 1;
+      rows.push([ `descanso.${n}.inicio`, `Descanso ${n}: desde`, hhmm(b.start) ]);
+      rows.push([ `descanso.${n}.fin`, `Descanso ${n}: hasta`, hhmm(b.end) ]);
+      rows.push([ `descanso.${n}.cuentaComoJornada`, `Descanso ${n}: ¿cuenta como jornada?`, b.cuentaComoJornada ? 'si' : 'no' ]);
+      rows.push([ `descanso.${n}.existeEnExtra`, `Descanso ${n}: ¿también en horas extra?`, b.existeEnExtra === false ? 'no' : 'si' ]);
+    });
+
     return rows;
   }
 
@@ -2728,7 +3115,24 @@ class DataTablePanel {
 
     const data = JSON.parse(JSON.stringify(info.data));
 
-    body.forEach((r, n) => {
+    // Los descansos se leen primero y se QUITAN de la lista de campos: si no,
+    // caerian en el bucle de abajo y saltaria «campo desconocido».
+    const filasDescanso = new Map();
+    const filasCampos = [];
+
+    body.forEach((r) => {
+      const clave = String(r[iKey]).trim();
+      const m = clave.match(/^descanso\.(\d+)\.(inicio|fin|cuentaComoJornada|existeEnExtra)$/);
+      if (!m) {
+        filasCampos.push(r);
+        return;
+      }
+      const idx = Number(m[1]);
+      if (!filasDescanso.has(idx)) filasDescanso.set(idx, {});
+      filasDescanso.get(idx)[m[2]] = String(r[iVal]).trim();
+    });
+
+    filasCampos.forEach((r, n) => {
       const line = n + 2;
       const field = GLOBAL_FIELDS.find((f) => f.key === String(r[iKey]).trim());
       if (!field) throw new Error(`Línea ${line}: campo desconocido «${r[iKey]}»`);
@@ -2753,10 +3157,47 @@ class DataTablePanel {
         const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})$/);
         if (!m) throw new Error(`Línea ${line}: ${field.label} debe ser HH:MM («${raw}»)`);
         setByPath(data, field.path, { hour: Number(m[1]), minute: Number(m[2]) });
+      } else if (field.kind === 'checkbox') {
+        // Se acepta «si/sí/s/true/1» y cualquier otra cosa es «no», para no
+        // pelearse con la hoja de calculo.
+        const texto = String(raw).trim().toLowerCase();
+        setByPath(data, field.path, /^(s|sí|si|true|1|x)/.test(texto));
       } else {
         setByPath(data, field.path, String(raw));
       }
     });
+
+    // Descansos: si el CSV trae alguno, se reconstruye la lista ENTERA con ellos.
+    // Si no trae ninguno, se dejan los que ya tuviera el modelo.
+    if (filasDescanso.size) {
+      const descansos = [];
+
+      Array.from(filasDescanso.keys()).sort((a, b) => a - b).forEach((idx) => {
+        const f = filasDescanso.get(idx);
+        const hora = (texto, cual) => {
+          const m = String(texto || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+          if (!m) throw new Error(`Descanso ${idx}: ${cual} «${texto}» no es HH:MM`);
+          return { hour: Number(m[1]), minute: Number(m[2]) };
+        };
+        const esSi = (v) => /^(s|sí|si|true|1|x)/.test(String(v || '').trim().toLowerCase());
+
+        const start = hora(f.inicio, 'desde');
+        const end = hora(f.fin, 'hasta');
+        if (end.hour * 60 + end.minute <= start.hour * 60 + start.minute) {
+          throw new Error(`Descanso ${idx}: el fin debe ser posterior al inicio`);
+        }
+
+        descansos.push({
+          start,
+          end,
+          cuentaComoJornada: esSi(f.cuentaComoJornada),
+          // Ausente = se toma tambien en horas extra, que es lo normal.
+          existeEnExtra: f.existeEnExtra === undefined ? true : esSi(f.existeEnExtra)
+        });
+      });
+
+      setByPath(data, [ 'calendar', 'breaks' ], descansos);
+    }
 
     updates.push({ element: info.element, data });
     return updates;
@@ -6169,9 +6610,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationEngine)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./BusinessCalendar.js */ "./client/simulation/BusinessCalendar.js");
+/* harmony import */ var _WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./WarmupCurve.js */ "./client/simulation/WarmupCurve.js");
+
 
 
 
@@ -6279,6 +6722,11 @@ class SimulationEngine {
     // medir esperas y ciclos de forma comparable en los dos planes.
     this.standardCalendar = new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](rootConfig.calendar);
 
+    // Curva de arranque: se DECLARA (no se mide) y afecta a la duracion en RELOJ
+    // de las tareas, no al trabajo contabilizado. Sin `warmup` en la
+    // configuracion no hay arranque, que es el comportamiento de siempre.
+    this.warmup = (0,_WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__.normalizeWarmup)(rootConfig.warmup);
+
     let simStart = new Date();
     if (rootConfig.startDate && /^\d{4}-\d{2}-\d{2}$/.test(rootConfig.startDate)) {
       simStart = new Date(rootConfig.startDate + 'T00:00:00');
@@ -6335,7 +6783,7 @@ class SimulationEngine {
       return [];
     }
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:ParallelGateway')) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -6344,7 +6792,7 @@ class SimulationEngine {
     }
 
     let chosenFlow = null;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = Math.random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
@@ -6411,7 +6859,7 @@ class SimulationEngine {
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(nextElement);
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
 
@@ -6420,7 +6868,7 @@ class SimulationEngine {
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(nextElement, 'bpmn:Task') && data) {
+      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(nextElement, 'bpmn:Task') && data) {
         this.scheduleTask({ type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime });
       } else {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
@@ -6459,10 +6907,21 @@ class SimulationEngine {
     }
 
     const totalTaskDurationInMillis = processingTime + reworkTime;
-    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000, this.standardCalendar);
 
-    // "Costo de Operación" is the cost of all hours worked at the base rate.
-    const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
+    // Curva de arranque: el MISMO trabajo cuesta mas tiempo de reloj si arranca
+    // dentro de la rampa de su tramo. Se aplica desde el inicio EFECTIVO de la
+    // tarea, asi que una tarea que espera una hora no sufre el arranque (cuando
+    // por fin empieza, el tramo ya lleva una hora en marcha).
+    const duracionEfectivaMs = this._msConArranque(totalTaskDurationInMillis, new Date(time));
+
+    const { overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), duracionEfectivaMs / 60000, this.standardCalendar);
+
+    // "Costo de Operación" es el coste de las horas que se PAGAN a tarifa base.
+    // Se usa la duracion efectiva: si alguien va lento al arrancar esta en el
+    // puesto mas tiempo, y ese tiempo se paga. Ademas asi la rampa TIENE coste,
+    // que es justo lo que se quiere medir. Sin arranque declarado, la duracion
+    // efectiva es la real y el coste no cambia.
+    const operationCost = (duracionEfectivaMs / 3600000) * baseRatePerHour;
 
     // Overtime cost is the PREMIUM ONLY.
     // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
@@ -6499,7 +6958,11 @@ class SimulationEngine {
       doubleOvertimePremium,
       tripleOvertimePremium,
       quantityRequired,
-      totalDuration: totalTaskDurationInMillis
+      totalDuration: totalTaskDurationInMillis,
+      // Duracion de RELOJ con el arranque aplicado. Se guarda aparte de
+      // `totalDuration` porque el camino de espera por recursos vuelve a calcular
+      // el fin desde su propio inicio, y alli el arranque se reevalua.
+      effectiveDuration: duracionEfectivaMs
     };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
@@ -6515,7 +6978,7 @@ class SimulationEngine {
   }
 
   _findRootConfig() {
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el)?.isRoot);
 
     if (rootEvents.length === 1) {
@@ -6558,6 +7021,14 @@ class SimulationEngine {
             overtimeCalendarConfig.workingHours.end.minute = 59;
         }
       }
+      // Los descansos se mantienen en la jornada extendida salvo que su
+      // interruptor diga lo contrario: «¿el descanso existe en el tramo de horas
+      // extra?» es una casilla del configurador de horarios y extras, porque en
+      // planta puede pasar cualquiera de las dos cosas.
+      // Se filtra ANTES de construir el calendario: despues no serviria de nada.
+      overtimeCalendarConfig.breaks = (overtimeCalendarConfig.breaks || [])
+        .filter((b) => !(b && b.existeEnExtra === false));
+
       this.calendar = new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](overtimeCalendarConfig);
 
       // Se guarda porque el calendario se restaura al terminar `run()`: sin esto,
@@ -6567,14 +7038,14 @@ class SimulationEngine {
 
     console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
 
-    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Participant'));
+    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Participant'));
     const processConfig = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(processRoot);
     const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
 
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
     if (!startEvents.length) {
       console.error("No start event found. Cannot run simulation.");
       return this.results;
@@ -6645,8 +7116,9 @@ class SimulationEngine {
 
           // Utilizacion: minutos-recurso consumidos. Se cuentan al COMPLETAR la
           // tarea (no al pedir el recurso) porque solo entonces consta que el
-          // recurso trabajo de verdad esa duracion.
-          pool.busyMinutes += (event.totalDuration / 60000) * event.quantityRequired;
+          // recurso trabajo de verdad esa duracion. Se usa la efectiva: si va
+          // lento al arrancar, el puesto esta ocupado mas tiempo.
+          pool.busyMinutes += ((event.effectiveDuration || event.totalDuration) / 60000) * event.quantityRequired;
 
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
@@ -6659,7 +7131,11 @@ class SimulationEngine {
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
 
-            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.totalDuration / 60000).getTime();
+            // La tarea arranca AHORA: el arranque se reevalua desde este inicio,
+            // no desde el que tenia cuando se encolo.
+            const efectiva = this._msConArranque(nextTask.totalDuration, new Date(this.clock));
+            nextTask.effectiveDuration = efectiva;
+            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), efectiva / 60000).getTime();
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
           });
@@ -6669,7 +7145,7 @@ class SimulationEngine {
         this.processEvent(event);
       }
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
         instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
@@ -6729,6 +7205,33 @@ class SimulationEngine {
   }
 
   /**
+   * Minutos de RELOJ (en ms) que cuesta un trabajo, con la curva de arranque ya
+   * aplicada desde el inicio efectivo de la tarea.
+   *
+   * Se aplica desde el momento en que la tarea empieza DE VERDAD, no cuando se
+   * encola: si espera una hora por un recurso, cuando por fin arranca el tramo ya
+   * lleva una hora en marcha y no le toca arranque.
+   *
+   * Y cada TRAMO es un disparador: el primero del dia es el arranque de jornada y
+   * los siguientes son el regreso de un descanso. Los dos interruptores del
+   * configurador deciden cuales se aplican.
+   */
+  _msConArranque(realMs, desde) {
+    const cfg = this.warmup;
+    const minutos = realMs / 60000;
+    if (!cfg || cfg.shape === 'none' || !(minutos > 0)) return realMs;
+
+    const inicioTramo = this.calendar.inicioDeTramo(desde);
+    if (!inicioTramo) return realMs;
+
+    const esPrimero = this.calendar.esPrimerTramo(inicioTramo);
+    if (esPrimero ? !cfg.onShiftStart : !cfg.onBreakReturn) return realMs;
+
+    const transcurrido = Math.max(0, (desde.getTime() - inicioTramo.getTime()) / 60000);
+    return (0,_WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__.effectiveDuration)(minutos, transcurrido, cfg) * 60000;
+  }
+
+  /**
    * Descripcion legible del intervalo entre llegadas.
    *
    * `arrivalRate` es una TASA (llegadas por unidad de tiempo), NO un intervalo:
@@ -6777,6 +7280,17 @@ class SimulationEngine {
         ? `${horas(cal.workingHours.start)} - ${horas(cal.workingHours.end)}` +
           (useOvertime ? ` (extendida: ${horas(this.calendar.config.workingHours.end)})` : '')
         : '(sin calendario)',
+      // Tramos de trabajo del calendario ACTIVO y descansos: con descansos la
+      // jornada no es un bloque, y el informe tiene que enseñarlo tal cual se
+      // simulo, no tal como se configuro.
+      tramosDeTrabajo: this.calendar.tramosDelDia(new Date(this.simulationStartTime)).map(
+        (t) => `${horas({ hour: Math.floor(t.inicio / 60), minute: t.inicio % 60 })}`
+             + `-${horas({ hour: Math.floor(t.fin / 60), minute: t.fin % 60 })}`
+      ),
+      minutosDeTrabajoAlDia: this.calendar.minutosDeTrabajoDelDia(new Date(this.simulationStartTime)),
+      descansos: (this.calendar.config.breaks || []).length,
+      descansoCuentaComoJornada: (this.calendar.config.breaks || []).filter((b) => b.cuentaComoJornada).length,
+      arranque: (0,_WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__.describeWarmup)(this.warmup),
       diasLaborables: cal.workingDays,
       festivos: (cal.holidays || []).length,
       tarifaBasePorHora: cfg.cost && cfg.cost.baseRatePerHour,
@@ -6784,7 +7298,7 @@ class SimulationEngine {
       horasExtra: cfg.overtime
     });
 
-    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_2__.is)(el, 'bpmn:Task'));
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Task'));
 
     if (!tareas.length) {
       console.log('No hay tareas en el diagrama.');
@@ -7264,6 +7778,206 @@ class SimulationPalette {
 }
 
 SimulationPalette.$inject = [ 'canvas', 'eventBus' ];
+
+
+/***/ }),
+
+/***/ "./client/simulation/WarmupCurve.js":
+/*!******************************************!*\
+  !*** ./client/simulation/WarmupCurve.js ***!
+  \******************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   WARMUP_DEFAULTS: () => (/* binding */ WARMUP_DEFAULTS),
+/* harmony export */   WARMUP_SHAPES: () => (/* binding */ WARMUP_SHAPES),
+/* harmony export */   accumulatedLoss: () => (/* binding */ accumulatedLoss),
+/* harmony export */   curvePoints: () => (/* binding */ curvePoints),
+/* harmony export */   describeWarmup: () => (/* binding */ describeWarmup),
+/* harmony export */   effectiveDuration: () => (/* binding */ effectiveDuration),
+/* harmony export */   efficiencyAt: () => (/* binding */ efficiencyAt),
+/* harmony export */   normalizeWarmup: () => (/* binding */ normalizeWarmup)
+/* harmony export */ });
+/**
+ * Curva de arranque: cuanto tarda un tramo en volver al 100 % de rendimiento.
+ *
+ * El arranque lento no se puede medir en planta (es dificil), pero SI se puede
+ * declarar. Y declararlo con una CURVA es mas realista que con un porcentaje
+ * fijo, porque un porcentaje plano reparte la perdida por toda la jornada
+ * —incluida la tarde, donde no ocurre— mientras que la curva la concentra donde
+ * esta: al principio.
+ *
+ * Dos formas, y las dos se resuelven con formulas cerradas (nada de integracion
+ * numerica dentro de un bucle):
+ *
+ *   exponential  e(t) = 1 - (1 - e0)·e^(-t/tau)   Por defecto
+ *   linear       e(t) = e0 + (1 - e0)·(t / R)     y despues 1
+ *
+ * Donde `initialEfficiency` es la eficiencia al arrancar (p. ej. 0,70) y
+ * `recoveryMinutes` los minutos de recuperacion. En la exponencial se toma
+ * tau = R/3, de modo que a los R minutos se ha recuperado ~95 % de lo que
+ * faltaba: asi «recoveryMinutes» significa lo mismo en las dos formas y el
+ * configurador se puede explicar con una sola frase.
+ *
+ * La forma logaritmica se descarto: nunca llega al 100 %, asi que exige ponerle
+ * un tope, y el tope es un segundo numero inventado.
+ */
+
+/** Formas disponibles. `none` desactiva el arranque. */
+const WARMUP_SHAPES = [ 'exponential', 'linear', 'none' ];
+
+/** Valores por defecto, todos ajustables desde la interfaz. */
+const WARMUP_DEFAULTS = {
+  shape: 'exponential',
+  initialEfficiency: 0.70,
+  recoveryMinutes: 30,
+  // Interruptores de los disparadores. Cada TRAMO empieza con un arranque: el
+  // primero del dia es el de la jornada, los siguientes son el regreso de un
+  // descanso.
+  onShiftStart: true,
+  onBreakReturn: true
+};
+
+const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+
+/** Normaliza la configuracion para que ningun valor absurdo rompa la matematica. */
+const normalizeWarmup = (cfg) => {
+  const c = cfg || {};
+  return {
+    shape: WARMUP_SHAPES.includes(c.shape) ? c.shape : 'none',
+    // Una eficiencia de 0 dejaria el trabajo infinito; de 1, no habria arranque.
+    initialEfficiency: clamp(
+      Number(c.initialEfficiency) || WARMUP_DEFAULTS.initialEfficiency, 0.05, 1
+    ),
+    recoveryMinutes: Math.max(1, Number(c.recoveryMinutes) || WARMUP_DEFAULTS.recoveryMinutes),
+    onShiftStart: c.onShiftStart !== false,
+    onBreakReturn: c.onBreakReturn !== false
+  };
+};
+
+/** Minutos de recuperacion -> constante de tiempo de la exponencial. */
+const tauOf = (cfg) => cfg.recoveryMinutes / 3;
+
+/** Eficiencia en el minuto `t` desde el disparador del tramo (1 = a pleno ritmo). */
+const efficiencyAt = (t, cfg) => {
+  const c = normalizeWarmup(cfg);
+  if (c.shape === 'none') return 1;
+  if (!(t > 0)) return c.initialEfficiency;
+
+  if (c.shape === 'linear') {
+    return t >= c.recoveryMinutes
+      ? 1
+      : c.initialEfficiency + (1 - c.initialEfficiency) * (t / c.recoveryMinutes);
+  }
+
+  return 1 - (1 - c.initialEfficiency) * Math.exp(-t / tauOf(c));
+};
+
+/**
+ * Trabajo «perdido» acumulado en `x` minutos de reloj desde el disparador:
+ *
+ *   loss(x) = x - accumulatedWork(x)
+ *
+ * Es lo que permite resolver la duracion efectiva con una sola incognita.
+ */
+const accumulatedLoss = (x, cfg) => {
+  const c = normalizeWarmup(cfg);
+  if (c.shape === 'none' || !(x > 0)) return 0;
+
+  if (c.shape === 'linear') {
+    const R = c.recoveryMinutes;
+    if (x <= R) return (1 - c.initialEfficiency) * x * (1 - x / (2 * R));
+    return (1 - c.initialEfficiency) * (R / 2);
+  }
+
+  const tau = tauOf(c);
+  return (1 - c.initialEfficiency) * tau * (1 - Math.exp(-x / tau));
+};
+
+/** Perdida maxima posible de la curva (cota superior de loss). */
+const maxLoss = (cfg) => {
+  const c = normalizeWarmup(cfg);
+  if (c.shape === 'none') return 0;
+  if (c.shape === 'linear') return (1 - c.initialEfficiency) * (c.recoveryMinutes / 2);
+  return (1 - c.initialEfficiency) * tauOf(c);
+};
+
+/**
+ * Minutos de RELOJ necesarios para completar `workMinutes` de trabajo empezando
+ * en el minuto `elapsed` del tramo.
+ *
+ * Se resuelve  E(elapsed + D) - E(elapsed) = work  por biseccion sobre D, que es
+ * monotona (su derivada es la eficiencia, siempre > 0). En cuanto `elapsed`
+ * supera la recuperacion el resultado es exactamente `work`: **la formula se
+ * degrada sola a «sin arranque»** y no hace falta un caso especial.
+ */
+const effectiveDuration = (workMinutes, elapsed, cfg) => {
+  const c = normalizeWarmup(cfg);
+  if (c.shape === 'none' || !(workMinutes > 0)) return Math.max(0, workMinutes);
+
+  const inicio = Math.max(0, elapsed);
+  const perdidaPrevia = accumulatedLoss(inicio, c);
+  const perdidaMax = maxLoss(c);
+
+  // El tramo ya esta arrancado de sobra: no hay nada que resolver.
+  if (perdidaPrevia >= perdidaMax) return workMinutes;
+
+  let bajo = workMinutes;
+  let alto = workMinutes + (perdidaMax - perdidaPrevia) + 1e-9;
+
+  for (let i = 0; i < 60; i++) {
+    const medio = (bajo + alto) / 2;
+    const trabajoHecho = (inicio + medio)
+      - accumulatedLoss(inicio + medio, c)
+      - (inicio - perdidaPrevia);
+    if (trabajoHecho < workMinutes) bajo = medio;
+    else alto = medio;
+  }
+
+  return (bajo + alto) / 2;
+};
+
+/**
+ * Puntos para DIBUJAR la curva en el configurador.
+ *
+ * Existe por un motivo concreto: un parametro abstracto (una eficiencia inicial,
+ * unos minutos) no se puede discutir. Una curva si. Es la forma correcta de
+ * ajustar algo que no se puede medir: no pedir el numero, sino ENSENAR el efecto
+ * y dejar que lo reconozca quien conoce el proceso.
+ */
+const curvePoints = (cfg, minutes, steps = 40) => {
+  const c = normalizeWarmup(cfg);
+  const total = Math.max(1, minutes || c.recoveryMinutes * 2);
+
+  return Array.from({ length: steps + 1 }, (_, i) => {
+    const t = (total * i) / steps;
+    return { t, efficiency: efficiencyAt(t, c) };
+  });
+};
+
+/**
+ * Resumen legible de la curva, para imprimir junto al dato.
+ *
+ * La penalizacion es el dato para contrastar con la planta: si arranca en 0,70,
+ * las primeras tareas tardan ~43 % mas. Si eso parece exagerado, la curva esta
+ * mal ajustada — y se decide mirandola, no calculandola.
+ */
+const describeWarmup = (cfg) => {
+  const c = normalizeWarmup(cfg);
+  if (c.shape === 'none') return 'sin arranque';
+
+  const pct = Math.round(c.initialEfficiency * 100);
+  const penalizacion = Math.round((1 / c.initialEfficiency - 1) * 100);
+  const disparadores = [];
+  if (c.onShiftStart) disparadores.push('inicio de jornada');
+  if (c.onBreakReturn) disparadores.push('regreso de descanso');
+
+  return `${c.shape === 'exponential' ? 'exponencial' : 'lineal'}: arranca al ${pct} % `
+    + `(las primeras tareas tardan ~${penalizacion} % más), recupera en ${c.recoveryMinutes} min`
+    + (disparadores.length ? ` — ${disparadores.join(' y ')}` : ' — (sin disparadores activos)');
+};
 
 
 /***/ }),
@@ -17279,6 +17993,79 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   cursor: not-allowed;
 }
 
+/* --- pestaña Global: descansos y curva de arranque --- */
+
+.sim-data-table-panel .subtitulo {
+  margin: 22px 0 4px;
+  font-size: 13px;
+  color: #1565c0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+}
+
+/* Casilla booleana con su etiqueta a la derecha. */
+.sim-data-table-panel .casilla {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .casilla input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .data-table td.centro {
+  text-align: center;
+}
+
+.sim-data-table-panel .data-table td.centro input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */
+.sim-data-table-panel .caja-curva {
+  display: inline-block;
+  padding: 6px 10px;
+  background: #fbfcfe;
+  border: 1px solid #dfe5ec;
+  border-radius: 6px;
+}
+
+.sim-data-table-panel .curva-arranque {
+  display: block;
+  width: 320px;
+  max-width: 100%;
+  height: auto;
+}
+
+.sim-data-table-panel .curva-arranque .eje {
+  stroke: #c9d3de;
+  stroke-width: 1;
+}
+
+.sim-data-table-panel .curva-arranque .referencia {
+  stroke: #c62828;
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  opacity: .6;
+}
+
+.sim-data-table-panel .curva-arranque .linea {
+  fill: none;
+  stroke: #1565c0;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.sim-data-table-panel .curva-arranque .rotulo {
+  font-size: 9px;
+  fill: #8a94a0;
+}
+
 .sim-data-table-panel .data-table td.col-campo {
   width: 46%;
   color: #444;
@@ -17507,7 +18294,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   fill: currentColor;
   display: block;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n/* --- pestaña Global: descansos y curva de arranque --- */\n\n.sim-data-table-panel .subtitulo {\n  margin: 22px 0 4px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Casilla booleana con su etiqueta a la derecha. */\n.sim-data-table-panel .casilla {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12.5px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .casilla input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .data-table td.centro {\n  text-align: center;\n}\n\n.sim-data-table-panel .data-table td.centro input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */\n.sim-data-table-panel .caja-curva {\n  display: inline-block;\n  padding: 6px 10px;\n  background: #fbfcfe;\n  border: 1px solid #dfe5ec;\n  border-radius: 6px;\n}\n\n.sim-data-table-panel .curva-arranque {\n  display: block;\n  width: 320px;\n  max-width: 100%;\n  height: auto;\n}\n\n.sim-data-table-panel .curva-arranque .eje {\n  stroke: #c9d3de;\n  stroke-width: 1;\n}\n\n.sim-data-table-panel .curva-arranque .referencia {\n  stroke: #c62828;\n  stroke-width: 1;\n  stroke-dasharray: 5 4;\n  opacity: .6;\n}\n\n.sim-data-table-panel .curva-arranque .linea {\n  fill: none;\n  stroke: #1565c0;\n  stroke-width: 2;\n  stroke-linejoin: round;\n}\n\n.sim-data-table-panel .curva-arranque .rotulo {\n  font-size: 9px;\n  fill: #8a94a0;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 

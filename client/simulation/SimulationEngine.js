@@ -1,6 +1,7 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData, isLabel, resumenMuestras } from './util';
 import BusinessCalendar from './BusinessCalendar.js';
+import { normalizeWarmup, effectiveDuration, describeWarmup } from './WarmupCurve.js';
 
 /**
  * Muestreo de una distribucion triangular por inversa de la CDF.
@@ -104,6 +105,11 @@ export default class SimulationEngine {
     // al horario normal para: medir las horas extra reales de cada tarea y
     // medir esperas y ciclos de forma comparable en los dos planes.
     this.standardCalendar = new BusinessCalendar(rootConfig.calendar);
+
+    // Curva de arranque: se DECLARA (no se mide) y afecta a la duracion en RELOJ
+    // de las tareas, no al trabajo contabilizado. Sin `warmup` en la
+    // configuracion no hay arranque, que es el comportamiento de siempre.
+    this.warmup = normalizeWarmup(rootConfig.warmup);
 
     let simStart = new Date();
     if (rootConfig.startDate && /^\d{4}-\d{2}-\d{2}$/.test(rootConfig.startDate)) {
@@ -285,10 +291,21 @@ export default class SimulationEngine {
     }
 
     const totalTaskDurationInMillis = processingTime + reworkTime;
-    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000, this.standardCalendar);
 
-    // "Costo de Operación" is the cost of all hours worked at the base rate.
-    const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
+    // Curva de arranque: el MISMO trabajo cuesta mas tiempo de reloj si arranca
+    // dentro de la rampa de su tramo. Se aplica desde el inicio EFECTIVO de la
+    // tarea, asi que una tarea que espera una hora no sufre el arranque (cuando
+    // por fin empieza, el tramo ya lleva una hora en marcha).
+    const duracionEfectivaMs = this._msConArranque(totalTaskDurationInMillis, new Date(time));
+
+    const { overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), duracionEfectivaMs / 60000, this.standardCalendar);
+
+    // "Costo de Operación" es el coste de las horas que se PAGAN a tarifa base.
+    // Se usa la duracion efectiva: si alguien va lento al arrancar esta en el
+    // puesto mas tiempo, y ese tiempo se paga. Ademas asi la rampa TIENE coste,
+    // que es justo lo que se quiere medir. Sin arranque declarado, la duracion
+    // efectiva es la real y el coste no cambia.
+    const operationCost = (duracionEfectivaMs / 3600000) * baseRatePerHour;
 
     // Overtime cost is the PREMIUM ONLY.
     // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
@@ -325,7 +342,11 @@ export default class SimulationEngine {
       doubleOvertimePremium,
       tripleOvertimePremium,
       quantityRequired,
-      totalDuration: totalTaskDurationInMillis
+      totalDuration: totalTaskDurationInMillis,
+      // Duracion de RELOJ con el arranque aplicado. Se guarda aparte de
+      // `totalDuration` porque el camino de espera por recursos vuelve a calcular
+      // el fin desde su propio inicio, y alli el arranque se reevalua.
+      effectiveDuration: duracionEfectivaMs
     };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
@@ -384,6 +405,14 @@ export default class SimulationEngine {
             overtimeCalendarConfig.workingHours.end.minute = 59;
         }
       }
+      // Los descansos se mantienen en la jornada extendida salvo que su
+      // interruptor diga lo contrario: «¿el descanso existe en el tramo de horas
+      // extra?» es una casilla del configurador de horarios y extras, porque en
+      // planta puede pasar cualquiera de las dos cosas.
+      // Se filtra ANTES de construir el calendario: despues no serviria de nada.
+      overtimeCalendarConfig.breaks = (overtimeCalendarConfig.breaks || [])
+        .filter((b) => !(b && b.existeEnExtra === false));
+
       this.calendar = new BusinessCalendar(overtimeCalendarConfig);
 
       // Se guarda porque el calendario se restaura al terminar `run()`: sin esto,
@@ -471,8 +500,9 @@ export default class SimulationEngine {
 
           // Utilizacion: minutos-recurso consumidos. Se cuentan al COMPLETAR la
           // tarea (no al pedir el recurso) porque solo entonces consta que el
-          // recurso trabajo de verdad esa duracion.
-          pool.busyMinutes += (event.totalDuration / 60000) * event.quantityRequired;
+          // recurso trabajo de verdad esa duracion. Se usa la efectiva: si va
+          // lento al arrancar, el puesto esta ocupado mas tiempo.
+          pool.busyMinutes += ((event.effectiveDuration || event.totalDuration) / 60000) * event.quantityRequired;
 
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
@@ -485,7 +515,11 @@ export default class SimulationEngine {
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
 
-            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), nextTask.totalDuration / 60000).getTime();
+            // La tarea arranca AHORA: el arranque se reevalua desde este inicio,
+            // no desde el que tenia cuando se encolo.
+            const efectiva = this._msConArranque(nextTask.totalDuration, new Date(this.clock));
+            nextTask.effectiveDuration = efectiva;
+            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), efectiva / 60000).getTime();
             delete nextTask.waitStart;
             this.eventQueue.add(nextTask);
           });
@@ -555,6 +589,33 @@ export default class SimulationEngine {
   }
 
   /**
+   * Minutos de RELOJ (en ms) que cuesta un trabajo, con la curva de arranque ya
+   * aplicada desde el inicio efectivo de la tarea.
+   *
+   * Se aplica desde el momento en que la tarea empieza DE VERDAD, no cuando se
+   * encola: si espera una hora por un recurso, cuando por fin arranca el tramo ya
+   * lleva una hora en marcha y no le toca arranque.
+   *
+   * Y cada TRAMO es un disparador: el primero del dia es el arranque de jornada y
+   * los siguientes son el regreso de un descanso. Los dos interruptores del
+   * configurador deciden cuales se aplican.
+   */
+  _msConArranque(realMs, desde) {
+    const cfg = this.warmup;
+    const minutos = realMs / 60000;
+    if (!cfg || cfg.shape === 'none' || !(minutos > 0)) return realMs;
+
+    const inicioTramo = this.calendar.inicioDeTramo(desde);
+    if (!inicioTramo) return realMs;
+
+    const esPrimero = this.calendar.esPrimerTramo(inicioTramo);
+    if (esPrimero ? !cfg.onShiftStart : !cfg.onBreakReturn) return realMs;
+
+    const transcurrido = Math.max(0, (desde.getTime() - inicioTramo.getTime()) / 60000);
+    return effectiveDuration(minutos, transcurrido, cfg) * 60000;
+  }
+
+  /**
    * Descripcion legible del intervalo entre llegadas.
    *
    * `arrivalRate` es una TASA (llegadas por unidad de tiempo), NO un intervalo:
@@ -603,6 +664,17 @@ export default class SimulationEngine {
         ? `${horas(cal.workingHours.start)} - ${horas(cal.workingHours.end)}` +
           (useOvertime ? ` (extendida: ${horas(this.calendar.config.workingHours.end)})` : '')
         : '(sin calendario)',
+      // Tramos de trabajo del calendario ACTIVO y descansos: con descansos la
+      // jornada no es un bloque, y el informe tiene que enseñarlo tal cual se
+      // simulo, no tal como se configuro.
+      tramosDeTrabajo: this.calendar.tramosDelDia(new Date(this.simulationStartTime)).map(
+        (t) => `${horas({ hour: Math.floor(t.inicio / 60), minute: t.inicio % 60 })}`
+             + `-${horas({ hour: Math.floor(t.fin / 60), minute: t.fin % 60 })}`
+      ),
+      minutosDeTrabajoAlDia: this.calendar.minutosDeTrabajoDelDia(new Date(this.simulationStartTime)),
+      descansos: (this.calendar.config.breaks || []).length,
+      descansoCuentaComoJornada: (this.calendar.config.breaks || []).filter((b) => b.cuentaComoJornada).length,
+      arranque: describeWarmup(this.warmup),
       diasLaborables: cal.workingDays,
       festivos: (cal.holidays || []).length,
       tarifaBasePorHora: cfg.cost && cfg.cost.baseRatePerHour,

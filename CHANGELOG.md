@@ -4,6 +4,31 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **tramos de trabajo y descansos**. La jornada deja de ser un bloque: un descanso la parte
+  en tramos, y la tarea que lo pilla a medias **se pausa y se retoma al volver**. Un descanso tiene
+  **tres interruptores independientes**: si cuenta como jornada (afecta al umbral de horas extra —
+  la ley lo exige cuando no se puede salir del centro), si es tiempo productivo (nunca lo es) y si
+  también se toma en el tramo de horas extra. Editor en la pestaña Global y round-trip por CSV.
+* `FEAT`: **curva de arranque** (`WarmupCurve.js`). El arranque lento no se mide: se declara, y con
+  una curva es más realista que con un porcentaje fijo (el porcentaje plano repartiría la pérdida por
+  toda la jornada, incluida la tarde). Formas **exponencial** (por defecto) y **lineal**; la
+  logarítmica se descartó porque nunca llega al 100 % y exigiría inventar un tope. Con **vista previa
+  de la curva** en el configurador, porque un parámetro abstracto no se puede discutir y una curva sí.
+  Dos disparadores activables por separado: **inicio de jornada** y **regreso de descanso**.
+* `FEAT`: la rampa **cuesta dinero**: el coste de operación usa la duración efectiva (ir lento se
+  paga) mientras que el trabajo contabilizado sigue siendo el real. Sin arranque declarado no cambia
+  nada, así que los diagramas existentes no se alteran.
+* `FIX`: **regresión en `addWorkingTime`** encontrada al reescribirlo. Calculaba los días completos
+  *después* de haber avanzado ya al día siguiente, así que contaba una jornada de más en cuanto la
+  duración cruzaba días enteros: una tarea de 16 h que empezaba el martes terminaba el **jueves** en
+  lugar del miércoles. Solo afectaba a duraciones de dos jornadas o más, por eso no salía en las
+  corridas normales. Además ya no trunca los decimales al sumar (`setMinutes` hacía que 10,5 min
+  sumaran 10, y ese medio minuto por tarea se acumulaba).
+* `FIX`: los festivos se comparaban con la fecha en **UTC** (`toISOString`), así que en un huso
+  negativo un festivo podía no aplicarse. Ahora la clave de día es local.
+* `FEAT`: el informe de consola imprime los **tramos de trabajo**, los minutos de trabajo al día, los
+  descansos y la **curva de arranque resuelta** («arranca al 70 %, las primeras tareas tardan ~43 %
+  más, recupera en 30 min»), para poder contrastarla con la planta.
 * `FEAT`: **informe técnico de evaluación** (botón «Informe PDF» en la barra). Se compone en
   HTML con las tablas del modelo, las figuras y un **scorecard auditable**, y se guarda como
   PDF con el diálogo de impresión. Incluye un apartado de **comprobación** que recompone el
