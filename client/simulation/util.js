@@ -87,6 +87,27 @@ export const formatMilliseconds = (ms) => {
   return `${hours.toFixed(1)}h`;
 };
 
+/**
+ * Formatea una cantidad de MINUTOS.
+ *
+ * Hace falta porque no todos los campos del motor estan en milisegundos.
+ * `totalWaitTime` y `totalCycleTime` se acumulan con
+ * calculateBusinessDurationInMinutes(), que cuenta minutos, mientras que
+ * totalProcessingTime, totalOvertime y totalReworkTime si estan en milisegundos.
+ *
+ * Usar formatMilliseconds() sobre los dos primeros los mostraba 60.000 veces
+ * menores: una espera de 480 minutos aparecia como "0.5s" en lugar de "8.0h".
+ */
+export const formatMinutes = (minutes) => {
+  if (!minutes) return '0s';
+  const totalMinutes = minutes;
+  if (totalMinutes < 1) return `${(totalMinutes * 60).toFixed(0)}s`;
+  if (totalMinutes < 60) return `${totalMinutes.toFixed(1)}m`;
+  const hours = totalMinutes / 60;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+};
+
 export const formatCurrency = (amount, currency = 'MXN') => {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',

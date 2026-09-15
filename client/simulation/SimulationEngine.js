@@ -2,10 +2,34 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData, isLabel } from './util';
 import BusinessCalendar from './BusinessCalendar.js';
 
+/**
+ * Muestreo de una distribucion triangular por inversa de la CDF.
+ *
+ * Para triangular(a, m, b) con a <= m <= b:
+ *   F(x) = (x-a)^2 / ((m-a)(b-a))   para a <= x <= m
+ *   F(x) = 1 - (b-x)^2 / ((b-m)(b-a))  para m <= x <= b
+ *
+ * El punto de corte es F(m) = (m-a)/(b-a).
+ *
+ * ERROR CORREGIDO: estaba escrito como su reciproco, (b-a)/(m-a). Como ese
+ * valor es >= 1 siempre (rand pertenece a [0,1)), la condicion `rand < F` era
+ * SIEMPRE verdadera: la segunda rama era codigo muerto y el maximo configurado
+ * nunca se alcanzaba. Con triangular(1, 2, 4) el soporte real terminaba en
+ * 2,73 en lugar de 4, y un 27% de la distribucion era inalcanzable.
+ */
 const triangular = (min, mode, max) => {
-  const F = (max - min) / (mode - min);
+  // Guardas: sin ellas un mode fuera de rango da Math.sqrt de un negativo (NaN)
+  // y un min == max da division por cero. El NaN se propagaba a las fechas y al
+  // orden de la cola de eventos sin lanzar ningun error.
+  if (!(max > min)) return min;
+  if (mode < min) mode = min;
+  if (mode > max) mode = max;
+
+  const F = (mode - min) / (max - min);
   const rand = Math.random();
-  return rand < F ? min + Math.sqrt(rand * (mode - min) * (max - min)) : max - Math.sqrt((1 - rand) * (max - min) * (max - mode));
+  return rand < F
+    ? min + Math.sqrt(rand * (mode - min) * (max - min))
+    : max - Math.sqrt((1 - rand) * (max - min) * (max - mode));
 };
 
 const timeToMilliseconds = (value, unit) => {
@@ -67,6 +91,13 @@ export default class SimulationEngine {
   initialize(rootConfig) {
     this.rootConfig = rootConfig;
     this.calendar = new BusinessCalendar(rootConfig.calendar);
+
+    // Calendario ESTANDAR (sin horas extra), creado una sola vez y reutilizado.
+    // Hace falta aunque se corra con horas extra, porque `this.calendar` se
+    // sustituye por el extendido (linea ~343) y necesitamos una referencia fija
+    // al horario normal para: medir las horas extra reales de cada tarea y
+    // medir esperas y ciclos de forma comparable en los dos planes.
+    this.standardCalendar = new BusinessCalendar(rootConfig.calendar);
 
     let simStart = new Date();
     if (rootConfig.startDate && /^\d{4}-\d{2}-\d{2}$/.test(rootConfig.startDate)) {
@@ -158,7 +189,7 @@ export default class SimulationEngine {
       this.dailyCompletions.set(dayKey, currentCount + 1);
 
       // console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
-      const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
+      const standardCalendar = this.standardCalendar;
       elementResults.totalCycleTime += standardCalendar.calculateBusinessDurationInMinutes(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);
       return;
@@ -222,7 +253,7 @@ export default class SimulationEngine {
     }
 
     const totalTaskDurationInMillis = processingTime + reworkTime;
-    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000);
+    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000, this.standardCalendar);
 
     // "Costo de Operación" is the cost of all hours worked at the base rate.
     const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
@@ -384,7 +415,7 @@ export default class SimulationEngine {
         results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + waitTimeCost;
 
         if (event.waitStart) {
-          const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
+          const standardCalendar = this.standardCalendar;
           const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
           const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
@@ -399,7 +430,7 @@ export default class SimulationEngine {
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
             const nextTaskResults = this.results.get(nextTask.element.id);
-            const standardCalendar = new BusinessCalendar(this.rootConfig.calendar);
+            const standardCalendar = this.standardCalendar;
             const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(nextTask.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
             const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;

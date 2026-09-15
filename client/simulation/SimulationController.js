@@ -6,7 +6,7 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
-import { getSimulationData, getExtensionProperty, formatMilliseconds, formatCurrency, isLabel } from './util';
+import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel } from './util';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -691,8 +691,8 @@ export default class SimulationController {
         } else if (result) {
             if (is(element, 'bpmn:Task') && !isLabel(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${formatCurrency(result.totalCost, 'MXN')}`;
-                else if (metric === 'waitTime') overlayText = `Espera Prom: ${formatMilliseconds(result.totalWaitTime / (result.executionCount || 1))}`;
-                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${formatMilliseconds(result.totalWaitTime)}`;
+                else if (metric === 'waitTime') overlayText = `Espera Prom: ${formatMinutes(result.totalWaitTime / (result.executionCount || 1))}`;
+                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${formatMinutes(result.totalWaitTime)}`;
                 else if (metric === 'processTime') overlayText = `Proceso: ${formatMilliseconds(result.totalProcessingTime / (result.executionCount || 1))}`;
                 else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
                 else if (metric === 'failureRate' && result.executionCount > 0) {
@@ -710,7 +710,7 @@ export default class SimulationController {
                 else if (metric === 'reworkCost') overlayText = `Costo Reparación: ${formatCurrency(result.totalReworkCost, 'MXN')}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${formatCurrency(result.totalWaitTimeCost, 'MXN')}`;
             } else if (is(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
-                overlayText = `Ciclo: ${formatMilliseconds(result.totalCycleTime / (result.executionCount || 1))}`;
+                overlayText = `Ciclo: ${formatMinutes(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
 
@@ -1151,7 +1151,7 @@ export default class SimulationController {
             <td>${result.name}</td>
             <td>${result.executionCount}</td>
             <td>${result.failureCount}</td>
-            <td>${formatMilliseconds(result.totalWaitTime)}</td>
+            <td>${formatMinutes(result.totalWaitTime)}</td>
             <td>${formatMilliseconds(result.totalProcessingTime)}</td>
             <td>${formatCurrency(result.totalCost, 'MXN')}</td>
           </tr>

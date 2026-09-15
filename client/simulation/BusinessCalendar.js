@@ -77,15 +77,22 @@ export default class BusinessCalendar {
     if (numWorkDaysInWeek > 0) {
         const fullDays = Math.floor(remainingMinutes / minutesPerWorkDay);
         if (fullDays > 0) {
-            let workDaysCounted = 0;
+            // ERROR CORREGIDO: el bucle contaba las jornadas completas pero no
+            // avanzaba mas alla de la ultima contada, asi que currentDate
+            // quedaba en el inicio del ULTIMO dia consumido en lugar del
+            // inicio del siguiente. Se perdia una jornada entera por tramo:
+            // una tarea de 16 h que empezaba el martes terminaba el miercoles
+            // en vez del jueves, y el resultado siempre caia dentro del horario
+            // laboral, por lo que el error no se veia en los resultados.
+            //
+            // currentDate ya es el inicio de un dia laborable, y
+            // _moveToNextWorkingDayStart() aplicado sobre ese inicio avanza
+            // exactamente un dia laborable.
+            let consumed = 0;
             let tempDate = new Date(currentDate.getTime());
-            while(workDaysCounted < fullDays) {
-                if(this.isWorkingTime(tempDate)) {
-                    workDaysCounted++;
-                }
-                if (workDaysCounted < fullDays) {
-                  tempDate.setDate(tempDate.getDate() + 1);
-                }
+            while (consumed < fullDays) {
+                consumed++;
+                tempDate = this._moveToNextWorkingDayStart(tempDate);
             }
             currentDate = tempDate;
             remainingMinutes -= fullDays * minutesPerWorkDay;
@@ -113,15 +120,42 @@ export default class BusinessCalendar {
     return totalMinutes;
   }
 
-  calculateBusinessTime(startDate, durationInMinutes) {
-    const endDate = this.addWorkingTime(new Date(startDate), durationInMinutes);
-    const totalElapsedMs = endDate.getTime() - startDate.getTime();
+  /**
+   * Descompone una tarea en tiempo trabajado y horas extra.
+   *
+   * ERROR CORREGIDO: antes el campo `overtime` se calculaba como
+   *   (tiempo de reloj) - (tiempo trabajado)
+   * que NO son horas extra, sino el hueco NO laboral que atraviesa la tarea:
+   * noches, fines de semana y saltos entre jornadas. Una tarea de 2 h que
+   * empieza un lunes a las 16:00 con jornada 9-17 termina el martes a las 10:00
+   * y registraba 16 h de "horas extra". El efecto era doble: se pagaba recargo
+   * por las noches del plan normal, y las horas realmente extra del plan
+   * extendido se registraban con recargo CERO.
+   *
+   * Horas extra es el tiempo trabajado FUERA del horario estandar:
+   *   overtime = duracion - (minutos de la tarea dentro del horario estandar)
+   *
+   * @param {Date}   startDate
+   * @param {number} durationInMinutes duracion trabajada (segun el calendario de
+   *                                   esta instancia, que puede ser el extendido)
+   * @param {BusinessCalendar} [standardCalendar] calendario SIN horas extra. Si
+   *                                   se omite, se usa esta instancia, y entonces
+   *                                   el resultado es 0: correcto, porque un
+   *                                   calendario estandar no tiene horas extra.
+   */
+  calculateBusinessTime(startDate, durationInMinutes, standardCalendar) {
+    const start = new Date(startDate.getTime());
+    const endDate = this.addWorkingTime(new Date(startDate.getTime()), durationInMinutes);
+
     const businessMs = durationInMinutes * 60 * 1000;
-    const overtimeMs = totalElapsedMs - businessMs;
+
+    const standard = standardCalendar || this;
+    const standardMinutes = standard.calculateBusinessDurationInMinutes(start, endDate);
+    const overtimeMs = Math.max(0, durationInMinutes - standardMinutes) * 60 * 1000;
 
     return {
       businessTime: businessMs,
-      overtime: overtimeMs > 0 ? overtimeMs : 0,
+      overtime: overtimeMs,
       endTime: endDate
     };
   }

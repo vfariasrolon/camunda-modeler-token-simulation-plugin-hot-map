@@ -1029,15 +1029,22 @@ class BusinessCalendar {
     if (numWorkDaysInWeek > 0) {
         const fullDays = Math.floor(remainingMinutes / minutesPerWorkDay);
         if (fullDays > 0) {
-            let workDaysCounted = 0;
+            // ERROR CORREGIDO: el bucle contaba las jornadas completas pero no
+            // avanzaba mas alla de la ultima contada, asi que currentDate
+            // quedaba en el inicio del ULTIMO dia consumido en lugar del
+            // inicio del siguiente. Se perdia una jornada entera por tramo:
+            // una tarea de 16 h que empezaba el martes terminaba el miercoles
+            // en vez del jueves, y el resultado siempre caia dentro del horario
+            // laboral, por lo que el error no se veia en los resultados.
+            //
+            // currentDate ya es el inicio de un dia laborable, y
+            // _moveToNextWorkingDayStart() aplicado sobre ese inicio avanza
+            // exactamente un dia laborable.
+            let consumed = 0;
             let tempDate = new Date(currentDate.getTime());
-            while(workDaysCounted < fullDays) {
-                if(this.isWorkingTime(tempDate)) {
-                    workDaysCounted++;
-                }
-                if (workDaysCounted < fullDays) {
-                  tempDate.setDate(tempDate.getDate() + 1);
-                }
+            while (consumed < fullDays) {
+                consumed++;
+                tempDate = this._moveToNextWorkingDayStart(tempDate);
             }
             currentDate = tempDate;
             remainingMinutes -= fullDays * minutesPerWorkDay;
@@ -1065,15 +1072,42 @@ class BusinessCalendar {
     return totalMinutes;
   }
 
-  calculateBusinessTime(startDate, durationInMinutes) {
-    const endDate = this.addWorkingTime(new Date(startDate), durationInMinutes);
-    const totalElapsedMs = endDate.getTime() - startDate.getTime();
+  /**
+   * Descompone una tarea en tiempo trabajado y horas extra.
+   *
+   * ERROR CORREGIDO: antes el campo `overtime` se calculaba como
+   *   (tiempo de reloj) - (tiempo trabajado)
+   * que NO son horas extra, sino el hueco NO laboral que atraviesa la tarea:
+   * noches, fines de semana y saltos entre jornadas. Una tarea de 2 h que
+   * empieza un lunes a las 16:00 con jornada 9-17 termina el martes a las 10:00
+   * y registraba 16 h de "horas extra". El efecto era doble: se pagaba recargo
+   * por las noches del plan normal, y las horas realmente extra del plan
+   * extendido se registraban con recargo CERO.
+   *
+   * Horas extra es el tiempo trabajado FUERA del horario estandar:
+   *   overtime = duracion - (minutos de la tarea dentro del horario estandar)
+   *
+   * @param {Date}   startDate
+   * @param {number} durationInMinutes duracion trabajada (segun el calendario de
+   *                                   esta instancia, que puede ser el extendido)
+   * @param {BusinessCalendar} [standardCalendar] calendario SIN horas extra. Si
+   *                                   se omite, se usa esta instancia, y entonces
+   *                                   el resultado es 0: correcto, porque un
+   *                                   calendario estandar no tiene horas extra.
+   */
+  calculateBusinessTime(startDate, durationInMinutes, standardCalendar) {
+    const start = new Date(startDate.getTime());
+    const endDate = this.addWorkingTime(new Date(startDate.getTime()), durationInMinutes);
+
     const businessMs = durationInMinutes * 60 * 1000;
-    const overtimeMs = totalElapsedMs - businessMs;
+
+    const standard = standardCalendar || this;
+    const standardMinutes = standard.calculateBusinessDurationInMinutes(start, endDate);
+    const overtimeMs = Math.max(0, durationInMinutes - standardMinutes) * 60 * 1000;
 
     return {
       businessTime: businessMs,
-      overtime: overtimeMs > 0 ? overtimeMs : 0,
+      overtime: overtimeMs,
       endTime: endDate
     };
   }
@@ -3122,8 +3156,8 @@ class SimulationController {
         } else if (result) {
             if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalCost, 'MXN')}`;
-                else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalWaitTime / (result.executionCount || 1))}`;
-                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalWaitTime)}`;
+                else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime / (result.executionCount || 1))}`;
+                else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime)}`;
                 else if (metric === 'processTime') overlayText = `Proceso: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalProcessingTime / (result.executionCount || 1))}`;
                 else if (metric === 'frequency') overlayText = `Frec: ${result.executionCount}`;
                 else if (metric === 'failureRate' && result.executionCount > 0) {
@@ -3141,7 +3175,7 @@ class SimulationController {
                 else if (metric === 'reworkCost') overlayText = `Costo Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalReworkCost, 'MXN')}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalWaitTimeCost, 'MXN')}`;
             } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
-                overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalCycleTime / (result.executionCount || 1))}`;
+                overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
 
@@ -3582,7 +3616,7 @@ class SimulationController {
             <td>${result.name}</td>
             <td>${result.executionCount}</td>
             <td>${result.failureCount}</td>
-            <td>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalWaitTime)}</td>
+            <td>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime)}</td>
             <td>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalProcessingTime)}</td>
             <td>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalCost, 'MXN')}</td>
           </tr>
@@ -4014,10 +4048,34 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
+/**
+ * Muestreo de una distribucion triangular por inversa de la CDF.
+ *
+ * Para triangular(a, m, b) con a <= m <= b:
+ *   F(x) = (x-a)^2 / ((m-a)(b-a))   para a <= x <= m
+ *   F(x) = 1 - (b-x)^2 / ((b-m)(b-a))  para m <= x <= b
+ *
+ * El punto de corte es F(m) = (m-a)/(b-a).
+ *
+ * ERROR CORREGIDO: estaba escrito como su reciproco, (b-a)/(m-a). Como ese
+ * valor es >= 1 siempre (rand pertenece a [0,1)), la condicion `rand < F` era
+ * SIEMPRE verdadera: la segunda rama era codigo muerto y el maximo configurado
+ * nunca se alcanzaba. Con triangular(1, 2, 4) el soporte real terminaba en
+ * 2,73 en lugar de 4, y un 27% de la distribucion era inalcanzable.
+ */
 const triangular = (min, mode, max) => {
-  const F = (max - min) / (mode - min);
+  // Guardas: sin ellas un mode fuera de rango da Math.sqrt de un negativo (NaN)
+  // y un min == max da division por cero. El NaN se propagaba a las fechas y al
+  // orden de la cola de eventos sin lanzar ningun error.
+  if (!(max > min)) return min;
+  if (mode < min) mode = min;
+  if (mode > max) mode = max;
+
+  const F = (mode - min) / (max - min);
   const rand = Math.random();
-  return rand < F ? min + Math.sqrt(rand * (mode - min) * (max - min)) : max - Math.sqrt((1 - rand) * (max - min) * (max - mode));
+  return rand < F
+    ? min + Math.sqrt(rand * (mode - min) * (max - min))
+    : max - Math.sqrt((1 - rand) * (max - min) * (max - mode));
 };
 
 const timeToMilliseconds = (value, unit) => {
@@ -4079,6 +4137,13 @@ class SimulationEngine {
   initialize(rootConfig) {
     this.rootConfig = rootConfig;
     this.calendar = new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](rootConfig.calendar);
+
+    // Calendario ESTANDAR (sin horas extra), creado una sola vez y reutilizado.
+    // Hace falta aunque se corra con horas extra, porque `this.calendar` se
+    // sustituye por el extendido (linea ~343) y necesitamos una referencia fija
+    // al horario normal para: medir las horas extra reales de cada tarea y
+    // medir esperas y ciclos de forma comparable en los dos planes.
+    this.standardCalendar = new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](rootConfig.calendar);
 
     let simStart = new Date();
     if (rootConfig.startDate && /^\d{4}-\d{2}-\d{2}$/.test(rootConfig.startDate)) {
@@ -4170,7 +4235,7 @@ class SimulationEngine {
       this.dailyCompletions.set(dayKey, currentCount + 1);
 
       // console.log(`Instance ${instanceId} completed. Total completed: ${this.completedInstances}`);
-      const standardCalendar = new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](this.rootConfig.calendar);
+      const standardCalendar = this.standardCalendar;
       elementResults.totalCycleTime += standardCalendar.calculateBusinessDurationInMinutes(new Date(startTime), new Date(this.clock));
       this.instanceStates.delete(instanceId);
       return;
@@ -4234,7 +4299,7 @@ class SimulationEngine {
     }
 
     const totalTaskDurationInMillis = processingTime + reworkTime;
-    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000);
+    const { businessTime, overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), totalTaskDurationInMillis / 60000, this.standardCalendar);
 
     // "Costo de Operación" is the cost of all hours worked at the base rate.
     const operationCost = (totalTaskDurationInMillis / 3600000) * baseRatePerHour;
@@ -4396,7 +4461,7 @@ class SimulationEngine {
         results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + waitTimeCost;
 
         if (event.waitStart) {
-          const standardCalendar = new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](this.rootConfig.calendar);
+          const standardCalendar = this.standardCalendar;
           const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(event.waitStart), new Date(this.clock));
           results.totalWaitTime += waitTime;
           const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
@@ -4411,7 +4476,7 @@ class SimulationEngine {
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(nextTask => {
             const nextTaskResults = this.results.get(nextTask.element.id);
-            const standardCalendar = new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](this.rootConfig.calendar);
+            const standardCalendar = this.standardCalendar;
             const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(nextTask.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
             const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
@@ -4909,6 +4974,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   formatCurrency: () => (/* binding */ formatCurrency),
 /* harmony export */   formatMilliseconds: () => (/* binding */ formatMilliseconds),
+/* harmony export */   formatMinutes: () => (/* binding */ formatMinutes),
 /* harmony export */   getExtensionProperty: () => (/* binding */ getExtensionProperty),
 /* harmony export */   getSimulationData: () => (/* binding */ getSimulationData),
 /* harmony export */   isLabel: () => (/* binding */ isLabel),
@@ -5002,6 +5068,27 @@ const formatMilliseconds = (ms) => {
   if (minutes < 60) return `${minutes.toFixed(1)}m`;
   const hours = minutes / 60;
   return `${hours.toFixed(1)}h`;
+};
+
+/**
+ * Formatea una cantidad de MINUTOS.
+ *
+ * Hace falta porque no todos los campos del motor estan en milisegundos.
+ * `totalWaitTime` y `totalCycleTime` se acumulan con
+ * calculateBusinessDurationInMinutes(), que cuenta minutos, mientras que
+ * totalProcessingTime, totalOvertime y totalReworkTime si estan en milisegundos.
+ *
+ * Usar formatMilliseconds() sobre los dos primeros los mostraba 60.000 veces
+ * menores: una espera de 480 minutos aparecia como "0.5s" en lugar de "8.0h".
+ */
+const formatMinutes = (minutes) => {
+  if (!minutes) return '0s';
+  const totalMinutes = minutes;
+  if (totalMinutes < 1) return `${(totalMinutes * 60).toFixed(0)}s`;
+  if (totalMinutes < 60) return `${totalMinutes.toFixed(1)}m`;
+  const hours = totalMinutes / 60;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
 };
 
 const formatCurrency = (amount, currency = 'MXN') => {
