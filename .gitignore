@@ -1,3 +1,6 @@
 /node_modules/
 .DS_Store
-ENTORNO-QWEN-DEEPSEEK.md
+
+# Directorio de trabajo del agente (verificaciones, temporales). No es codigo
+# del plugin; se ignora como se hace con .idea/ o .vscode/.
+.qwen/
