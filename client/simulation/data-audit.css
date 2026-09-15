@@ -1,0 +1,220 @@
+/* Panel de diagnostico de datos. Mismo lenguaje visual que el panel de graficos
+   y el de tabla: ancho acotado, centrado y con margen a los lados. */
+.sim-data-audit-panel {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1100px, calc(100% - 48px));
+  max-height: calc(100% - 40px);
+  box-sizing: border-box;
+  display: none;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  z-index: 100;
+  font-size: 13px;
+  color: #222;
+}
+
+.sim-data-audit-panel.open {
+  display: flex;
+}
+
+.sim-data-audit-panel .panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e6e6e6;
+  background: #fafafa;
+  border-radius: 8px 8px 0 0;
+}
+
+.sim-data-audit-panel .panel-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 14px;
+  color: #1565c0;
+}
+
+.sim-data-audit-panel .btn-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #666;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.sim-data-audit-panel .btn-close:hover {
+  background: #eee;
+  color: #111;
+}
+
+.sim-data-audit-panel .panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.sim-data-audit-panel .intro {
+  margin: 0 0 14px;
+  line-height: 1.55;
+  color: #444;
+}
+
+.sim-data-audit-panel .hint {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.5;
+  margin: 6px 0 10px;
+}
+
+.sim-data-audit-panel .subtitulo {
+  margin: 22px 0 6px;
+  font-size: 13px;
+  color: #1565c0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+}
+
+/* Recuento de cabecera: el resumen de un vistazo. */
+.sim-data-audit-panel .recuento {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.sim-data-audit-panel .marca {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sim-data-audit-panel .marca.listo {
+  background: #e6f4ea;
+  color: #0a7d32;
+}
+
+.sim-data-audit-panel .marca.parcial {
+  background: #fff4e0;
+  color: #a35b00;
+}
+
+.sim-data-audit-panel .marca.falta {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.sim-data-audit-panel .total {
+  margin-left: auto;
+  font-size: 12px;
+  color: #777;
+}
+
+.sim-data-audit-panel .data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sim-data-audit-panel .data-table th {
+  background: #f2f2f2;
+  border: 1px solid #ddd;
+  padding: 7px 9px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.sim-data-audit-panel .data-table td {
+  border: 1px solid #e6e6e6;
+  padding: 6px 9px;
+  vertical-align: top;
+}
+
+.sim-data-audit-panel .data-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+/* Columna de la capacidad: titulo y por que. */
+.sim-data-audit-panel .cap strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.sim-data-audit-panel .cap .porque {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.45;
+}
+
+/* Requisitos: una linea por dato, con su marca. */
+.sim-data-audit-panel .req {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sim-data-audit-panel .req.ok {
+  color: #0a7d32;
+}
+
+.sim-data-audit-panel .req.mal {
+  color: #c62828;
+}
+
+.sim-data-audit-panel .req em {
+  color: #888;
+  font-style: normal;
+}
+
+/* Fila de una capacidad que no se puede medir: se marca el borde izquierdo,
+   que se lee mejor que un fondo de color en una tabla larga. */
+.sim-data-audit-panel .fila-falta > td:first-child {
+  border-left: 3px solid #c62828;
+}
+
+.sim-data-audit-panel .fila-parcial > td:first-child {
+  border-left: 3px solid #f9a825;
+}
+
+.sim-data-audit-panel .fila-listo > td:first-child {
+  border-left: 3px solid #2e7d32;
+}
+
+/* Chips de «que desbloquea»: varias capacidades por dato. */
+.sim-data-audit-panel .chip {
+  display: inline-block;
+  margin: 0 4px 3px 0;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: #eef2f7;
+  color: #3a4a5e;
+  font-size: 11px;
+}
+
+.sim-data-audit-panel .vacio {
+  padding: 12px;
+  color: #0a7d32;
+  background: #edf7ee;
+  border-radius: 5px;
+}
+
+.sim-data-audit-panel .porques {
+  margin: 6px 0;
+  padding-left: 20px;
+  color: #444;
+  line-height: 1.6;
+}
+
+.sim-data-audit-panel .porques li {
+  margin-bottom: 5px;
+}

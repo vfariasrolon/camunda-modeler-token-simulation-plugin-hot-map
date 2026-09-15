@@ -466,28 +466,117 @@ Todos **ajustables** y **todos impresos en el informe** junto al resultado.
 
 ---
 
-## 8. Bloques posteriores (acordados en concepto)
+## 8. A5 · Personas, carga y operatividad
+
+> **Estado: DISEÑO CERRADO, sin implementar.** Las decisiones de abajo se tomaron al abrir el
+> bloque y **no se pueden deshacer sin reescribir el motor**, así que quedan escritas con su motivo.
+
+### 8.1 Realismo de las masas: dos series que nunca se suman
+
+Cada tarea declara su carga física:
+
+```json
+"carga": { "masaCargadaKg": 12, "masaArrastradaKg": 0, "distanciaM": 8 }
+```
+
+- **Masa CARGADA** = lo que la persona **soporta** (en brazos, al hombro, en la mano).
+- **Masa ARRASTRADA** = lo que **no soporta** (un carro, una tarima con ruedas, algo que se desliza).
+
+Son magnitudes distintas y **se reportan por separado, nunca en un total único**. Cualquier
+equivalencia la declara el analista, no el programa. Es la **regla invariable nº 1** de §2, y aquí
+es donde se aplica de verdad.
+
+De cada acumulación salen tres cifras: **kg movidos**, **kg·m** (masa × distancia) y **toneladas
+acumuladas**. La distancia se declara por tarea; el *por dónde* queda fuera de alcance.
+
+**La repetición la manda la frecuencia, no el token.** Una tarea `por lote` mueve su masa **una vez
+por lote**; una `por token`, una por pieza. Si no, mover 12 kg por pieza en un lote de 20 daría 240
+kg cuando en la planta se hizo un solo viaje.
+
+### 8.2 Colaboradores con nombre
+
+La piscina pasa a poder declarar **miembros**:
+
+```json
+"resourcePools": [ {
+  "name": "Soldadores", "quantity": 2,
+  "members": [ { "nombre": "Ana", "tarifaHora": 55, "habilidades": [ "soldadura" ], "cargaMaximaKg": 25 } ]
+} ]
+```
+
+- **Sin `members`, todo se comporta como hoy** (compatibilidad total: ninguna migración).
+- **Con `members`, cada unidad es una persona concreta.** `quantity` sigue mandando la capacidad; los
+  miembros solo dan identidad, tarifa, habilidades y carga máxima. El motor reparte en **ronda**, para
+  que dos personas equivalentes trabajen lo mismo.
+- **Tarifa**: la de la persona; si no la tiene, la de la planta (`cost.baseRatePerHour`). Así nada se
+  mueve si no rellenas tarifas por persona.
+
+### 8.3 Habilidades: bloquean de verdad
+
+Una tarea declara las etiquetas que exige; una persona, las que tiene. **Si ninguna unidad de la
+piscina tiene la habilidad, la tarea se BLOQUEA** — no arranca y el tiempo se cuenta aparte, en su
+propia categoría de tiempo muerto.
+
+Es lo **conservador**: un dato que falta bloquea, no acelera. La alternativa (que las etiquetas solo
+informaran) habría dejado la cuarta categoría de tiempo muerto sin nada que la produjera.
+
+### 8.4 Carga máxima: avisa, no altera
+
+`cargaMaximaKg` de la persona **no cambia los tiempos**: el motor reporta, marca y sigue. Coherente
+con el límite de alcance de §9 — *el sistema solo da datos*: dice «moverás 12 t a 8 m durante 6 h» y
+el analista decide. Si rechazara la tarea, estaría tomando una decisión de seguridad que no le toca y
+movería resultados que hoy nadie esperaría.
+
+### 8.5 Las cuatro categorías de tiempo muerto
+
+| Categoría | Qué es |
+|---|---|
+| **Sin trabajo** | No hay nada que hacer: la planta está ociosa |
+| **Con trabajo asignable** | Hay cola, pero la persona no puede tomarla (no es la suya) |
+| **Bloqueado por habilidad** | La tarea espera a alguien con la etiqueta que exige y no lo hay |
+| **Esperando firma** | El lote entero aguanta la barrera de §4.5 |
+
+El **activo** (trabajando) y las cuatro ociosidades se dibujan en barras por persona y en líneas a lo
+largo del día.
+
+### 8.6 Diagnóstico de absorción, sin solver
+
+Para cada persona se calcula la **holgura** (jornada menos trabajo) y qué tareas podría absorber
+según habilidades. Se imprime como **tabla de «quién puede absorber qué»**.
+
+**El sistema no asigna personal solo.** Muestra la holgura y la elegibilidad; mover gente es del
+analista, y para comprobarlo ya está **re-simular**: la política es declarada, no una caja negra.
+
+### 8.7 Avisos con su umbral, en tres escalas
+
+Los umbrales los declara el analista y **el informe los imprime junto al dato**: una banda sin su
+corte es una cifra con autoridad falsa. Se avisa en tres escalas —**tarea**, **persona** y **área**—
+porque una tarea de 20 kg repetida 500 veces no es lo mismo que una sola vez.
+
+### 8.8 Fuera de este bloque
+
+- **Descansos individuales** (escalonado, ventana flexible): es otro motor de calendario.
+- **Rotación de puestos** y la matriz **carga física × cognitiva × valor añadido**: se apoyan en las
+  series que este bloque produce, así que van después.
+- **Zonas y distancia recorrida**: queda fuera con la distancia declarada por tarea.
+
+---
+
+## 9. Bloques posteriores (acordados en concepto)
 
 No detallados al nivel de este documento, pero **decididos** para no perderlos:
 
-- **Personas**: miembros con nombre en las piscinas (compatible: una piscina sin miembros se
-  comporta como hoy), **tres modos de asignación** (`pool` / `exclusiva` / `preferente`), capacidad
-  1 por persona, y validación de ρ por persona.
-- **Operatividad**: tiempo muerto en **cuatro** categorías —sin trabajo, con trabajo asignable,
-  bloqueado por habilidad, **esperando firma**—, utilización, carga ponderada, coste activo y coste
-  de la ociosidad.
-- **Balanceo (diagnóstico, sin solver)**: elegibilidad por etiquetas, tabla de holguras, dispersión
-  por línea, y «probar la alternativa y re-simular».
-- **Ergonomía**: cargas por persona (**masa cargada y masa arrastrada, series separadas**),
-  marcadores de banda en tres escalas (tarea / persona / área), rotación de puestos, y la matriz
-  **carga física × carga cognitiva × valor añadido** que ordena las intervenciones sola.
+- **Personas** → **movido a §8.2** (implementado en concepto allí).
+- **Operatividad** → **movido a §8.5 y §8.6**.
+- **Balanceo (diagnóstico, sin solver)** → **movido a §8.6**.
+- **Ergonomía** → **movido a §8.1, §8.4 y §8.7**.
 - **Descansos individuales**: escalonado, ventana flexible y **descansos interrumpidos o no tomados**.
 - **Zonas y distancia**: si algún día se quiere el *por dónde*; con una distancia declarada por
   tarea no hace falta.
 
 ---
 
-## 9. Fuera de alcance (decidido, no olvidado)
+## 10. Fuera de alcance (decidido, no olvidado)
 
 - **Perfiles médicos, lesiones y elementos de protección.** El sistema no contempla lesiones: solo
   reporta cargas y marca las que destacan. La evaluación es del analista, fuera del programa.
@@ -525,3 +614,10 @@ Para que quede **por qué**, no solo **qué**.
 | La extra se mide contra la jornada base del turno | Contra el horario declarado | Un horario de 9 h ya lleva 1 h extra que se pagaba a tarifa base |
 | El tope diario no cambia lo que se paga | Sumarlo a la prima | El pago es semanal (arts. 66 y 68); el diario es de legalidad |
 | Las vigencias se resuelven por fecha de arranque | Por la fecha de hoy | Un informe de enero tiene que seguir cuadrando en junio |
+| Masa cargada y arrastrada en series separadas | Un total único de «kg movidos» | Cargar y arrastrar no son la misma magnitud (regla invariable nº 1) |
+| El peso se aplica según la FRECUENCIA de la tarea | Una vez por token siempre | Mover 12 kg por pieza en un lote de 20 serían 240 kg y en planta fue un viaje |
+| Habilidades bloquean la tarea | Solo informar de ellas | Sin bloqueo, la categoría «bloqueado por habilidad» no la produce nada |
+| La carga máxima avisa y no altera | Rechazar la tarea y pasar a otra persona | El sistema solo da datos; decidir por seguridad no le toca |
+| Sin miembros, la piscina se comporta igual | Obligar a declararlos al activar la función | Ningún diagrama existente debe cambiar de resultado |
+| El reparto entre personas va en ronda | Aleatorio o siempre la primera | Dos personas equivalentes tienen que trabajar lo mismo |
+| Tarifa de persona con la de planta como respaldo | Exigir tarifa a todo miembro | Así el coste no se mueve si no rellenas tarifas por persona |

@@ -1125,6 +1125,594 @@ ChartPanel.$inject = [ 'canvas', 'eventBus' ];
 
 /***/ }),
 
+/***/ "./client/simulation/DataAudit.js":
+/*!****************************************!*\
+  !*** ./client/simulation/DataAudit.js ***!
+  \****************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   CAPACIDADES: () => (/* binding */ CAPACIDADES),
+/* harmony export */   ESTADOS: () => (/* binding */ ESTADOS),
+/* harmony export */   diagnosticar: () => (/* binding */ diagnosticar),
+/* harmony export */   disponibles: () => (/* binding */ disponibles),
+/* harmony export */   evaluarCapacidad: () => (/* binding */ evaluarCapacidad),
+/* harmony export */   inventarioDe: () => (/* binding */ inventarioDe),
+/* harmony export */   pendientesPorDato: () => (/* binding */ pendientesPorDato)
+/* harmony export */ });
+/**
+ * Diagnostico de datos: que se puede medir con lo que hay y que falta para medir
+ * lo que aun no se puede.
+ *
+ * Para que sirve: la pregunta del analista es «quiero medir ESTO, ¿que data
+ * necesito?». El programa sabe responderla porque conoce, capacidad por capacidad,
+ * cual es el dato minimo que la hace funcionar. Sin esto, la unica forma de
+ * descubrir que falta el peso de una tarea es simular y encontrar un cero.
+ *
+ * Tres reglas de presentacion, y las tres importan:
+ *
+ *   1. Un dato que FALTA se dice con su consecuencia («sin distancia no hay
+ *      kg·m»). Un aviso sin consecuencia no se lee dos veces.
+ *   2. El estado es LISTO / PARCIAL / FALTA, no «si/no»: «tienes carga en 2 de 5
+ *      tareas» es informacion, y «no» no lo seria.
+ *   3. Nada de esto evalua riesgo: cuenta datos. Que 12 t arrastradas sea mucho o
+ *      poco lo decide el analista, con los umbrales que el mismo declaro.
+ */
+
+const ESTADOS = [ 'listo', 'parcial', 'falta' ];
+
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+const texto = (v) => String(v == null ? '' : v).trim();
+
+/**
+ * Una capacidad medible y lo que exige.
+ *
+ * `requisitos` es una lista de { dato, campo, minimo, opcional, consecuencia }.
+ * `campo` es una ruta dentro del inventario (ver `inventarioDe`), y `minimo` es
+ * cuantas unidades tienen que cumplirlo para darlo por bueno.
+ */
+const CAPACIDADES = [
+  {
+    id: 'coste',
+    titulo: 'Coste del proceso (operación, primas y espera)',
+    porque: 'Es lo que se paga por producir. La base de cualquier comparación de planes.',
+    requisitos: [
+      { dato: 'Tarifa por hora', consecuencia: 'sin tarifa no hay ningún importe',
+        campo: 'global.tarifa', minimo: 1 },
+      { dato: 'Tiempo de proceso por tarea', consecuencia: 'sin duración no hay horas que costear',
+        campo: 'tarea.processingTime', minimo: 1 }
+    ]
+  },
+  {
+    id: 'ciclo',
+    titulo: 'Tiempo de ciclo y sus percentiles (p50/p90/p95/p99)',
+    porque: 'La media esconde la cola; el p95 es lo que rompe un plazo.',
+    requisitos: [
+      { dato: 'Tiempo de proceso por tarea', consecuencia: 'sin duración no hay ciclo',
+        campo: 'tarea.processingTime', minimo: 1 }
+    ]
+  },
+  {
+    id: 'capacidad',
+    titulo: 'Capacidad, utilización (ρ) y cuello de botella',
+    porque: 'Dice si el plan cabe en la plantilla o si la cola crece sin límite.',
+    requisitos: [
+      { dato: 'Piscinas de recursos con su cantidad', consecuencia: 'sin piscinas no hay ρ que calcular',
+        campo: 'piscina.conCantidad', minimo: 1 },
+      { dato: 'Tiempo de proceso por tarea', consecuencia: 'ρ necesita el tiempo que ocupa la tarea',
+        campo: 'tarea.processingTime', minimo: 1 }
+    ]
+  },
+  {
+    id: 'colas',
+    titulo: 'Colas y tiempo de espera por recurso',
+    porque: 'La espera es el coste oculto de ir justo de gente.',
+    requisitos: [
+      { dato: 'Piscinas de recursos', consecuencia: 'sin piscinas no hay a quién esperar',
+        campo: 'piscina.conCantidad', minimo: 1 },
+      { dato: 'Tareas asignadas a una piscina', consecuencia: 'una tarea sin piscina nunca espera',
+        campo: 'tarea.recurso', minimo: 1 }
+    ]
+  },
+  {
+    id: 'lotes',
+    titulo: 'Producción por lotes: ciclo de lote, parones y firmas',
+    porque: 'Con lotes, la muestra efectiva son los lotes, no las piezas.',
+    requisitos: [
+      { dato: 'Llegadas por lotes activadas', consecuencia: 'sin lotes las llegadas van una a una',
+        campo: 'global.lots', minimo: 1 }
+    ]
+  },
+  {
+    id: 'laboral',
+    titulo: 'Cumplimiento de la LFT (topes de extra y primas)',
+    porque: 'Pasarse de un tope no solo cuesta más: es ilegal.',
+    requisitos: [
+      { dato: 'Reglas laborales declaradas', consecuencia: 'sin reglas solo se puede costear, no dictaminar',
+        campo: 'global.labor', minimo: 1 }
+    ]
+  },
+  {
+    id: 'calendario',
+    titulo: 'Jornada real: tramos, descansos y arranque lento',
+    porque: 'Una jornada de 8 h no son 8 h de trabajo; sin esto la capacidad sale inflada.',
+    requisitos: [
+      { dato: 'Horario de la jornada', consecuencia: 'sin horario el reloj no sabe cuándo se trabaja',
+        campo: 'global.calendario', minimo: 1 },
+      { dato: 'Descansos declarados', consecuencia: 'sin descansos la capacidad sale inflada',
+        campo: 'global.descansos', minimo: 1, opcional: true },
+      { dato: 'Curva de arranque', consecuencia: 'sin curva el arranque lento no se modela',
+        campo: 'global.arranque', minimo: 1, opcional: true }
+    ]
+  },
+  {
+    id: 'calidad',
+    titulo: 'Calidad: fallos y retrabajo',
+    porque: 'El retrabajo suma tiempo al ciclo y coste al proceso.',
+    requisitos: [
+      { dato: 'Tasa de fallo en alguna tarea', consecuencia: 'con todo a 0 el modelo es determinista',
+        campo: 'tarea.fallo', minimo: 1, opcional: true }
+    ]
+  },
+  {
+    id: 'carga',
+    titulo: 'Carga física: masa cargada, masa arrastrada y kg·m',
+    porque: 'Es el dato que dice «moverás 12 t a 8 m durante 6 h». El sistema no valora el riesgo.',
+    requisitos: [
+      { dato: 'Masa (cargada o arrastrada) en alguna tarea', consecuencia: 'sin masa no hay toneladas que reportar',
+        campo: 'tarea.carga', minimo: 1 },
+      { dato: 'Distancia declarada en esas tareas', consecuencia: 'sin distancia no hay kg·m, solo kg',
+        campo: 'tarea.distancia', minimo: 1, opcional: true }
+    ]
+  },
+  {
+    id: 'personas',
+    titulo: 'Colaboradores con nombre: quién trabaja y cuánto',
+    porque: 'Sin nombres solo se sabe que la piscina trabajó, no quién.',
+    requisitos: [
+      { dato: 'Piscinas declaradas', consecuencia: 'los nombres viven dentro de una piscina',
+        campo: 'piscina.conCantidad', minimo: 1 },
+      { dato: 'Miembros con nombre en alguna piscina', consecuencia: 'sin nombres el informe va por piscina',
+        campo: 'miembro.total', minimo: 1 }
+    ]
+  },
+  {
+    id: 'habilidades',
+    titulo: 'Bloqueo por habilidad y diagnóstico de absorción',
+    porque: 'Dice qué tareas se atascan porque nadie sabe hacerlas, y quién podría absorber qué.',
+    requisitos: [
+      { dato: 'Miembros con nombre', consecuencia: 'una habilidad necesita una persona que la tenga',
+        campo: 'miembro.total', minimo: 1 },
+      { dato: 'Habilidades declaradas en alguna persona', consecuencia: 'sin habilidades no hay elegibilidad que calcular',
+        campo: 'miembro.habilidades', minimo: 1, opcional: true },
+      { dato: 'Habilidades exigidas en alguna tarea', consecuencia: 'sin exigencia no hay bloqueo que detectar',
+        campo: 'tarea.habilidad', minimo: 1, opcional: true }
+    ]
+  },
+  {
+    id: 'operatividad',
+    titulo: 'Tiempo activo y muerto por persona, y coste por persona',
+    porque: 'Muestra quién tiene holgura y quién está parado, sin asignar a nadie solo.',
+    requisitos: [
+      { dato: 'Miembros con nombre', consecuencia: 'sin nombres no hay a quién atribuir el tiempo',
+        campo: 'miembro.total', minimo: 1 },
+      { dato: 'Tarifa por persona', consecuencia: 'sin tarifa propia se usa la de la planta para todos',
+        campo: 'miembro.tarifa', minimo: 1, opcional: true },
+      { dato: 'Carga máxima declarada', consecuencia: 'sin ella no se puede marcar un exceso por persona',
+        campo: 'miembro.cargaMaxima', minimo: 1, opcional: true }
+    ]
+  },
+  {
+    id: 'reparto',
+    titulo: 'Reparto por caminos (probabilidad de cada salida)',
+    porque: 'Con un reparto mal puesto, el motor manda el sobrante a la última rama sin avisar.',
+    requisitos: [
+      { dato: 'Compuertas exclusivas en el diagrama', consecuencia: 'el reparto solo aplica a compuertas exclusivas',
+        campo: 'compuerta.total', minimo: 1 }
+    ]
+  }
+];
+
+/**
+ * Inventario de datos del modelo, contado.
+ *
+ * Se construye UNA vez por apertura del panel: el diagnostico no simula nada y no
+ * debe tocar el motor, porque tiene que poder decir «falta esto» ANTES de correr.
+ */
+const inventarioDe = ({ tareas = [], flujos = [], pools = [], root = null }) => {
+  const inv = {
+    tarea: {
+      total: tareas.length,
+      processingTime: 0,
+      fallo: 0,
+      recurso: 0,
+      carga: 0,
+      distancia: 0,
+      habilidad: 0,
+      porLote: 0,
+      barrier: 0
+    },
+    piscina: { total: pools.length, conCantidad: 0 },
+    miembro: { total: 0, tarifa: 0, habilidades: 0, cargaMaxima: 0 },
+    compuerta: { total: 0, conReparto: 0 },
+    global: {
+      calendario: 0,
+      descansos: 0,
+      arranque: 0,
+      lots: 0,
+      labor: 0,
+      tarifa: 0,
+      semilla: 0
+    }
+  };
+
+  tareas.forEach((t) => {
+    const d = t && t.datos ? t.datos : {};
+
+    if (d.processingTime && num(d.processingTime.value) != null) inv.tarea.processingTime++;
+    else if (d.processingTime && num(d.processingTime.min) != null) inv.tarea.processingTime++;
+
+    if (num(d.failureRate) > 0) inv.tarea.fallo++;
+    if (d.resources && texto(d.resources.pool)) inv.tarea.recurso++;
+
+    const carga = d.carga || {};
+    if (num(carga.masaCargadaKg) > 0 || num(carga.masaArrastradaKg) > 0) inv.tarea.carga++;
+    if (num(carga.distanciaM) > 0) inv.tarea.distancia++;
+
+    if (texto(d.habilidad) || (Array.isArray(d.habilidades) && d.habilidades.length)) inv.tarea.habilidad++;
+    if (texto(d.frequency) === 'lot') {
+      inv.tarea.porLote++;
+      if (d.barrier) inv.tarea.barrier++;
+    }
+  });
+
+  pools.forEach((p) => {
+    if (num(p && p.quantity) >= 1) inv.piscina.conCantidad++;
+    const miembros = Array.isArray(p && p.members) ? p.members : [];
+    miembros.forEach((m) => {
+      if (!m || !texto(m.nombre)) return;
+      inv.miembro.total++;
+      if (num(m.tarifaHora) != null) inv.miembro.tarifa++;
+      if (Array.isArray(m.habilidades) && m.habilidades.length) inv.miembro.habilidades++;
+      if (num(m.cargaMaximaKg) != null) inv.miembro.cargaMaxima++;
+    });
+  });
+
+  flujos.forEach((f) => {
+    inv.compuerta.total++;
+    if (num(f && f.datos && f.datos.branchingProbability) != null) inv.compuerta.conReparto++;
+  });
+
+  const cal = (root && root.calendar) || null;
+  if (cal && cal.workingHours && cal.workingHours.start) inv.global.calendario = 1;
+  if (cal && Array.isArray(cal.breaks) && cal.breaks.length) inv.global.descansos = cal.breaks.length;
+  if (root && root.warmup && root.warmup.shape && root.warmup.shape !== 'none') inv.global.arranque = 1;
+  if (root && root.lots && root.lots.enabled) inv.global.lots = 1;
+  if (root && root.labor) inv.global.labor = 1;
+  if (root && root.cost && num(root.cost.baseRatePerHour) > 0) inv.global.tarifa = 1;
+  if (root && num(root.seed) != null) inv.global.semilla = 1;
+
+  return inv;
+};
+
+/** Lee un valor del inventario por la ruta anotada en el requisito. */
+const leer = (inv, campo) => {
+  const partes = String(campo).split('.');
+  let v = inv;
+  for (const p of partes) {
+    if (v == null) return 0;
+    v = v[p];
+  }
+  return num(v) || 0;
+};
+
+/**
+ * Evalua una capacidad contra el inventario.
+ *
+ * LISTO: todos los requisitos obligatorios se cumplen.
+ * PARCIAL: se cumple alguno, o solo faltan los OPCIONALES (se puede medir, pero
+ *          con menos detalle, y se dice cuál).
+ * FALTA: no se cumple ningún obligatorio.
+ */
+const evaluarCapacidad = (capacidad, inv) => {
+  const obligatorios = capacidad.requisitos.filter((r) => !r.opcional);
+  const opcionales = capacidad.requisitos.filter((r) => r.opcional);
+
+  const detalle = capacidad.requisitos.map((r) => {
+    const tiene = leer(inv, r.campo);
+    return { ...r, tiene, cumple: tiene >= (r.minimo || 1) };
+  });
+
+  const faltanObligatorios = detalle.filter((d) => !d.opcional && !d.cumple);
+  const faltanOpcionales = detalle.filter((d) => d.opcional && !d.cumple);
+  const algunObligatorio = detalle.some((d) => !d.opcional && d.cumple);
+
+  let estado;
+  if (!obligatorios.length || !faltanObligatorios.length) {
+    estado = faltanOpcionales.length ? 'parcial' : 'listo';
+  } else if (algunObligatorio) {
+    estado = 'parcial';
+  } else {
+    estado = 'falta';
+  }
+
+  return {
+    id: capacidad.id,
+    titulo: capacidad.titulo,
+    porque: capacidad.porque,
+    estado,
+    detalle,
+    // Solo lo que FALTA, con su consecuencia: es lo que el usuario tiene que leer.
+    pendientes: [ ...faltanObligatorios, ...faltanOpcionales ].map((d) => ({
+      dato: d.dato,
+      consecuencia: d.consecuencia,
+      opcional: Boolean(d.opcional)
+    }))
+  };
+};
+
+/** Diagnostico completo, con el recuento de cabecera. */
+const diagnosticar = (inv) => {
+  const capacidades = CAPACIDADES.map((c) => evaluarCapacidad(c, inv));
+  return {
+    inventario: inv,
+    capacidades,
+    recuento: {
+      listo: capacidades.filter((c) => c.estado === 'listo').length,
+      parcial: capacidades.filter((c) => c.estado === 'parcial').length,
+      falta: capacidades.filter((c) => c.estado === 'falta').length,
+      total: capacidades.length
+    }
+  };
+};
+
+/** Las capacidades que se pueden medir ya (para el resumen corto). */
+const disponibles = (diag) => diag.capacidades.filter((c) => c.estado !== 'falta');
+
+/** Lo que falta, agrupado por dato: un dato puede desbloquear varias capacidades. */
+const pendientesPorDato = (diag) => {
+  const mapa = new Map();
+  diag.capacidades.forEach((c) => {
+    if (c.estado === 'listo') return;
+    c.pendientes.forEach((p) => {
+      const clave = p.dato;
+      if (!mapa.has(clave)) mapa.set(clave, { dato: p.dato, consecuencia: p.consecuencia, desbloquea: [] });
+      mapa.get(clave).desbloquea.push(c.titulo);
+    });
+  });
+  return Array.from(mapa.values()).sort((a, b) => b.desbloquea.length - a.desbloquea.length);
+};
+
+
+/***/ }),
+
+/***/ "./client/simulation/DataAuditPanel.js":
+/*!*********************************************!*\
+  !*** ./client/simulation/DataAuditPanel.js ***!
+  \*********************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (/* binding */ DataAuditPanel)
+/* harmony export */ });
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
+/* harmony import */ var _DataAudit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./DataAudit */ "./client/simulation/DataAudit.js");
+/* harmony import */ var _data_audit_css__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./data-audit.css */ "./client/simulation/data-audit.css");
+
+
+
+
+
+
+const PANEL_CLS = 'sim-data-audit-panel';
+const OPEN_CLS = 'open';
+
+const CloseIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+      <path d="M 3.5 3.5 L 12.5 12.5 M 12.5 3.5 L 3.5 12.5"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+    </svg>
+  </span>
+`;
+
+// Los tres estados, con su palabra. No se usan solo colores: un daltónico tiene
+// que poder leer la lista igual, y un informe impreso en blanco y negro tambien.
+const ETIQUETA = {
+  listo: { texto: 'listo', glifo: '✓' },
+  parcial: { texto: 'parcial', glifo: '≈' },
+  falta: { texto: 'falta', glifo: '✗' }
+};
+
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * Panel de diagnostico de datos: «tengo lo necesario para medir esto o no».
+ *
+ * Existe porque la pregunta del analista llega ANTES de simular («quiero medir
+ * la carga física, ¿qué me falta?») y hasta ahora la unica forma de responderla
+ * era correr y encontrar un cero.
+ *
+ * Lee el MISMO camino que el editor de datos (getSimulationData), asi que no
+ * puede discrepar de lo que se va a simular.
+ */
+class DataAuditPanel {
+  constructor(canvas, eventBus, elementRegistry, overlays) {
+    this._canvas = canvas;
+    this._eventBus = eventBus;
+    this._elementRegistry = elementRegistry;
+    this._overlays = overlays;
+
+    this._panel = null;
+
+    this._eventBus.on('canvas.init', () => this._init());
+    this._eventBus.on('diagram.destroy', () => this.destroy());
+    // Por evento: el boton de la barra vive en el controlador, que se registra
+    // antes, asi que inyectar el panel alli seria una dependencia circular.
+    this._eventBus.on('simulation.audit.requested', () => this.toggle());
+  }
+
+  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).has(OPEN_CLS); }
+  toggle() { this.isOpen() ? this.close() : this.open(); }
+
+  open() {
+    if (!this._panel) this._init();
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).add(OPEN_CLS);
+    this._render();
+  }
+
+  close() {
+    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.classes)(this._panel).remove(OPEN_CLS);
+  }
+
+  destroy() {
+    if (this._panel && this._panel.parentNode) {
+      this._panel.parentNode.removeChild(this._panel);
+    }
+    this._panel = null;
+  }
+
+  // -- infraestructura ------------------------------------------------------
+
+  _init() {
+    if (this._panel) return;
+
+    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_3__.domify)(`
+      <div class="${PANEL_CLS}">
+        <div class="panel-header">
+          <span class="panel-title">Diagnóstico de datos: qué se puede medir y qué falta</span>
+          <div class="panel-actions">
+            <button class="btn-close" title="Cerrar" data-tip="Cerrar el diagnóstico" data-tip-pos="left">${CloseIcon}</button>
+          </div>
+        </div>
+        <div class="panel-body"></div>
+      </div>
+    `);
+
+    this._canvas.getContainer().appendChild(panel);
+    this._body = panel.querySelector('.panel-body');
+
+    min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
+  }
+
+  // -- lectura de datos -----------------------------------------------------
+
+  /**
+   * Inventario del modelo, leido igual que lo lee el editor de datos.
+   *
+   * Se filtra por `bpmn:Task` y no por `bpmn:Activity`: el generador de datos y el
+   * editor usan `bpmn:Task`, y contar dos veces lo mismo daria un inventario que
+   * no cuadra con la pestana Tareas.
+   */
+  _leerModelo() {
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task'))
+      .map((el) => ({ id: el.id, nombre: el.businessObject.name || el.id, datos: (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el) || {} }));
+
+    const flujos = this._elementRegistry.filter(
+      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el.source, 'bpmn:ExclusiveGateway')
+    ).map((el) => ({ id: el.id, datos: (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el) || {} }));
+
+    const proceso = this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Participant'));
+    const pools = (((0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(proceso) || {}).resourcePools || []);
+
+    const raiz = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:StartEvent'))
+      .map((el) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el))
+      .find((d) => d && d.isRoot) || null;
+
+    return { tareas, flujos, pools, root: raiz };
+  }
+
+  // -- render ---------------------------------------------------------------
+
+  _render() {
+    if (!this._panel) return;
+
+    const modelo = this._leerModelo();
+    const inv = (0,_DataAudit__WEBPACK_IMPORTED_MODULE_1__.inventarioDe)(modelo);
+    const diag = (0,_DataAudit__WEBPACK_IMPORTED_MODULE_1__.diagnosticar)(inv);
+    const porDato = (0,_DataAudit__WEBPACK_IMPORTED_MODULE_1__.pendientesPorDato)(diag);
+
+    const { listo, parcial, falta, total } = diag.recuento;
+
+    this._body.innerHTML = `
+      <p class="intro">
+        Esta lista dice <strong>qué se puede medir con los datos que ya tienes</strong> y qué falta para lo
+        demás. No evalúa nada: solo cuenta datos. Si tu pregunta es «quiero medir esto, ¿qué me falta?», la
+        respuesta está aquí <em>antes</em> de simular.
+      </p>
+
+      <div class="recuento">
+        <span class="marca listo">✓ ${listo} listas</span>
+        <span class="marca parcial">≈ ${parcial} parciales</span>
+        <span class="marca falta">✗ ${falta} sin datos</span>
+        <span class="total">${total} capacidades</span>
+      </div>
+
+      <h4 class="subtitulo">Lo que falta, agrupado por el dato que lo desbloquea</h4>
+      ${porDato.length ? `
+        <p class="hint">
+          Ordenado por <strong>cuántas capacidades desbloquea cada dato</strong>: lo de arriba es lo que más
+          te devuelve por el esfuerzo de rellenarlo.
+        </p>
+        <table class="data-table">
+          <thead><tr><th>Dato que falta</th><th>Qué te pierdes sin él</th><th>Desbloquea</th></tr></thead>
+          <tbody>
+            ${porDato.map((p) => `
+              <tr>
+                <td class="dato">${esc(p.dato)}</td>
+                <td class="cons">${esc(p.consecuencia)}</td>
+                <td class="desb">${p.desbloquea.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      ` : '<p class="vacio">No falta ningún dato: todas las capacidades del sistema se pueden medir.</p>'}
+
+      <h4 class="subtitulo">Detalle por capacidad</h4>
+      <table class="data-table">
+        <thead><tr><th>Capacidad</th><th>Estado</th><th>Qué necesita</th></tr></thead>
+        <tbody>
+          ${diag.capacidades.map((c) => this._filaCapacidad(c)).join('')}
+        </tbody>
+      </table>
+
+      <h4 class="subtitulo">Qué mide cada capacidad</h4>
+      <ul class="porques">
+        ${_DataAudit__WEBPACK_IMPORTED_MODULE_1__.CAPACIDADES.map((c) => `<li><strong>${esc(c.titulo)}</strong> — ${esc(c.porque)}</li>`).join('')}
+      </ul>
+    `;
+  }
+
+  _filaCapacidad(c) {
+    const e = ETIQUETA[c.estado];
+    const necesita = c.detalle.map((d) => {
+      const marca = d.cumple ? '✓' : '✗';
+      const clase = d.cumple ? 'ok' : 'mal';
+      const opcional = d.opcional ? ' <em>(opcional)</em>' : '';
+      return `<div class="req ${clase}">${marca} ${esc(d.dato)}${opcional}</div>`;
+    }).join('');
+
+    return `
+      <tr class="fila-${c.estado}">
+        <td class="cap">
+          <strong>${esc(c.titulo)}</strong>
+          <div class="porque">${esc(c.porque)}</div>
+        </td>
+        <td class="estado"><span class="marca ${c.estado}">${e.glifo} ${e.texto}</span></td>
+        <td class="reqs">${necesita}</td>
+      </tr>`;
+  }
+}
+
+
+/***/ }),
+
 /***/ "./client/simulation/DataTablePanel.js":
 /*!*********************************************!*\
   !*** ./client/simulation/DataTablePanel.js ***!
@@ -1152,6 +1740,93 @@ __webpack_require__.r(__webpack_exports__);
 const PANEL_CLS = 'sim-data-table-panel';
 const OPEN_CLS = 'open';
 const TAB_ACTIVE_CLS = 'active';
+
+// ---------------------------------------------------------------------------
+// Ayuda por pestana.
+//
+// Cada pestana explica TRES cosas, y en este orden a proposito:
+//   1. `campos`: que se declara aqui (para saber que se puede rellenar).
+//   2. `mide`: que se puede MEDIR con esos datos (la pregunta real del analista).
+//   3. `ojo`: la trampa que mas cara sale si se ignora.
+//
+// Decir solo «que campos hay» no ayuda: el usuario no quiere la lista de campos,
+// quiere saber para que le sirven. Por eso `mide` va antes que `ojo`, y `ojo`
+// explica siempre la CONSECUENCIA, no la regla.
+// ---------------------------------------------------------------------------
+const AYUDA_PESTANA = {
+  tasks: {
+    titulo: 'Tareas: ritmo, calidad y carga física de cada paso',
+    campos: [
+      [ 'Distribución', 'fija (un valor) o triangular (mín/moda/máx). Decide qué columnas se leen.' ],
+      [ 'Tiempo y unidad', 'la duración base. Con triangular, el campo «Tiempo» se IGNORA.' ],
+      [ 'Tasa de fallo y retrabajo', 'probabilidad de fallo por ejecución y el tiempo que se añade al repetir.' ],
+      [ 'Recurso y Cant.', 'la piscina que consume y cuántas unidades toma a la vez.' ],
+      [ 'Frecuencia', 'por token (una vez por pieza) o por lote (una vez por lote).' ],
+      [ 'Barrera', 'quien firma: probabilidad de atender, espera si no atiende, y tolerancia.' ]
+    ],
+    mide: [
+      'Con tiempo y unidad: <strong>coste, tiempo de ciclo y sus percentiles</strong> (p50/p95).',
+      'Añadiendo recurso: <strong>esperas en cola, utilización (ρ) y cuello de botella</strong>.',
+      'Añadiendo fallo y retrabajo: <strong>calidad y su impacto en el ciclo</strong>.',
+      'Con frecuencia y barrera: <strong>ciclo de lote, parones y esperas de firma</strong>.',
+      'Con masa y distancia (bloque A5): <strong>toneladas movidas y kg·m</strong>, separando lo cargado de lo arrastrado.'
+    ],
+    ojo: [
+      'La <strong>unidad</strong> se escribe en plural (<code>minutes</code>): un <code>minute</code> se interpretaría como milisegundos, un factor de 60 000, y sin ningún aviso.'
+    ]
+  },
+  flows: {
+    titulo: 'Flujos: el reparto de cada compuerta',
+    campos: [
+      [ 'Probabilidad (%)', 'el reparto de las salidas de una compuerta <strong>exclusiva</strong>.' ]
+    ],
+    mide: [
+      'La <strong>mezcla de caminos</strong>: cuántos casos van por cada rama, y con eso el volumen y el coste por camino.'
+    ],
+    ojo: [
+      'El reparto de cada compuerta <strong>debe sumar 100 %</strong>: el motor acumula y manda todo el sobrante a la última rama sin avisar. El guardado lo bloquea.',
+      'Al cambiar una salida, <strong>las demás se ajustan solas</strong> (a partes iguales si estaban iguales, en proporción si no).',
+      'Una compuerta de <strong>una sola salida</strong> aparece fija al 100 %: el motor siempre la toma y no lee su probabilidad.'
+    ]
+  },
+  resources: {
+    titulo: 'Recursos: las piscinas de unidades equivalentes',
+    campos: [
+      [ 'Nombre', 'el de la piscina. Debe ser único.' ],
+      [ 'Cantidad', 'cuántas unidades idénticas hay (personas, máquinas, vehículos).' ],
+      [ 'Miembros (A5)', 'opcional: nombres con tarifa, habilidades y carga máxima dentro de la piscina.' ]
+    ],
+    mide: [
+      'Con la cantidad: <strong>utilización (ρ), colas y cuello de botella</strong>, que es lo que dice si el plan cabe en la plantilla.',
+      'Con miembros con nombre (A5): <strong>quién trabaja, cuánto tiempo y qué carga movió</strong>, más el <strong>bloqueo por habilidad</strong> y el diagnóstico de absorción.'
+    ],
+    ojo: [
+      'La cantidad es <strong>capacidad</strong>: los miembros con nombre no la cambian, solo dan identidad y tarifa.',
+      'Una tarea que apunta a una piscina que no existe <strong>ignora el recurso en silencio</strong>. Por eso la columna «Recurso» de Tareas es un desplegable y no texto libre.'
+    ]
+  },
+  global: {
+    titulo: 'Global: el reloj, el coste y las reglas',
+    campos: [
+      [ 'Tasa de llegada', 'llegadas por unidad de tiempo. Es una TASA, no un intervalo.' ],
+      [ 'Tarifa y coste de espera', 'lo que cuesta la hora trabajada y la hora en cola.' ],
+      [ 'Jornada, descansos y arranque', 'el reloj real: tramos, pausas y arranque lento.' ],
+      [ 'Horas extra', 'el cupo semanal y sus multiplicadores (LFT arts. 66 y 68).' ],
+      [ 'Lotes y semilla', 'llegadas en serie y reproducibilidad de la corrida.' ],
+      [ 'Reglas laborales (A2)', 'turno, topes del art. 65, primas de domingo y festivo, y sus vigencias.' ]
+    ],
+    mide: [
+      'Con la jornada y los descansos: <strong>capacidad real</strong>, sin inflarla (una jornada de 8 h no son 8 h de trabajo).',
+      'Con el cupo y las primas: <strong>coste real con horas extra</strong> y su reparto doble/triple.',
+      'Con las reglas laborales: <strong>cumplimiento de la LFT</strong> — cuántas semanas se pasaron del tope, y por cuánto.',
+      'Con la semilla: <strong>reproducibilidad y comparación limpia</strong> entre planes (mismo azar para los dos).'
+    ],
+    ojo: [
+      'La tasa de llegada es <strong>una tasa</strong>: <code>60</code> por <code>minute</code> es una llegada por <em>segundo</em>, no una cada 60 minutos.',
+      'Sin <strong>evento raíz</strong> la simulación no arranca, aunque todo lo demás esté relleno.'
+    ]
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Unidades. NO unificar en una sola lista: el motor usa DOS convenciones
@@ -1424,6 +2099,10 @@ const TestDataIcon = '<path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.
 const ExportIcon = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
 const ImportIcon = '<path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/>';
 const CloseIcon = '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>';
+
+// El mismo icono de ayuda que usa el panel de graficos, para que «ayuda» se
+// reconozca igual en los dos sitios.
+const HelpIcon = '<path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/>';
 // Lapiz del acceso directo sobre la figura seleccionada.
 const EditIcon = '<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>';
 
@@ -1511,6 +2190,7 @@ class DataTablePanel {
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
           <div class="panel-actions">
+            <button class="btn-ayuda" title="Ayuda de esta pestaña" data-tip="Qué datos hay aquí y qué se puede medir con ellos">${svg(HelpIcon)}</button>
             <button class="btn-test" title="Datos de prueba" data-tip="Rellena la pestaña con datos de prueba, para revisarlos antes de guardar">${svg(TestDataIcon)}</button>
             <button class="btn-export" title="Exportar CSV" data-tip="Exportar la pestaña actual a CSV (para Excel)">${svg(ExportIcon)}</button>
             <button class="btn-import" title="Importar CSV" data-tip="Importar un CSV exportado, editado en Excel">${svg(ImportIcon)}</button>
@@ -1523,6 +2203,7 @@ class DataTablePanel {
           <button data-tab="resources">Recursos</button>
           <button data-tab="global">Global</button>
         </div>
+        <div class="panel-ayuda hidden"></div>
         <div class="panel-body"></div>
         <div class="panel-footer">
           <span class="status"></span>
@@ -1535,9 +2216,11 @@ class DataTablePanel {
     this._canvas.getContainer().appendChild(panel);
 
     this._body = panel.querySelector('.panel-body');
+    this._ayuda = panel.querySelector('.panel-ayuda');
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
+    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
     min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
     min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
     min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
@@ -1549,6 +2232,13 @@ class DataTablePanel {
       min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
         panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        // Si la ayuda esta abierta, se RECARGA con la pestana nueva: si no, al
+        // cambiar de pestana seguiria explicando la anterior, que es peor que no
+        // tener ayuda porque el usuario lee la respuesta equivocada.
+        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._ayuda).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._ayuda).add('hidden');
+          this._toggleAyuda();
+        }
         this._render();
       });
     });
@@ -1758,6 +2448,41 @@ class DataTablePanel {
     else this._renderGlobal();
 
     this._avisarSinRaiz();
+  }
+
+  /**
+   * Ayuda de la pestana activa: campos, qué se mide con ellos y la trampa.
+   *
+   * Se redibuja en cada llamada porque el contenido depende de la PESTANA, y la
+   * pestana puede haber cambiado desde la ultima vez. Se mantiene abierta/cerrada
+   * con una clase para que el usuario no tenga que reabrirla al cambiar de tab.
+   */
+  _toggleAyuda() {
+    if (!this._ayuda) return;
+    const a = AYUDA_PESTANA[this._activeTab];
+    if (!a) return;
+
+    const listas = (items, clase) => `<ul class="${clase}">${items.map((i) => (
+      Array.isArray(i) ? `<li><strong>${i[0]}</strong>: ${i[1]}</li>` : `<li>${i}</li>`
+    )).join('')}</ul>`;
+
+    this._ayuda.innerHTML = `
+      <h4>${a.titulo}</h4>
+      <div class="columnas">
+        <div>
+          <h5>Qué se declara aquí</h5>
+          ${listas(a.campos, 'campos')}
+        </div>
+        <div>
+          <h5>Qué se puede medir con estos datos</h5>
+          ${listas(a.mide, 'mide')}
+        </div>
+      </div>
+      <h5 class="ojo-titulo">Lo que hay que tener presente</h5>
+      ${listas(a.ojo, 'ojo')}
+    `;
+
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._ayuda).toggle('hidden');
   }
 
   /**
@@ -5380,6 +6105,18 @@ const ReportIcon = `
 // un subproceso grande generaria un circulo que tapa el diagrama entero.
 const MAX_BLOB_RADIUS = 240;
 
+// Diagnostico de datos: responde «¿tengo lo necesario para medir esto?» antes de
+// simular. La lista con la marca de verificacion se lee de un vistazo, que es
+// justo lo que se pide a un icono de «que datos tengo».
+const AuditIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M6.3 10.6l-2.1 2.1 4.6 4.6L20 6.1 17.9 4 8.8 13.1l-2.5-2.5z"/>
+      <path fill="currentColor" opacity="0.45" d="M3 19h18v2H3z"/>
+    </svg>
+  </span>
+`;
+
 // Tipos de figura que reciben mancha del mapa de calor.
 //
 // Se deja como lista explicita (en vez de "todo FlowNode") para poder ajustarla
@@ -5484,6 +6221,7 @@ class SimulationController {
     const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
     const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
     const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
+    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
 
     min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(runButton, 'click', () => this.runSimulation());
     min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
@@ -5492,6 +6230,8 @@ class SimulationController {
     // Por evento y no llamando al panel: el modulo del informe se registra
     // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
     min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
+    // Mismo motivo: el panel de diagnostico se registra despues.
+    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
 
     this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
@@ -5499,6 +6239,7 @@ class SimulationController {
     this._tokenSimulationPalette.addEntry(chartButton, 14);
     this._tokenSimulationPalette.addEntry(tableButton, 15);
     this._tokenSimulationPalette.addEntry(reportButton, 16);
+    this._tokenSimulationPalette.addEntry(auditButton, 17);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
@@ -7478,11 +8219,13 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationEngine)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./BusinessCalendar.js */ "./client/simulation/BusinessCalendar.js");
 /* harmony import */ var _WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./WarmupCurve.js */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
+/* harmony import */ var _Workload_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./Workload.js */ "./client/simulation/Workload.js");
+
 
 
 
@@ -7617,27 +8360,87 @@ class ResourcePool {
     // Minutos-recurso consumidos: lo que ocupan las tareas que usan esta piscina
     // (duracion x unidades tomadas). Es el numerador de la utilizacion.
     this.busyMinutes = 0;
+
+    // Miembros con nombre. SIN miembros la piscina se comporta exactamente como
+    // antes de A5: esto es lo que hace que ningun diagrama existente cambie.
+    this.members = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.normalizeMembers)(config.members);
+    // Turno de reparto en ronda. Con «siempre la primera» una persona acapararia
+    // el trabajo y la otra saldria ociosa en el informe, cuando en la planta se
+    // reparten.
+    this._ultimoMiembro = -1;
+    // Ocupacion por persona (nombres), para el informe de operatividad.
+    this.porMiembro = new Map(this.members.map((m) => [ m.nombre, {
+      nombre: m.nombre,
+      habilidades: m.habilidades.slice(),
+      cargaMaximaKg: m.cargaMaximaKg,
+      tarifaHora: m.tarifaHora,
+      tareas: 0,
+      busyMinutes: 0,
+      carga: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)()
+    } ]));
   }
-  request(quantity, task) {
+
+  /** ¿Esta piscina tiene nombres? Sin nombres no hay a quien repartir. */
+  get conNombres() { return this.members.length > 0; }
+
+  /**
+   * ¿Alguna unidad de esta piscina tiene las habilidades que la tarea exige?
+   *
+   * Sin nombres no se filtra (no hay datos que filtrar). Con nombres, si nadie
+   * las tiene, la tarea se BLOQUEA: es la decision conservadora.
+   */
+  puedeAtender(requeridas) {
+    return (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.poolPuedeHacerla)(this, requeridas);
+  }
+
+  /**
+   * Pide unidades y devuelve QUIEN las toma.
+   *
+   * Se elige en ronda y se filtra por habilidad ANTES de pedir: si la tarea
+   * exige «soldadura» y solo la tienen dos de los cuatro puestos, la unidad que
+   * se reserva tiene que ser la de alguien que sepa. Reservar la de cualquiera y
+   * luego buscar persona seria contar capacidad que no existe.
+   */
+  request(quantity, task, requeridas) {
     if (this.available >= quantity) {
       this.available -= quantity;
-      return true;
+      return { tomada: true, miembro: this._elegir(requeridas) };
     }
-    this.queue.push({ quantity, task });
-    return false;
+    this.queue.push({ quantity, task, requeridas });
+    return { tomada: false, miembro: null };
   }
+
+  _elegir(requeridas) {
+    if (!this.conNombres) return null;
+    const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.puedeHacerla)(m, requeridas));
+    if (!aptos.length) return null;
+    // Ronda sobre los APTOS: se avanza el turno segun cuantos hayan.
+    this._ultimoMiembro = (this._ultimoMiembro + 1) % aptos.length;
+    return aptos[this._ultimoMiembro];
+  }
+
   release(quantity) {
     this.available += quantity;
     const newTasks = [];
     this.queue = this.queue.filter(waiting => {
       if (this.available >= waiting.quantity) {
         this.available -= waiting.quantity;
-        newTasks.push(waiting.task);
+        newTasks.push({ task: waiting.task, miembro: this._elegir(waiting.requeridas) });
         return false; // remove from queue
       }
       return true; // keep in queue
     });
     return newTasks;
+  }
+
+  /** Anota que un miembro trabajo: minutos y carga. */
+  anotarTrabajo(miembro, minutos, carga) {
+    if (!miembro || !this.conNombres) return;
+    const fila = this.porMiembro.get(miembro.nombre);
+    if (!fila) return;
+    fila.tareas += 1;
+    fila.busyMinutes += Math.max(0, Number(minutos) || 0);
+    if (carga) fila.carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(fila.carga, carga);
   }
 }
 
@@ -7765,6 +8568,21 @@ class SimulationEngine {
     // llevan en su propio cubo para que el cuadre del informe pueda demostrarlas.
     this.premiumStats = { dominicalMs: 0, festivoMs: 0, imponible: 0 };
 
+    // Carga fisica: DOS acumuladores que NUNCA se suman (cargada y arrastrada).
+    // Y la operatividad: el tiempo muerto por categoria, que es lo que permite
+    // decir quien tiene holgura y por que esta parado.
+    this.carga = {
+      area: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)(),
+      porTarea: new Map(),
+      porPersona: new Map(),
+      porMiembro: new Map()
+    };
+    this.operatividad = {
+      bloqueadoPorHabilidadMin: 0,
+      esperandoFirmaMin: 0,
+      tareasBloqueadas: 0
+    };
+
     // Muestras por caso. Los totales por elemento dan medias, pero una media
     // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
     this.instanceCycleTimes = [];
@@ -7858,7 +8676,7 @@ class SimulationEngine {
       return [];
     }
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:ParallelGateway')) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -7867,7 +8685,7 @@ class SimulationEngine {
     }
 
     let chosenFlow = null;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = this._random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
@@ -7944,7 +8762,7 @@ class SimulationEngine {
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(nextElement);
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
 
@@ -7953,7 +8771,7 @@ class SimulationEngine {
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(nextElement, 'bpmn:Task') && data) {
+      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(nextElement, 'bpmn:Task') && data) {
         // Tarea POR LOTE: la ejecuta una sola vez el primer token que llega, y
         // los demas esperan (barrera). Ver _atenderTareaPorLote.
         if (data.frequency === 'lot' && this.lotConfig.enabled) {
@@ -7983,6 +8801,26 @@ class SimulationEngine {
       ? this.resourcePools.get(data.resources.pool)
       : null;
 
+    // HABILIDADES. Si la piscina tiene nombres y NINGUNO sabe hacer esta tarea,
+    // la tarea queda BLOQUEADA: no arranca y el tiempo se cuenta en su propia
+    // categoria de tiempo muerto. Es la decision conservadora (un dato que falta
+    // bloquea, no acelera) y es lo unico que puede producir «bloqueado por
+    // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
+    const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.habilidadesRequeridas)(data);
+    if (pool && requeridas.length && !pool.puedeAtender(requeridas)) {
+      this.operatividad.bloqueadoPorHabilidadMin += (taskEvent.bloqueoMinutos || 0);
+      this.operatividad.tareasBloqueadas++;
+      console.log(`[A5] tarea bloqueada por habilidad: ${element.id} necesita ${requeridas.join(', ')}`
+        + ` y "${pool.name}" no tiene a nadie que la haga.`);
+      // Se deja constancia en el resultado de la tarea y NO se programa nada: la
+      // instancia se quedara ahi, que es exactamente lo que pasaria en planta.
+      const r = this.results.get(element.id);
+      if (r) r.totalBlockedBySkill = (r.totalBlockedBySkill || 0) + 1;
+      return;
+    }
+
+    let miembro = taskEvent.miembro || null;
+
     if (pool && !taskEvent.recursoTomado) {
       const marcador = {
         element,
@@ -7995,7 +8833,9 @@ class SimulationEngine {
       };
       // El marcador se queda en la cola de la piscina; `release()` lo devuelve
       // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
-      if (!pool.request(quantityRequired, marcador)) return;
+      const pedido = pool.request(quantityRequired, marcador, requeridas);
+      if (!pedido.tomada) return;
+      miembro = pedido.miembro;
     }
 
     let processingTime = 0;
@@ -8047,7 +8887,12 @@ class SimulationEngine {
     // puesto mas tiempo, y ese tiempo se paga. Ademas asi la rampa TIENE coste,
     // que es justo lo que se quiere medir. Sin arranque declarado, la duracion
     // efectiva es la real y el coste no cambia.
-    const operationCost = (duracionEfectivaMs / 3600000) * baseRatePerHour;
+    //
+    // La TARIFA es la de la persona si la declaro, y si no la de la planta. Con
+    // la de planta de respaldo, poner nombres NO mueve el coste: solo lo mueve
+    // quien rellene tarifas por persona, que es lo que se quiere.
+    const tarifaHora = (miembro && miembro.tarifaHora != null) ? miembro.tarifaHora : baseRatePerHour;
+    const operationCost = (duracionEfectivaMs / 3600000) * tarifaHora;
 
     // Prima dominical (art. 73) y de dia festivo (art. 74). Se aplican sobre el
     // tiempo PAGADO de la tarea y se llevan en su propio cubo: sumarlas a la
@@ -8064,7 +8909,7 @@ class SimulationEngine {
       dayPremiumPercent = this.labor.sundayPremiumPercent;
       dayPremiumKind = 'dominical';
     }
-    const dayPremium = (duracionEfectivaMs / 3600000) * baseRatePerHour * (dayPremiumPercent / 100);
+    const dayPremium = (duracionEfectivaMs / 3600000) * tarifaHora * (dayPremiumPercent / 100);
     if (dayPremiumKind === 'festivo') this.premiumStats.festivoMs += duracionEfectivaMs;
     else if (dayPremiumKind === 'dominical') this.premiumStats.dominicalMs += duracionEfectivaMs;
     this.premiumStats.imponible += dayPremium;
@@ -8081,8 +8926,11 @@ class SimulationEngine {
     const normalOvertime = Math.min(taskOvertimeDuration, Math.max(0, limitInMillis - currentWeeklyOvertime));
     const excessOvertime = Math.max(0, taskOvertimeDuration - normalOvertime);
 
-    const doubleOvertimePremium = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
-    const tripleOvertimePremium = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
+    // Las primas de la extra se calculan sobre la MISMA tarifa que la operacion:
+    // si se usara la de la planta, el cuadre del informe dejaria de cerrar (la
+    // operacion iria con la tarifa de la persona y la prima con la otra).
+    const doubleOvertimePremium = (normalOvertime / 3600000) * tarifaHora * (overtimeRules.payMultiplier - 1);
+    const tripleOvertimePremium = (excessOvertime / 3600000) * tarifaHora * (overtimeRules.excessPayMultiplier - 1);
 
     this.overtimeBreakdown.normalMs += normalOvertime;
     this.overtimeBreakdown.excessMs += excessOvertime;
@@ -8110,6 +8958,11 @@ class SimulationEngine {
       // pueda separar las dos, que se pagan por articulos distintos.
       dayPremium,
       dayPremiumKind,
+      // Quien la hizo, si la piscina tiene nombres. La tarifa de la persona
+      // sustituye a la de la planta cuando existe (si no, el coste no se moveria
+      // al poner nombres, que es lo que se quiere).
+      miembro,
+      tarifaAplicada: (miembro && miembro.tarifaHora != null) ? miembro.tarifaHora : null,
       // Tareas POR LOTE: al terminar hay que despertar a los tokens que esperaban
       // la barrera, y hay que saber de que lote era.
       esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
@@ -8178,8 +9031,52 @@ class SimulationEngine {
     };
   }
 
+  /**
+   * Acumula la carga fisica de una ejecucion terminada.
+   *
+   * DOS series separadas —cargada y arrastrada— que NUNCA se suman: cargar
+   * (soportar) y arrastrar (deslizar) no son la misma magnitud. Es la regla
+   * invariable nº 1 del diseno, y aqui es donde se aplica de verdad.
+   *
+   * `veces` sale de la FRECUENCIA de la tarea (1 por lote o 1 por pieza), no del
+   * numero de tokens: mover 12 kg por pieza en un lote de 20 serian 240 kg
+   * cuando en planta se hizo un solo viaje.
+   */
+  _anotarCarga(event, data, pool) {
+    const carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.normalizeCarga)(data.carga);
+    const veces = (data.frequency === 'lot' && this.lotConfig.enabled) ? 1 : 1;
+    const inc = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaDeUnaEjecucion)(carga, veces);
+
+    const vacia = inc.cargadaKg === 0 && inc.arrastradaKg === 0;
+    // El area SIEMPRE se anota: aunque sea cero, tener la clave evita que el
+    // informe tenga que distinguir «no hay tarea» de «la tarea no mueve peso».
+    this.carga.area = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(this.carga.area, { ...inc, veces: 0 });
+
+    if (vacia) return inc;
+
+    const t = this.carga.porTarea.get(event.element.id) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)();
+    this.carga.porTarea.set(event.element.id, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(t, inc));
+
+    if (event.miembro) {
+      const p = this.carga.porMiembro.get(event.miembro.nombre) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)();
+      this.carga.porMiembro.set(event.miembro.nombre, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(p, inc));
+    } else if (pool) {
+      // Sin nombres, la carga es de la PISCINA: se guarda por piscina para no
+      // perderla, y el informe la muestra como «sin nombre asignado».
+      const p = this.carga.porPersona.get(pool.name) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)();
+      this.carga.porPersona.set(pool.name, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(p, inc));
+    }
+
+    // Minutos del puesto y reparto por persona, para el informe de operatividad.
+    if (pool) {
+      pool.anotarTrabajo(event.miembro, (event.effectiveDuration || event.totalDuration) / 60000, inc);
+    }
+
+    return inc;
+  }
+
   _findRootConfig() {
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el)?.isRoot);
 
     if (rootEvents.length === 1) {
@@ -8242,14 +9139,14 @@ class SimulationEngine {
 
     console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
 
-    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Participant'));
+    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Participant'));
     const processConfig = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(processRoot);
     const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
 
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
     if (!startEvents.length) {
       console.error("No start event found. Cannot run simulation.");
       return this.results;
@@ -8343,6 +9240,11 @@ class SimulationEngine {
           // lento al arrancar, el puesto esta ocupado mas tiempo.
           pool.busyMinutes += ((event.effectiveDuration || event.totalDuration) / 60000) * event.quantityRequired;
 
+          // Carga fisica de ESTA ejecucion. `veces` sale de la frecuencia de la
+          // tarea: una tarea por lote mueve su masa UNA vez por lote. Si no, 12 kg
+          // por pieza en un lote de 20 serian 240 kg cuando en planta fue un viaje.
+          this._anotarCarga(event, data, pool);
+
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(marcador => {
             const nextTaskResults = this.results.get(marcador.element.id);
@@ -8368,7 +9270,10 @@ class SimulationEngine {
               esTareaDeLote: marcador.esTareaDeLote,
               lotNumber: marcador.lotNumber,
               // La unidad ya esta tomada: pedirla otra vez la contaria dos veces.
-              recursoTomado: true
+              recursoTomado: true,
+              // Y la persona tambien: volver a elegirla cambiaria quien hizo el
+              // trabajo y la carga iria a otro nombre.
+              miembro: marcador.miembro || null
             });
           });
         }
@@ -8386,7 +9291,7 @@ class SimulationEngine {
       // Llegada de la siguiente instancia. En modo LOTES no se usa: alli las
       // instancias de un lote entran juntas y el siguiente lote lo dispara el
       // cierre del anterior.
-      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
+      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
         this.instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
@@ -8820,7 +9725,7 @@ class SimulationEngine {
       minutosDelDiaQueYaSonExtra: this.legalDayRecortadoMin || 0
     });
 
-    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task'));
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task'));
 
     if (!tareas.length) {
       console.log('No hay tareas en el diagrama.');
@@ -9561,6 +10466,264 @@ const describeWarmup = (cfg) => {
 
 /***/ }),
 
+/***/ "./client/simulation/Workload.js":
+/*!***************************************!*\
+  !*** ./client/simulation/Workload.js ***!
+  \***************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   BANDAS: () => (/* binding */ BANDAS),
+/* harmony export */   UMBRALES_CARGA: () => (/* binding */ UMBRALES_CARGA),
+/* harmony export */   acumularCarga: () => (/* binding */ acumularCarga),
+/* harmony export */   avisosDeCarga: () => (/* binding */ avisosDeCarga),
+/* harmony export */   bandaDe: () => (/* binding */ bandaDe),
+/* harmony export */   cargaDeUnaEjecucion: () => (/* binding */ cargaDeUnaEjecucion),
+/* harmony export */   cargaMaximaDe: () => (/* binding */ cargaMaximaDe),
+/* harmony export */   cargaVacia: () => (/* binding */ cargaVacia),
+/* harmony export */   describirAvisos: () => (/* binding */ describirAvisos),
+/* harmony export */   elegirPorRonda: () => (/* binding */ elegirPorRonda),
+/* harmony export */   habilidadesRequeridas: () => (/* binding */ habilidadesRequeridas),
+/* harmony export */   hayCarga: () => (/* binding */ hayCarga),
+/* harmony export */   normalizeCarga: () => (/* binding */ normalizeCarga),
+/* harmony export */   normalizeMembers: () => (/* binding */ normalizeMembers),
+/* harmony export */   poolPuedeHacerla: () => (/* binding */ poolPuedeHacerla),
+/* harmony export */   puedeHacerla: () => (/* binding */ puedeHacerla),
+/* harmony export */   toneladas: () => (/* binding */ toneladas)
+/* harmony export */ });
+/**
+ * Personas y carga fisica: quien trabaja, cuanto levanta y cuanto arrastra.
+ *
+ * Tres ideas mandan en este modulo, y las tres son decisiones cerradas (no
+ * preferencias de estilo). Si se rompen, el resultado es incorrecto aunque el
+ * programa funcione:
+ *
+ *   1. MASA CARGADA y MASA ARRASTRADA son dos series que NUNCA se suman. Cargar
+ *      (soportar el peso) y arrastrar (deslizarlo) no son la misma magnitud, y
+ *      un total unico las mezcla. Cualquier equivalencia la declara el analista.
+ *   2. El peso se aplica segun la FRECUENCIA de la tarea: una tarea `lot` mueve
+ *      su masa UNA vez por lote, no una por pieza. Sin esto, mover 12 kg por
+ *      pieza en un lote de 20 daria 240 kg cuando en planta fue un solo viaje.
+ *   3. El sistema REPORTA Y MARCA, no decide. La carga maxima recomendada no
+ *      altera los tiempos ni rechaza tareas: es un aviso con su umbral al lado.
+ */
+
+// Umbrales de referencia. NO son del programa: son un punto de partida editable,
+// y el informe SIEMPRE imprime el corte que aplico. Se separan por escala porque
+// una tarea de 20 kg repetida 500 veces no es lo mismo que una sola vez.
+const UMBRALES_CARGA = {
+  // Por LEVANTAMIENTO: lo que pesa una pieza de una vez. La banda de referencia
+  // mas citada en ergonomia para levantamiento repetido ronda los 25 kg.
+  tareaKg: { bajo: 10, medio: 25 },
+  // ACUMULADO por persona: toneladas movidas en la jornada simulada.
+  personaToneladas: { bajo: 5, medio: 15 },
+  // ACUMULADO por area (proceso completo).
+  areaToneladas: { bajo: 20, medio: 60 }
+};
+
+const BANDAS = [ 'baja', 'media', 'alta' ];
+
+/** Banda de un valor segun dos cortes. `bajo <= v < medio` es «baja». */
+const bandaDe = (valor, cortes) => {
+  const v = Number(valor) || 0;
+  if (!cortes) return 'baja';
+  if (v < (Number(cortes.bajo) || 0)) return 'baja';
+  if (v < (Number(cortes.medio) || 0)) return 'media';
+  return 'alta';
+};
+
+const num = (v, alt = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : alt;
+};
+
+const lista = (v) => (Array.isArray(v) ? v : [])
+  .map((s) => String(s == null ? '' : s).trim())
+  .filter(Boolean);
+
+/** Normaliza la carga declarada en una tarea. Sin carga, todo queda a 0. */
+const normalizeCarga = (cfg) => {
+  const c = cfg && typeof cfg === 'object' ? cfg : {};
+  return {
+    masaCargadaKg: num(c.masaCargadaKg),
+    masaArrastradaKg: num(c.masaArrastradaKg),
+    distanciaM: num(c.distanciaM)
+  };
+};
+
+const hayCarga = (c) => Boolean(c) && (c.masaCargadaKg > 0 || c.masaArrastradaKg > 0);
+
+/**
+ * Normaliza los miembros de una piscina.
+ *
+ * `quantity` NO se toca: sigue mandando la CAPACIDAD (cuantas unidades hay). Los
+ * miembros solo dan identidad, tarifa, habilidades y carga maxima. Con menos
+ * miembros que `quantity` hay puestos sin nombre, y eso es legitimo: una piscina
+ * de 3 puestos con 2 nombres conocidos sigue teniendo 3 puestos.
+ */
+const normalizeMembers = (members) => {
+  if (!Array.isArray(members)) return [];
+  const conDatos = members.filter((m) => m && typeof m === 'object');
+  return conDatos.map((m, i) => ({
+    nombre: String(m.nombre || '').trim() || `Puesto ${i + 1}`,
+    tarifaHora: Number.isFinite(Number(m.tarifaHora)) ? Number(m.tarifaHora) : null,
+    habilidades: lista(m.habilidades),
+    cargaMaximaKg: Number.isFinite(Number(m.cargaMaximaKg)) ? Number(m.cargaMaximaKg) : null
+  }));
+};
+
+/**
+ * Habilidades que una tarea EXIGE.
+ *
+ * Se aceptan dos formas para no obligar a elegir: `habilidades: [...]` (lista) o
+ * `habilidad: "soldadura"` (una sola, que es el caso comun). Normalizar aqui evita
+ * que el motor tenga que mirar las dos.
+ */
+const habilidadesRequeridas = (data) => {
+  const d = data && typeof data === 'object' ? data : {};
+  if (Array.isArray(d.habilidades)) return lista(d.habilidades);
+  if (d.habilidad) return lista([ d.habilidad ]);
+  return [];
+};
+
+/**
+ * ¿Esta persona puede hacer esta tarea?
+ *
+ * Regla CONSERVADORA y decidida: si no hay ninguna unidad en la piscina con las
+ * habilidades que la tarea exige, la tarea queda BLOQUEADA. Un dato que falta
+ * bloquea, no acelera. Es, ademas, lo unico que puede producir la categoria de
+ * tiempo muerto «bloqueado por habilidad».
+ */
+const puedeHacerla = (miembro, requeridas) => {
+  if (!requeridas || !requeridas.length) return true;
+  if (!miembro) return false;
+  return requeridas.every((h) => miembro.habilidades.includes(h));
+};
+
+/** ¿Alguna unidad de la piscina puede hacer la tarea? */
+const poolPuedeHacerla = (pool, requeridas) => {
+  if (!requeridas || !requeridas.length) return true;
+  if (!pool || !pool.members || !pool.members.length) return true; // sin nombres no hay a quien filtrar
+  return pool.members.some((m) => puedeHacerla(m, requeridas));
+};
+
+/**
+ * Elige la persona que toma la unidad, EN RONDA.
+ *
+ * En ronda y no «la primera libre» por un motivo concreto: con dos personas
+ * equivalentes, «la primera» concentraria todo el trabajo en una y dejaria a la
+ * otra ociosa, y el informe diria que una esta saturada y la otra sin hacer
+ * nada. Con ronda reparten, que es lo que pasaria en la planta.
+ */
+const elegirPorRonda = (miembros, ultimoIndice) => {
+  if (!miembros || !miembros.length) return { miembro: null, indice: -1 };
+  const n = miembros.length;
+  const siguiente = ((Number(ultimoIndice) || 0) + 1) % n;
+  return { miembro: miembros[siguiente], indice: siguiente };
+};
+
+/**
+ * Acumula la carga de UNA ejecucion de una tarea.
+ *
+ * Devuelve los incrementos para no obligar a quien llama a conocer la forma del
+ * acumulador. `veces` es el numero de repeticiones de esa ejecucion, que sale de
+ * la FRECUENCIA de la tarea (1 por lote, 1 por pieza), no de los tokens.
+ */
+const cargaDeUnaEjecucion = (carga, veces = 1) => {
+  const c = normalizeCarga(carga);
+  const n = Math.max(0, Number(veces) || 0);
+  return {
+    cargadaKg: c.masaCargadaKg * n,
+    arrastradaKg: c.masaArrastradaKg * n,
+    cargadaKgM: c.masaCargadaKg * n * c.distanciaM,
+    arrastradaKgM: c.masaArrastradaKg * n * c.distanciaM,
+    distanciaM: c.distanciaM * n
+  };
+};
+
+/** Acumulador de carga vacio. */
+const cargaVacia = () => ({
+  cargadaKg: 0,
+  arrastradaKg: 0,
+  cargadaKgM: 0,
+  arrastradaKgM: 0,
+  distanciaM: 0,
+  ejecuciones: 0
+});
+
+const acumularCarga = (acc, inc) => {
+  const a = acc || cargaVacia();
+  return {
+    cargadaKg: a.cargadaKg + inc.cargadaKg,
+    arrastradaKg: a.arrastradaKg + inc.arrastradaKg,
+    cargadaKgM: a.cargadaKgM + inc.cargadaKgM,
+    arrastradaKgM: a.arrastradaKgM + inc.arrastradaKgM,
+    distanciaM: a.distanciaM + inc.distanciaM,
+    ejecuciones: a.ejecuciones + (inc.veces == null ? 1 : inc.veces)
+  };
+};
+
+const toneladas = (kg) => (Number(kg) || 0) / 1000;
+
+/**
+ * Avisos ergonomicos de una persona, CON SU UMBRAL AL LADO.
+ *
+ * Un aviso sin el corte que lo dispara es una cifra con autoridad falsa, asi que
+ * cada uno lleva `umbral` y `banda`, y el informe los imprime. El programa no
+ * valora el riesgo: dice «12 t arrastradas, banda alta (> 10 t)» y el analista
+ * decide.
+ */
+const avisosDeCarga = (carga, umbrales = UMBRALES_CARGA) => {
+  const c = carga || cargaVacia();
+  const avisos = [];
+
+  const tCargada = toneladas(c.cargadaKg);
+  const tArrastrada = toneladas(c.arrastradaKg);
+
+  if (c.cargadaKg > 0) {
+    avisos.push({
+      serie: 'cargada',
+      kg: c.cargadaKg,
+      toneladas: tCargada,
+      banda: bandaDe(tCargada, umbrales.personaToneladas),
+      umbral: umbrales.personaToneladas,
+      texto: `${tCargada.toFixed(2)} t cargadas`
+    });
+  }
+
+  if (c.arrastradaKg > 0) {
+    avisos.push({
+      serie: 'arrastrada',
+      kg: c.arrastradaKg,
+      toneladas: tArrastrada,
+      banda: bandaDe(tArrastrada, umbrales.personaToneladas),
+      umbral: umbrales.personaToneladas,
+      texto: `${tArrastrada.toFixed(2)} t arrastradas`
+    });
+  }
+
+  return avisos;
+};
+
+/** Carga maxima mas restrictiva del conjunto (la de la persona que la declaro). */
+const cargaMaximaDe = (miembros) => {
+  const valores = (miembros || [])
+    .map((m) => (m && Number.isFinite(m.cargaMaximaKg) ? m.cargaMaximaKg : null))
+    .filter((v) => v != null);
+  return valores.length ? Math.min(...valores) : null;
+};
+
+/** Redaccion de los avisos, para el informe. */
+const describirAvisos = (avisos) => {
+  if (!avisos || !avisos.length) return 'sin carga registrada';
+  return avisos.map((a) => `${a.texto} (banda ${a.banda}, corte ${a.umbral.bajo}/${a.umbral.medio} t)`).join(' · ');
+};
+
+
+/***/ }),
+
 /***/ "./client/simulation/index.js":
 /*!************************************!*\
   !*** ./client/simulation/index.js ***!
@@ -9579,6 +10742,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _DataTablePanel__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./DataTablePanel */ "./client/simulation/DataTablePanel.js");
 /* harmony import */ var _MatrixLoader__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./MatrixLoader */ "./client/simulation/MatrixLoader.js");
 /* harmony import */ var _ReportPanel__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./ReportPanel */ "./client/simulation/ReportPanel.js");
+/* harmony import */ var _DataAuditPanel__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./DataAuditPanel */ "./client/simulation/DataAuditPanel.js");
+
 
 
 
@@ -9596,7 +10761,8 @@ __webpack_require__.r(__webpack_exports__);
     'matrixLoader',
     // DESPUES de simulationController: lo inyecta para leer los informes de la
     // corrida, y didi instancia los modulos en orden de __init__.
-    'reportPanel'
+    'reportPanel',
+    'dataAuditPanel'
   ],
   simulationController: [ 'type', _SimulationController__WEBPACK_IMPORTED_MODULE_0__["default"] ],
   simulationPalette: [ 'type', _SimulationPalette__WEBPACK_IMPORTED_MODULE_1__["default"] ],
@@ -9607,7 +10773,9 @@ __webpack_require__.r(__webpack_exports__);
   // __init__, y un modulo registrado despues no estaria disponible.
   dataTablePanel: [ 'type', _DataTablePanel__WEBPACK_IMPORTED_MODULE_4__["default"] ],
   matrixLoader: [ 'type', _MatrixLoader__WEBPACK_IMPORTED_MODULE_5__["default"] ],
-  reportPanel: [ 'type', _ReportPanel__WEBPACK_IMPORTED_MODULE_6__["default"] ]
+  reportPanel: [ 'type', _ReportPanel__WEBPACK_IMPORTED_MODULE_6__["default"] ],
+  // No lo inyecta nadie: se comunica por eventos, igual que el informe.
+  dataAuditPanel: [ 'type', _DataAuditPanel__WEBPACK_IMPORTED_MODULE_7__["default"] ]
 });
 
 
@@ -19278,6 +20446,253 @@ function getPluginsDirectory() {
 
 /***/ }),
 
+/***/ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/simulation/data-audit.css":
+/*!***********************************************************************************************************************************!*\
+  !*** ./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/simulation/data-audit.css ***!
+  \***********************************************************************************************************************************/
+/***/ ((module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../../node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/sourceMaps.js */ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/sourceMaps.js");
+/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../../node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/api.js */ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/runtime/api.js");
+/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1__);
+// Imports
+
+
+var ___CSS_LOADER_EXPORT___ = _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_1___default()((_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_runtime_sourceMaps_js__WEBPACK_IMPORTED_MODULE_0___default()));
+// Module
+___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de diagnostico de datos. Mismo lenguaje visual que el panel de graficos
+   y el de tabla: ancho acotado, centrado y con margen a los lados. */
+.sim-data-audit-panel {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1100px, calc(100% - 48px));
+  max-height: calc(100% - 40px);
+  box-sizing: border-box;
+  display: none;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  z-index: 100;
+  font-size: 13px;
+  color: #222;
+}
+
+.sim-data-audit-panel.open {
+  display: flex;
+}
+
+.sim-data-audit-panel .panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e6e6e6;
+  background: #fafafa;
+  border-radius: 8px 8px 0 0;
+}
+
+.sim-data-audit-panel .panel-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 14px;
+  color: #1565c0;
+}
+
+.sim-data-audit-panel .btn-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #666;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.sim-data-audit-panel .btn-close:hover {
+  background: #eee;
+  color: #111;
+}
+
+.sim-data-audit-panel .panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.sim-data-audit-panel .intro {
+  margin: 0 0 14px;
+  line-height: 1.55;
+  color: #444;
+}
+
+.sim-data-audit-panel .hint {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.5;
+  margin: 6px 0 10px;
+}
+
+.sim-data-audit-panel .subtitulo {
+  margin: 22px 0 6px;
+  font-size: 13px;
+  color: #1565c0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+}
+
+/* Recuento de cabecera: el resumen de un vistazo. */
+.sim-data-audit-panel .recuento {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.sim-data-audit-panel .marca {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sim-data-audit-panel .marca.listo {
+  background: #e6f4ea;
+  color: #0a7d32;
+}
+
+.sim-data-audit-panel .marca.parcial {
+  background: #fff4e0;
+  color: #a35b00;
+}
+
+.sim-data-audit-panel .marca.falta {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.sim-data-audit-panel .total {
+  margin-left: auto;
+  font-size: 12px;
+  color: #777;
+}
+
+.sim-data-audit-panel .data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sim-data-audit-panel .data-table th {
+  background: #f2f2f2;
+  border: 1px solid #ddd;
+  padding: 7px 9px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.sim-data-audit-panel .data-table td {
+  border: 1px solid #e6e6e6;
+  padding: 6px 9px;
+  vertical-align: top;
+}
+
+.sim-data-audit-panel .data-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+/* Columna de la capacidad: titulo y por que. */
+.sim-data-audit-panel .cap strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.sim-data-audit-panel .cap .porque {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.45;
+}
+
+/* Requisitos: una linea por dato, con su marca. */
+.sim-data-audit-panel .req {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sim-data-audit-panel .req.ok {
+  color: #0a7d32;
+}
+
+.sim-data-audit-panel .req.mal {
+  color: #c62828;
+}
+
+.sim-data-audit-panel .req em {
+  color: #888;
+  font-style: normal;
+}
+
+/* Fila de una capacidad que no se puede medir: se marca el borde izquierdo,
+   que se lee mejor que un fondo de color en una tabla larga. */
+.sim-data-audit-panel .fila-falta > td:first-child {
+  border-left: 3px solid #c62828;
+}
+
+.sim-data-audit-panel .fila-parcial > td:first-child {
+  border-left: 3px solid #f9a825;
+}
+
+.sim-data-audit-panel .fila-listo > td:first-child {
+  border-left: 3px solid #2e7d32;
+}
+
+/* Chips de «que desbloquea»: varias capacidades por dato. */
+.sim-data-audit-panel .chip {
+  display: inline-block;
+  margin: 0 4px 3px 0;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: #eef2f7;
+  color: #3a4a5e;
+  font-size: 11px;
+}
+
+.sim-data-audit-panel .vacio {
+  padding: 12px;
+  color: #0a7d32;
+  background: #edf7ee;
+  border-radius: 5px;
+}
+
+.sim-data-audit-panel .porques {
+  margin: 6px 0;
+  padding-left: 20px;
+  color: #444;
+  line-height: 1.6;
+}
+
+.sim-data-audit-panel .porques li {
+  margin-bottom: 5px;
+}
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-audit.css"],"names":[],"mappings":"AAAA;qEACqE;AACrE;EACE,kBAAkB;EAClB,SAAS;EACT,SAAS;EACT,2BAA2B;EAC3B,qCAAqC;EACrC,6BAA6B;EAC7B,sBAAsB;EACtB,aAAa;EACb,sBAAsB;EACtB,gBAAgB;EAChB,yBAAyB;EACzB,kBAAkB;EAClB,0CAA0C;EAC1C,YAAY;EACZ,eAAe;EACf,WAAW;AACb;;AAEA;EACE,aAAa;AACf;;AAEA;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,kBAAkB;EAClB,gCAAgC;EAChC,mBAAmB;EACnB,0BAA0B;AAC5B;;AAEA;EACE,OAAO;EACP,gBAAgB;EAChB,eAAe;EACf,cAAc;AAChB;;AAEA;EACE,YAAY;EACZ,uBAAuB;EACvB,eAAe;EACf,WAAW;EACX,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA;EACE,gBAAgB;EAChB,WAAW;AACb;;AAEA;EACE,OAAO;EACP,aAAa;EACb,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,gBAAgB;EAChB,iBAAiB;EACjB,WAAW;AACb;;AAEA;EACE,eAAe;EACf,WAAW;EACX,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA;EACE,kBAAkB;EAClB,eAAe;EACf,cAAc;EACd,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA,oDAAoD;AACpD;EACE,aAAa;EACb,eAAe;EACf,QAAQ;EACR,mBAAmB;EACnB,kBAAkB;AACpB;;AAEA;EACE,qBAAqB;EACrB,gBAAgB;EAChB,mBAAmB;EACnB,eAAe;EACf,gBAAgB;EAChB,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA;EACE,iBAAiB;EACjB,eAAe;EACf,WAAW;AACb;;AAEA;EACE,WAAW;EACX,yBAAyB;AAC3B;;AAEA;EACE,mBAAmB;EACnB,sBAAsB;EACtB,gBAAgB;EAChB,gBAAgB;EAChB,gBAAgB;EAChB,eAAe;AACjB;;AAEA;EACE,yBAAyB;EACzB,gBAAgB;EAChB,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;AACrB;;AAEA,+CAA+C;AAC/C;EACE,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,eAAe;EACf,WAAW;EACX,iBAAiB;AACnB;;AAEA,kDAAkD;AAClD;EACE,eAAe;EACf,gBAAgB;AAClB;;AAEA;EACE,cAAc;AAChB;;AAEA;EACE,cAAc;AAChB;;AAEA;EACE,WAAW;EACX,kBAAkB;AACpB;;AAEA;+DAC+D;AAC/D;EACE,8BAA8B;AAChC;;AAEA;EACE,8BAA8B;AAChC;;AAEA;EACE,8BAA8B;AAChC;;AAEA,4DAA4D;AAC5D;EACE,qBAAqB;EACrB,mBAAmB;EACnB,gBAAgB;EAChB,kBAAkB;EAClB,mBAAmB;EACnB,cAAc;EACd,eAAe;AACjB;;AAEA;EACE,aAAa;EACb,cAAc;EACd,mBAAmB;EACnB,kBAAkB;AACpB;;AAEA;EACE,aAAa;EACb,kBAAkB;EAClB,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,kBAAkB;AACpB","sourcesContent":["/* Panel de diagnostico de datos. Mismo lenguaje visual que el panel de graficos\n   y el de tabla: ancho acotado, centrado y con margen a los lados. */\n.sim-data-audit-panel {\n  position: absolute;\n  top: 20px;\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(1100px, calc(100% - 48px));\n  max-height: calc(100% - 40px);\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #cfd8e3;\n  border-radius: 8px;\n  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);\n  z-index: 100;\n  font-size: 13px;\n  color: #222;\n}\n\n.sim-data-audit-panel.open {\n  display: flex;\n}\n\n.sim-data-audit-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 18px;\n  border-bottom: 1px solid #e6e6e6;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-audit-panel .panel-title {\n  flex: 1;\n  font-weight: 600;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-data-audit-panel .btn-close {\n  border: none;\n  background: transparent;\n  cursor: pointer;\n  color: #666;\n  padding: 2px 4px;\n  border-radius: 4px;\n}\n\n.sim-data-audit-panel .btn-close:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-audit-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-audit-panel .intro {\n  margin: 0 0 14px;\n  line-height: 1.55;\n  color: #444;\n}\n\n.sim-data-audit-panel .hint {\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n  margin: 6px 0 10px;\n}\n\n.sim-data-audit-panel .subtitulo {\n  margin: 22px 0 6px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Recuento de cabecera: el resumen de un vistazo. */\n.sim-data-audit-panel .recuento {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px;\n  align-items: center;\n  margin-bottom: 6px;\n}\n\n.sim-data-audit-panel .marca {\n  display: inline-block;\n  padding: 2px 9px;\n  border-radius: 10px;\n  font-size: 12px;\n  font-weight: 600;\n  white-space: nowrap;\n}\n\n.sim-data-audit-panel .marca.listo {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-audit-panel .marca.parcial {\n  background: #fff4e0;\n  color: #a35b00;\n}\n\n.sim-data-audit-panel .marca.falta {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.sim-data-audit-panel .total {\n  margin-left: auto;\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-audit-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-audit-panel .data-table th {\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 7px 9px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n}\n\n.sim-data-audit-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 6px 9px;\n  vertical-align: top;\n}\n\n.sim-data-audit-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n/* Columna de la capacidad: titulo y por que. */\n.sim-data-audit-panel .cap strong {\n  display: block;\n  margin-bottom: 2px;\n}\n\n.sim-data-audit-panel .cap .porque {\n  font-size: 12px;\n  color: #666;\n  line-height: 1.45;\n}\n\n/* Requisitos: una linea por dato, con su marca. */\n.sim-data-audit-panel .req {\n  font-size: 12px;\n  line-height: 1.6;\n}\n\n.sim-data-audit-panel .req.ok {\n  color: #0a7d32;\n}\n\n.sim-data-audit-panel .req.mal {\n  color: #c62828;\n}\n\n.sim-data-audit-panel .req em {\n  color: #888;\n  font-style: normal;\n}\n\n/* Fila de una capacidad que no se puede medir: se marca el borde izquierdo,\n   que se lee mejor que un fondo de color en una tabla larga. */\n.sim-data-audit-panel .fila-falta > td:first-child {\n  border-left: 3px solid #c62828;\n}\n\n.sim-data-audit-panel .fila-parcial > td:first-child {\n  border-left: 3px solid #f9a825;\n}\n\n.sim-data-audit-panel .fila-listo > td:first-child {\n  border-left: 3px solid #2e7d32;\n}\n\n/* Chips de «que desbloquea»: varias capacidades por dato. */\n.sim-data-audit-panel .chip {\n  display: inline-block;\n  margin: 0 4px 3px 0;\n  padding: 1px 7px;\n  border-radius: 9px;\n  background: #eef2f7;\n  color: #3a4a5e;\n  font-size: 11px;\n}\n\n.sim-data-audit-panel .vacio {\n  padding: 12px;\n  color: #0a7d32;\n  background: #edf7ee;\n  border-radius: 5px;\n}\n\n.sim-data-audit-panel .porques {\n  margin: 6px 0;\n  padding-left: 20px;\n  color: #444;\n  line-height: 1.6;\n}\n\n.sim-data-audit-panel .porques li {\n  margin-bottom: 5px;\n}\n"],"sourceRoot":""}]);
+// Exports
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
+
+
+/***/ }),
+
 /***/ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/simulation/data-table.css":
 /*!***********************************************************************************************************************************!*\
   !*** ./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/simulation/data-table.css ***!
@@ -19761,6 +21176,94 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   min-width: 128px;
 }
 
+/* --- ayuda por pestana --- */
+
+/* El bloque de ayuda vive entre las pestanas y el cuerpo: se despliega a lo
+   ancho y NO se va con el scroll del cuerpo, porque es una referencia que se
+   consulta mientras se rellena. */
+.sim-data-table-panel .panel-ayuda {
+  padding: 14px 20px;
+  background: #f7faff;
+  border-bottom: 1px solid #dbe6f5;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.sim-data-table-panel .panel-ayuda.hidden {
+  display: none;
+}
+
+.sim-data-table-panel .panel-ayuda h4 {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  color: #1565c0;
+}
+
+.sim-data-table-panel .panel-ayuda h5 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5a6b81;
+}
+
+/* Dos columnas: «que se declara» y «que se mide con ello». Van juntas a
+   proposito, porque la segunda es la razon de ser de la primera. */
+.sim-data-table-panel .panel-ayuda .columnas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 12px;
+}
+
+.sim-data-table-panel .panel-ayuda ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #333;
+}
+
+.sim-data-table-panel .panel-ayuda li {
+  margin-bottom: 4px;
+}
+
+.sim-data-table-panel .panel-ayuda code {
+  background: #e8eef7;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+
+/* La trampa, marcada aparte: es lo que se salta al leer deprisa. */
+.sim-data-table-panel .panel-ayuda .ojo-titulo {
+  color: #a35b00;
+}
+
+.sim-data-table-panel .panel-ayuda ul.ojo li {
+  color: #7a4a00;
+}
+
+/* Boton de ayuda: mismo aspecto que el de graficos, para que se reconozca. */
+.sim-data-table-panel .btn-ayuda {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #1565c0;
+  padding: 3px 5px;
+  border-radius: 4px;
+}
+
+.sim-data-table-panel .btn-ayuda:hover {
+  background: #e3f0ff;
+}
+
+.sim-data-table-panel .btn-ayuda svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;
@@ -19901,7 +21404,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   fill: currentColor;
   display: block;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"AAAA;;mFAEmF;;AAEnF;EACE,kBAAkB;EAClB,YAAY;EACZ;;uCAEqC;EACrC,SAAS;EACT,2BAA2B;EAC3B;;;mEAGiE;EACjE,qCAAqC;EACrC,6BAA6B;EAC7B;gEAC8D;EAC9D,sBAAsB;EACtB,aAAa;EACb,sBAAsB;EACtB,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,0CAA0C;EAC1C,YAAY;EACZ,eAAe;EACf,WAAW;AACb;;AAEA;EACE,aAAa;AACf;;AAEA,qBAAqB;AACrB;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,kBAAkB;EAClB,6BAA6B;EAC7B,mBAAmB;EACnB,0BAA0B;AAC5B;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;EACR,gBAAgB;EAChB,iBAAiB;EACjB,OAAO;AACT;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,kBAAkB;AACpB;;AAEA;EACE,aAAa;EACb,mBAAmB;EACnB,QAAQ;AACV;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,uBAAuB;EACvB,WAAW;EACX,YAAY;EACZ,UAAU;EACV,gBAAgB;EAChB,YAAY;EACZ,kBAAkB;EAClB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,gBAAgB;EAChB,WAAW;AACb;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA,qBAAqB;AACrB;EACE,aAAa;EACb,QAAQ;EACR,eAAe;EACf,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA;EACE,iBAAiB;EACjB,gBAAgB;EAChB,YAAY;EACZ,oCAAoC;EACpC,eAAe;EACf,gBAAgB;EAChB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,WAAW;AACb;;AAEA;EACE,cAAc;EACd,4BAA4B;AAC9B;;AAEA,mBAAmB;AACnB;EACE,OAAO;EACP,aAAa;EACb,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,cAAc;EACd,kBAAkB;EAClB,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,gBAAgB;EAChB,eAAe;EACf,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,gBAAgB;EAChB,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA,kBAAkB;AAClB;EACE,WAAW;EACX,yBAAyB;AAC3B;;AAEA;EACE,gBAAgB;EAChB,MAAM;EACN,UAAU;EACV,mBAAmB;EACnB,sBAAsB;EACtB,iBAAiB;EACjB,gBAAgB;EAChB,gBAAgB;EAChB,eAAe;EACf,mBAAmB;AACrB;;AAEA;EACE,yBAAyB;EACzB,gBAAgB;EAChB,sBAAsB;AACxB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;;EAEE,gBAAgB;EAChB,gBAAgB;EAChB,uBAAuB;EACvB,mBAAmB;AACrB;;AAEA,kDAAkD;;AAElD;;oFAEoF;AACpF;;EAEE,aAAa;EACb,mBAAmB;EACnB,QAAQ;EACR,gBAAgB;EAChB,gBAAgB;AAClB;;AAEA;EACE,cAAc;EACd,gBAAgB;EAChB,uBAAuB;EACvB,mBAAmB;AACrB;;AAEA,oFAAoF;AACpF;EACE,cAAc;EACd,iBAAiB;AACnB;;AAEA,wCAAwC;AACxC;EACE,UAAU;EACV,gBAAgB;EAChB,eAAe;EACf,gBAAgB;EAChB,mBAAmB;EACnB,gBAAgB;EAChB,WAAW;EACX,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA,0FAA0F;AAC1F;EACE,6BAA6B;AAC/B;;AAEA,6EAA6E;AAC7E;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;AACV;;AAEA;EACE,eAAe;EACf,iBAAiB;AACnB;;AAEA;EACE,eAAe;EACf,WAAW;AACb;;AAEA;EACE,mBAAmB;EACnB,WAAW;EACX,mBAAmB;AACrB;;AAEA,0DAA0D;;AAE1D;EACE,kBAAkB;EAClB,eAAe;EACf,cAAc;EACd,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA,mDAAmD;AACnD;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;EACR,iBAAiB;EACjB,eAAe;AACjB;;AAEA;EACE,SAAS;EACT,eAAe;AACjB;;AAEA;EACE,kBAAkB;AACpB;;AAEA;EACE,SAAS;EACT,eAAe;AACjB;;AAEA,yEAAyE;AACzE;EACE,qBAAqB;EACrB,iBAAiB;EACjB,mBAAmB;EACnB,yBAAyB;EACzB,kBAAkB;AACpB;;AAEA;EACE,cAAc;EACd,YAAY;EACZ,eAAe;EACf,YAAY;AACd;;AAEA;EACE,eAAe;EACf,eAAe;AACjB;;AAEA;EACE,eAAe;EACf,eAAe;EACf,qBAAqB;EACrB,WAAW;AACb;;AAEA;EACE,UAAU;EACV,eAAe;EACf,eAAe;EACf,sBAAsB;AACxB;;AAEA;EACE,cAAc;EACd,aAAa;AACf;;AAEA;EACE,UAAU;EACV,WAAW;AACb;;AAEA;EACE,WAAW;EACX,eAAe;EACf,gBAAgB;EAChB,iBAAiB;EACjB,oBAAoB;EACpB,cAAc;EACd,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;AACpB;;AAEA;EACE,0BAA0B;EAC1B,oBAAoB;EACpB,qBAAqB;AACvB;;AAEA,0DAA0D;AAC1D;EACE,aAAa;EACb,eAAe;EACf,aAAa;AACf;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;EACR,iBAAiB;EACjB,mBAAmB;EACnB,eAAe;AACjB;;AAEA;EACE,SAAS;EACT,eAAe;AACjB;;AAEA,oEAAoE;AACpE;EACE,gBAAgB;EAChB,iBAAiB;EACjB,iBAAiB;EACjB,gBAAgB;EAChB,cAAc;EACd,mBAAmB;EACnB,yBAAyB;EACzB,8BAA8B;EAC9B,kBAAkB;AACpB;;AAEA,8CAA8C;AAC9C;EACE,aAAa;EACb,sBAAsB;EACtB,QAAQ;EACR,gBAAgB;EAChB,iBAAiB;AACnB;;AAEA;EACE,kBAAkB;EAClB,eAAe;EACf,cAAc;EACd,gBAAgB;EAChB,yBAAyB;EACzB,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,mBAAmB;EACnB,qBAAqB;AACvB;;AAEA,uEAAuE;AACvE;EACE,eAAe;EACf,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA;gFACgF;AAChF;EACE,gBAAgB;EAChB,iBAAiB;EACjB,gBAAgB;EAChB,mBAAmB;EACnB,2BAA2B;EAC3B,WAAW;AACb;;AAEA;0EAC0E;AAC1E;EACE,2BAA2B;AAC7B;;AAEA;;kEAEkE;AAClE;EACE,eAAe;AACjB;;AAEA;EACE,gBAAgB;AAClB;;AAEA,gBAAgB;AAChB;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,kBAAkB;EAClB,0BAA0B;EAC1B,mBAAmB;EACnB,0BAA0B;AAC5B;;AAEA;EACE,OAAO;EACP,iBAAiB;EACjB,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,cAAc;EACd,gBAAgB;AAClB;;AAEA;EACE,cAAc;EACd,gBAAgB;AAClB;;AAEA;EACE,WAAW;AACb;;AAEA;EACE,iBAAiB;EACjB,eAAe;EACf,gBAAgB;EAChB,WAAW;EACX,mBAAmB;EACnB,YAAY;EACZ,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;yDACyD;AACzD;EACE,mBAAmB;EACnB,iCAAiC;AACnC;;AAEA;EACE,mBAAmB;AACrB;;AAEA,mDAAmD;AACnD;EACE,gBAAgB;EAChB,iBAAiB;EACjB,iBAAiB;EACjB,cAAc;EACd,gBAAgB;EAChB,0BAA0B;EAC1B,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,mBAAmB;EACnB,mBAAmB;AACrB;;AAEA,yEAAyE;AACzE;EACE,WAAW;EACX,YAAY;EACZ,UAAU;EACV,eAAe;EACf,cAAc;EACd,WAAW;EACX,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,cAAc;EACd,qBAAqB;EACrB,mBAAmB;AACrB;;AAEA,4EAA4E;AAC5E;EACE,iBAAiB;EACjB,iBAAiB;EACjB,gBAAgB;EAChB,WAAW;EACX,mBAAmB;EACnB,YAAY;EACZ,kBAAkB;EAClB,eAAe;EACf,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;;yEAEyE;AACzE;EACE,uBAAuB;EACvB,sBAAsB;EACtB,kBAAkB;EAClB,WAAW;EACX,YAAY;EACZ,aAAa;EACb,mBAAmB;EACnB,uBAAuB;EACvB,eAAe;EACf,uCAAuC;EACvC,WAAW;AACb;;AAEA;EACE,yBAAyB;EACzB,YAAY;AACd;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,kBAAkB;EAClB,cAAc;AAChB","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n/* --- pestaña Global: descansos y curva de arranque --- */\n\n.sim-data-table-panel .subtitulo {\n  margin: 22px 0 4px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Casilla booleana con su etiqueta a la derecha. */\n.sim-data-table-panel .casilla {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12.5px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .casilla input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .data-table td.centro {\n  text-align: center;\n}\n\n.sim-data-table-panel .data-table td.centro input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */\n.sim-data-table-panel .caja-curva {\n  display: inline-block;\n  padding: 6px 10px;\n  background: #fbfcfe;\n  border: 1px solid #dfe5ec;\n  border-radius: 6px;\n}\n\n.sim-data-table-panel .curva-arranque {\n  display: block;\n  width: 320px;\n  max-width: 100%;\n  height: auto;\n}\n\n.sim-data-table-panel .curva-arranque .eje {\n  stroke: #c9d3de;\n  stroke-width: 1;\n}\n\n.sim-data-table-panel .curva-arranque .referencia {\n  stroke: #c62828;\n  stroke-width: 1;\n  stroke-dasharray: 5 4;\n  opacity: .6;\n}\n\n.sim-data-table-panel .curva-arranque .linea {\n  fill: none;\n  stroke: #1565c0;\n  stroke-width: 2;\n  stroke-linejoin: round;\n}\n\n.sim-data-table-panel .curva-arranque .rotulo {\n  font-size: 9px;\n  fill: #8a94a0;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* Encabezado del bloque de barrera (Tareas). Va a dos lineas: con `nowrap`\n   empujaria la tabla y obligaria a desplazarse para ver el resto de columnas. */\n.sim-data-table-panel .data-table th.col-barrera {\n  font-weight: 500;\n  font-size: 11.5px;\n  line-height: 1.3;\n  white-space: normal;\n  border-left: 2px solid #ddd;\n  color: #555;\n}\n\n/* La columna de frecuencia abre el bloque, asi que se marca igual que su\n   encabezado: agrupa «frecuencia + barrera» frente al resto de la fila. */\n.sim-data-table-panel .data-table td.col-freq {\n  border-left: 2px solid #eee;\n}\n\n/* Tabla de vigencias de las reglas laborales: ocho columnas numericas muy\n   estrechas. Se centran y se les pone un ancho minimo menor que el de la\n   triangular, porque aqui los valores son de uno o dos digitos. */\n.sim-data-table-panel .filas-regla .cell.mini {\n  min-width: 48px;\n}\n\n.sim-data-table-panel .filas-regla input[type=\"date\"] {\n  min-width: 128px;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n/* --- pestaña Global: descansos y curva de arranque --- */\n\n.sim-data-table-panel .subtitulo {\n  margin: 22px 0 4px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Casilla booleana con su etiqueta a la derecha. */\n.sim-data-table-panel .casilla {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12.5px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .casilla input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .data-table td.centro {\n  text-align: center;\n}\n\n.sim-data-table-panel .data-table td.centro input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */\n.sim-data-table-panel .caja-curva {\n  display: inline-block;\n  padding: 6px 10px;\n  background: #fbfcfe;\n  border: 1px solid #dfe5ec;\n  border-radius: 6px;\n}\n\n.sim-data-table-panel .curva-arranque {\n  display: block;\n  width: 320px;\n  max-width: 100%;\n  height: auto;\n}\n\n.sim-data-table-panel .curva-arranque .eje {\n  stroke: #c9d3de;\n  stroke-width: 1;\n}\n\n.sim-data-table-panel .curva-arranque .referencia {\n  stroke: #c62828;\n  stroke-width: 1;\n  stroke-dasharray: 5 4;\n  opacity: .6;\n}\n\n.sim-data-table-panel .curva-arranque .linea {\n  fill: none;\n  stroke: #1565c0;\n  stroke-width: 2;\n  stroke-linejoin: round;\n}\n\n.sim-data-table-panel .curva-arranque .rotulo {\n  font-size: 9px;\n  fill: #8a94a0;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* Encabezado del bloque de barrera (Tareas). Va a dos lineas: con `nowrap`\n   empujaria la tabla y obligaria a desplazarse para ver el resto de columnas. */\n.sim-data-table-panel .data-table th.col-barrera {\n  font-weight: 500;\n  font-size: 11.5px;\n  line-height: 1.3;\n  white-space: normal;\n  border-left: 2px solid #ddd;\n  color: #555;\n}\n\n/* La columna de frecuencia abre el bloque, asi que se marca igual que su\n   encabezado: agrupa «frecuencia + barrera» frente al resto de la fila. */\n.sim-data-table-panel .data-table td.col-freq {\n  border-left: 2px solid #eee;\n}\n\n/* Tabla de vigencias de las reglas laborales: ocho columnas numericas muy\n   estrechas. Se centran y se les pone un ancho minimo menor que el de la\n   triangular, porque aqui los valores son de uno o dos digitos. */\n.sim-data-table-panel .filas-regla .cell.mini {\n  min-width: 48px;\n}\n\n.sim-data-table-panel .filas-regla input[type=\"date\"] {\n  min-width: 128px;\n}\n\n/* --- ayuda por pestana --- */\n\n/* El bloque de ayuda vive entre las pestanas y el cuerpo: se despliega a lo\n   ancho y NO se va con el scroll del cuerpo, porque es una referencia que se\n   consulta mientras se rellena. */\n.sim-data-table-panel .panel-ayuda {\n  padding: 14px 20px;\n  background: #f7faff;\n  border-bottom: 1px solid #dbe6f5;\n  max-height: 46vh;\n  overflow: auto;\n}\n\n.sim-data-table-panel .panel-ayuda.hidden {\n  display: none;\n}\n\n.sim-data-table-panel .panel-ayuda h4 {\n  margin: 0 0 10px;\n  font-size: 13.5px;\n  color: #1565c0;\n}\n\n.sim-data-table-panel .panel-ayuda h5 {\n  margin: 0 0 6px;\n  font-size: 12px;\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n  color: #5a6b81;\n}\n\n/* Dos columnas: «que se declara» y «que se mide con ello». Van juntas a\n   proposito, porque la segunda es la razon de ser de la primera. */\n.sim-data-table-panel .panel-ayuda .columnas {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 20px;\n  margin-bottom: 12px;\n}\n\n.sim-data-table-panel .panel-ayuda ul {\n  margin: 0;\n  padding-left: 18px;\n  font-size: 12.5px;\n  line-height: 1.55;\n  color: #333;\n}\n\n.sim-data-table-panel .panel-ayuda li {\n  margin-bottom: 4px;\n}\n\n.sim-data-table-panel .panel-ayuda code {\n  background: #e8eef7;\n  padding: 1px 4px;\n  border-radius: 3px;\n  font-size: 11.5px;\n}\n\n/* La trampa, marcada aparte: es lo que se salta al leer deprisa. */\n.sim-data-table-panel .panel-ayuda .ojo-titulo {\n  color: #a35b00;\n}\n\n.sim-data-table-panel .panel-ayuda ul.ojo li {\n  color: #7a4a00;\n}\n\n/* Boton de ayuda: mismo aspecto que el de graficos, para que se reconozca. */\n.sim-data-table-panel .btn-ayuda {\n  border: none;\n  background: transparent;\n  cursor: pointer;\n  color: #1565c0;\n  padding: 3px 5px;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .btn-ayuda:hover {\n  background: #e3f0ff;\n}\n\n.sim-data-table-panel .btn-ayuda svg {\n  width: 16px;\n  height: 16px;\n  display: block;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 
@@ -22229,6 +23732,59 @@ function remove(el) {
 }
   return randomColor;
 }));
+
+
+/***/ }),
+
+/***/ "./client/simulation/data-audit.css":
+/*!******************************************!*\
+  !*** ./client/simulation/data-audit.css ***!
+  \******************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js");
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleDomAPI.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleDomAPI.js");
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1__);
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertBySelector.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertBySelector.js");
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2__);
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/setAttributesWithoutAttributes.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/setAttributesWithoutAttributes.js");
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3__);
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertStyleElement.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/insertStyleElement.js");
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4__);
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! !../../node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleTagTransform.js */ "./node_modules/.pnpm/style-loader@4.0.0_webpack@5.89.0/node_modules/style-loader/dist/runtime/styleTagTransform.js");
+/* harmony import */ var _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5__);
+/* harmony import */ var _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_audit_css__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! !!../../node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./data-audit.css */ "./node_modules/.pnpm/css-loader@7.1.2_webpack@5.89.0/node_modules/css-loader/dist/cjs.js!./client/simulation/data-audit.css");
+
+      
+      
+      
+      
+      
+      
+      
+      
+      
+
+var options = {};
+
+options.styleTagTransform = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleTagTransform_js__WEBPACK_IMPORTED_MODULE_5___default());
+options.setAttributes = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_setAttributesWithoutAttributes_js__WEBPACK_IMPORTED_MODULE_3___default());
+options.insert = _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertBySelector_js__WEBPACK_IMPORTED_MODULE_2___default().bind(null, "head");
+options.domAPI = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_styleDomAPI_js__WEBPACK_IMPORTED_MODULE_1___default());
+options.insertStyleElement = (_node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_insertStyleElement_js__WEBPACK_IMPORTED_MODULE_4___default());
+
+var update = _node_modules_pnpm_style_loader_4_0_0_webpack_5_89_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default()(_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_audit_css__WEBPACK_IMPORTED_MODULE_6__["default"], options);
+
+
+
+
+       /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_audit_css__WEBPACK_IMPORTED_MODULE_6__["default"] && _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_audit_css__WEBPACK_IMPORTED_MODULE_6__["default"].locals ? _node_modules_pnpm_css_loader_7_1_2_webpack_5_89_0_node_modules_css_loader_dist_cjs_js_data_audit_css__WEBPACK_IMPORTED_MODULE_6__["default"].locals : undefined);
 
 
 /***/ }),

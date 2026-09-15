@@ -4,6 +4,19 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **diagnóstico de datos** (icono nuevo en la barra). Responde a la pregunta que se hace
+  *antes* de simular: «quiero medir esto, ¿qué me falta?». Lista las **13 capacidades** del sistema
+  (coste, ciclo, capacidad, colas, lotes, cumplimiento LFT, calendario, calidad, carga física,
+  colaboradores, habilidades, operatividad y reparto de caminos) con estado **listo / parcial /
+  falta**, y agrupa lo que falta **por el dato que lo desbloquea**, ordenado por cuántas capacidades
+  devuelve cada uno. Cada pendiente lleva su **consecuencia** («sin distancia no hay kg·m, solo kg»),
+  porque un aviso sin consecuencia no se lee dos veces. No simula: lee el modelo tal como lo lee el
+  editor de datos, así que no puede discrepar de lo que se va a simular.
+* `FEAT`: **ayuda por pestaña** en el editor de datos (botón «?» en la cabecera). Cada una explica
+  tres cosas y en este orden: **qué se declara**, **qué se puede medir con esos datos** y **la trampa
+  que más cara sale**. Decir solo la lista de campos no ayuda: la pregunta real es para qué sirven.
+  La ayuda se **recarga al cambiar de pestaña**, porque si no seguiría explicando la anterior, que es
+  peor que no tener ayuda: el usuario leería la respuesta equivocada.
 * `FEAT`: **reglas laborales versionadas por fecha** (`LaborRules.js`). Un número en una casilla
   reescribe el pasado: si el cupo semanal de horas extra se guardara suelto y mañana cambiara la ley,
   todos los informes ya emitidos se recalcularían con la ley nueva y dejarían de ser auditables. Con

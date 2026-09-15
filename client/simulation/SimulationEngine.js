@@ -3,6 +3,10 @@ import { getSimulationData, isLabel, resumenMuestras } from './util';
 import BusinessCalendar from './BusinessCalendar.js';
 import { normalizeWarmup, effectiveDuration, describeWarmup } from './WarmupCurve.js';
 import { resolveLabor, describeLabor } from './LaborRules.js';
+import {
+  normalizeMembers, normalizeCarga, habilidadesRequeridas, puedeHacerla, poolPuedeHacerla,
+  cargaDeUnaEjecucion, cargaVacia, acumularCarga, avisosDeCarga, bandaDe, UMBRALES_CARGA
+} from './Workload.js';
 
 /**
  * Muestreo de una distribucion triangular por inversa de la CDF.
@@ -132,27 +136,87 @@ class ResourcePool {
     // Minutos-recurso consumidos: lo que ocupan las tareas que usan esta piscina
     // (duracion x unidades tomadas). Es el numerador de la utilizacion.
     this.busyMinutes = 0;
+
+    // Miembros con nombre. SIN miembros la piscina se comporta exactamente como
+    // antes de A5: esto es lo que hace que ningun diagrama existente cambie.
+    this.members = normalizeMembers(config.members);
+    // Turno de reparto en ronda. Con «siempre la primera» una persona acapararia
+    // el trabajo y la otra saldria ociosa en el informe, cuando en la planta se
+    // reparten.
+    this._ultimoMiembro = -1;
+    // Ocupacion por persona (nombres), para el informe de operatividad.
+    this.porMiembro = new Map(this.members.map((m) => [ m.nombre, {
+      nombre: m.nombre,
+      habilidades: m.habilidades.slice(),
+      cargaMaximaKg: m.cargaMaximaKg,
+      tarifaHora: m.tarifaHora,
+      tareas: 0,
+      busyMinutes: 0,
+      carga: cargaVacia()
+    } ]));
   }
-  request(quantity, task) {
+
+  /** ¿Esta piscina tiene nombres? Sin nombres no hay a quien repartir. */
+  get conNombres() { return this.members.length > 0; }
+
+  /**
+   * ¿Alguna unidad de esta piscina tiene las habilidades que la tarea exige?
+   *
+   * Sin nombres no se filtra (no hay datos que filtrar). Con nombres, si nadie
+   * las tiene, la tarea se BLOQUEA: es la decision conservadora.
+   */
+  puedeAtender(requeridas) {
+    return poolPuedeHacerla(this, requeridas);
+  }
+
+  /**
+   * Pide unidades y devuelve QUIEN las toma.
+   *
+   * Se elige en ronda y se filtra por habilidad ANTES de pedir: si la tarea
+   * exige «soldadura» y solo la tienen dos de los cuatro puestos, la unidad que
+   * se reserva tiene que ser la de alguien que sepa. Reservar la de cualquiera y
+   * luego buscar persona seria contar capacidad que no existe.
+   */
+  request(quantity, task, requeridas) {
     if (this.available >= quantity) {
       this.available -= quantity;
-      return true;
+      return { tomada: true, miembro: this._elegir(requeridas) };
     }
-    this.queue.push({ quantity, task });
-    return false;
+    this.queue.push({ quantity, task, requeridas });
+    return { tomada: false, miembro: null };
   }
+
+  _elegir(requeridas) {
+    if (!this.conNombres) return null;
+    const aptos = this.members.filter((m) => puedeHacerla(m, requeridas));
+    if (!aptos.length) return null;
+    // Ronda sobre los APTOS: se avanza el turno segun cuantos hayan.
+    this._ultimoMiembro = (this._ultimoMiembro + 1) % aptos.length;
+    return aptos[this._ultimoMiembro];
+  }
+
   release(quantity) {
     this.available += quantity;
     const newTasks = [];
     this.queue = this.queue.filter(waiting => {
       if (this.available >= waiting.quantity) {
         this.available -= waiting.quantity;
-        newTasks.push(waiting.task);
+        newTasks.push({ task: waiting.task, miembro: this._elegir(waiting.requeridas) });
         return false; // remove from queue
       }
       return true; // keep in queue
     });
     return newTasks;
+  }
+
+  /** Anota que un miembro trabajo: minutos y carga. */
+  anotarTrabajo(miembro, minutos, carga) {
+    if (!miembro || !this.conNombres) return;
+    const fila = this.porMiembro.get(miembro.nombre);
+    if (!fila) return;
+    fila.tareas += 1;
+    fila.busyMinutes += Math.max(0, Number(minutos) || 0);
+    if (carga) fila.carga = acumularCarga(fila.carga, carga);
   }
 }
 
@@ -279,6 +343,21 @@ export default class SimulationEngine {
     // Primas por dia trabajado: dominical (art. 73) y festivo (art. 74). Se
     // llevan en su propio cubo para que el cuadre del informe pueda demostrarlas.
     this.premiumStats = { dominicalMs: 0, festivoMs: 0, imponible: 0 };
+
+    // Carga fisica: DOS acumuladores que NUNCA se suman (cargada y arrastrada).
+    // Y la operatividad: el tiempo muerto por categoria, que es lo que permite
+    // decir quien tiene holgura y por que esta parado.
+    this.carga = {
+      area: cargaVacia(),
+      porTarea: new Map(),
+      porPersona: new Map(),
+      porMiembro: new Map()
+    };
+    this.operatividad = {
+      bloqueadoPorHabilidadMin: 0,
+      esperandoFirmaMin: 0,
+      tareasBloqueadas: 0
+    };
 
     // Muestras por caso. Los totales por elemento dan medias, pero una media
     // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
@@ -498,6 +577,26 @@ export default class SimulationEngine {
       ? this.resourcePools.get(data.resources.pool)
       : null;
 
+    // HABILIDADES. Si la piscina tiene nombres y NINGUNO sabe hacer esta tarea,
+    // la tarea queda BLOQUEADA: no arranca y el tiempo se cuenta en su propia
+    // categoria de tiempo muerto. Es la decision conservadora (un dato que falta
+    // bloquea, no acelera) y es lo unico que puede producir «bloqueado por
+    // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
+    const requeridas = habilidadesRequeridas(data);
+    if (pool && requeridas.length && !pool.puedeAtender(requeridas)) {
+      this.operatividad.bloqueadoPorHabilidadMin += (taskEvent.bloqueoMinutos || 0);
+      this.operatividad.tareasBloqueadas++;
+      console.log(`[A5] tarea bloqueada por habilidad: ${element.id} necesita ${requeridas.join(', ')}`
+        + ` y "${pool.name}" no tiene a nadie que la haga.`);
+      // Se deja constancia en el resultado de la tarea y NO se programa nada: la
+      // instancia se quedara ahi, que es exactamente lo que pasaria en planta.
+      const r = this.results.get(element.id);
+      if (r) r.totalBlockedBySkill = (r.totalBlockedBySkill || 0) + 1;
+      return;
+    }
+
+    let miembro = taskEvent.miembro || null;
+
     if (pool && !taskEvent.recursoTomado) {
       const marcador = {
         element,
@@ -510,7 +609,9 @@ export default class SimulationEngine {
       };
       // El marcador se queda en la cola de la piscina; `release()` lo devuelve
       // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
-      if (!pool.request(quantityRequired, marcador)) return;
+      const pedido = pool.request(quantityRequired, marcador, requeridas);
+      if (!pedido.tomada) return;
+      miembro = pedido.miembro;
     }
 
     let processingTime = 0;
@@ -562,7 +663,12 @@ export default class SimulationEngine {
     // puesto mas tiempo, y ese tiempo se paga. Ademas asi la rampa TIENE coste,
     // que es justo lo que se quiere medir. Sin arranque declarado, la duracion
     // efectiva es la real y el coste no cambia.
-    const operationCost = (duracionEfectivaMs / 3600000) * baseRatePerHour;
+    //
+    // La TARIFA es la de la persona si la declaro, y si no la de la planta. Con
+    // la de planta de respaldo, poner nombres NO mueve el coste: solo lo mueve
+    // quien rellene tarifas por persona, que es lo que se quiere.
+    const tarifaHora = (miembro && miembro.tarifaHora != null) ? miembro.tarifaHora : baseRatePerHour;
+    const operationCost = (duracionEfectivaMs / 3600000) * tarifaHora;
 
     // Prima dominical (art. 73) y de dia festivo (art. 74). Se aplican sobre el
     // tiempo PAGADO de la tarea y se llevan en su propio cubo: sumarlas a la
@@ -579,7 +685,7 @@ export default class SimulationEngine {
       dayPremiumPercent = this.labor.sundayPremiumPercent;
       dayPremiumKind = 'dominical';
     }
-    const dayPremium = (duracionEfectivaMs / 3600000) * baseRatePerHour * (dayPremiumPercent / 100);
+    const dayPremium = (duracionEfectivaMs / 3600000) * tarifaHora * (dayPremiumPercent / 100);
     if (dayPremiumKind === 'festivo') this.premiumStats.festivoMs += duracionEfectivaMs;
     else if (dayPremiumKind === 'dominical') this.premiumStats.dominicalMs += duracionEfectivaMs;
     this.premiumStats.imponible += dayPremium;
@@ -596,8 +702,11 @@ export default class SimulationEngine {
     const normalOvertime = Math.min(taskOvertimeDuration, Math.max(0, limitInMillis - currentWeeklyOvertime));
     const excessOvertime = Math.max(0, taskOvertimeDuration - normalOvertime);
 
-    const doubleOvertimePremium = (normalOvertime / 3600000) * baseRatePerHour * (overtimeRules.payMultiplier - 1);
-    const tripleOvertimePremium = (excessOvertime / 3600000) * baseRatePerHour * (overtimeRules.excessPayMultiplier - 1);
+    // Las primas de la extra se calculan sobre la MISMA tarifa que la operacion:
+    // si se usara la de la planta, el cuadre del informe dejaria de cerrar (la
+    // operacion iria con la tarifa de la persona y la prima con la otra).
+    const doubleOvertimePremium = (normalOvertime / 3600000) * tarifaHora * (overtimeRules.payMultiplier - 1);
+    const tripleOvertimePremium = (excessOvertime / 3600000) * tarifaHora * (overtimeRules.excessPayMultiplier - 1);
 
     this.overtimeBreakdown.normalMs += normalOvertime;
     this.overtimeBreakdown.excessMs += excessOvertime;
@@ -625,6 +734,11 @@ export default class SimulationEngine {
       // pueda separar las dos, que se pagan por articulos distintos.
       dayPremium,
       dayPremiumKind,
+      // Quien la hizo, si la piscina tiene nombres. La tarifa de la persona
+      // sustituye a la de la planta cuando existe (si no, el coste no se moveria
+      // al poner nombres, que es lo que se quiere).
+      miembro,
+      tarifaAplicada: (miembro && miembro.tarifaHora != null) ? miembro.tarifaHora : null,
       // Tareas POR LOTE: al terminar hay que despertar a los tokens que esperaban
       // la barrera, y hay que saber de que lote era.
       esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
@@ -691,6 +805,50 @@ export default class SimulationEngine {
         sobreDiasConExtra: s.sobreDiasConExtra
       }))
     };
+  }
+
+  /**
+   * Acumula la carga fisica de una ejecucion terminada.
+   *
+   * DOS series separadas —cargada y arrastrada— que NUNCA se suman: cargar
+   * (soportar) y arrastrar (deslizar) no son la misma magnitud. Es la regla
+   * invariable nº 1 del diseno, y aqui es donde se aplica de verdad.
+   *
+   * `veces` sale de la FRECUENCIA de la tarea (1 por lote o 1 por pieza), no del
+   * numero de tokens: mover 12 kg por pieza en un lote de 20 serian 240 kg
+   * cuando en planta se hizo un solo viaje.
+   */
+  _anotarCarga(event, data, pool) {
+    const carga = normalizeCarga(data.carga);
+    const veces = (data.frequency === 'lot' && this.lotConfig.enabled) ? 1 : 1;
+    const inc = cargaDeUnaEjecucion(carga, veces);
+
+    const vacia = inc.cargadaKg === 0 && inc.arrastradaKg === 0;
+    // El area SIEMPRE se anota: aunque sea cero, tener la clave evita que el
+    // informe tenga que distinguir «no hay tarea» de «la tarea no mueve peso».
+    this.carga.area = acumularCarga(this.carga.area, { ...inc, veces: 0 });
+
+    if (vacia) return inc;
+
+    const t = this.carga.porTarea.get(event.element.id) || cargaVacia();
+    this.carga.porTarea.set(event.element.id, acumularCarga(t, inc));
+
+    if (event.miembro) {
+      const p = this.carga.porMiembro.get(event.miembro.nombre) || cargaVacia();
+      this.carga.porMiembro.set(event.miembro.nombre, acumularCarga(p, inc));
+    } else if (pool) {
+      // Sin nombres, la carga es de la PISCINA: se guarda por piscina para no
+      // perderla, y el informe la muestra como «sin nombre asignado».
+      const p = this.carga.porPersona.get(pool.name) || cargaVacia();
+      this.carga.porPersona.set(pool.name, acumularCarga(p, inc));
+    }
+
+    // Minutos del puesto y reparto por persona, para el informe de operatividad.
+    if (pool) {
+      pool.anotarTrabajo(event.miembro, (event.effectiveDuration || event.totalDuration) / 60000, inc);
+    }
+
+    return inc;
   }
 
   _findRootConfig() {
@@ -858,6 +1016,11 @@ export default class SimulationEngine {
           // lento al arrancar, el puesto esta ocupado mas tiempo.
           pool.busyMinutes += ((event.effectiveDuration || event.totalDuration) / 60000) * event.quantityRequired;
 
+          // Carga fisica de ESTA ejecucion. `veces` sale de la frecuencia de la
+          // tarea: una tarea por lote mueve su masa UNA vez por lote. Si no, 12 kg
+          // por pieza en un lote de 20 serian 240 kg cuando en planta fue un viaje.
+          this._anotarCarga(event, data, pool);
+
           const newTasks = pool.release(event.quantityRequired);
           newTasks.forEach(marcador => {
             const nextTaskResults = this.results.get(marcador.element.id);
@@ -883,7 +1046,10 @@ export default class SimulationEngine {
               esTareaDeLote: marcador.esTareaDeLote,
               lotNumber: marcador.lotNumber,
               // La unidad ya esta tomada: pedirla otra vez la contaria dos veces.
-              recursoTomado: true
+              recursoTomado: true,
+              // Y la persona tambien: volver a elegirla cambiaria quien hizo el
+              // trabajo y la carga iria a otro nombre.
+              miembro: marcador.miembro || null
             });
           });
         }

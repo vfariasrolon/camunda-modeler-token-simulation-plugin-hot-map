@@ -10,6 +10,93 @@ const OPEN_CLS = 'open';
 const TAB_ACTIVE_CLS = 'active';
 
 // ---------------------------------------------------------------------------
+// Ayuda por pestana.
+//
+// Cada pestana explica TRES cosas, y en este orden a proposito:
+//   1. `campos`: que se declara aqui (para saber que se puede rellenar).
+//   2. `mide`: que se puede MEDIR con esos datos (la pregunta real del analista).
+//   3. `ojo`: la trampa que mas cara sale si se ignora.
+//
+// Decir solo «que campos hay» no ayuda: el usuario no quiere la lista de campos,
+// quiere saber para que le sirven. Por eso `mide` va antes que `ojo`, y `ojo`
+// explica siempre la CONSECUENCIA, no la regla.
+// ---------------------------------------------------------------------------
+const AYUDA_PESTANA = {
+  tasks: {
+    titulo: 'Tareas: ritmo, calidad y carga física de cada paso',
+    campos: [
+      [ 'Distribución', 'fija (un valor) o triangular (mín/moda/máx). Decide qué columnas se leen.' ],
+      [ 'Tiempo y unidad', 'la duración base. Con triangular, el campo «Tiempo» se IGNORA.' ],
+      [ 'Tasa de fallo y retrabajo', 'probabilidad de fallo por ejecución y el tiempo que se añade al repetir.' ],
+      [ 'Recurso y Cant.', 'la piscina que consume y cuántas unidades toma a la vez.' ],
+      [ 'Frecuencia', 'por token (una vez por pieza) o por lote (una vez por lote).' ],
+      [ 'Barrera', 'quien firma: probabilidad de atender, espera si no atiende, y tolerancia.' ]
+    ],
+    mide: [
+      'Con tiempo y unidad: <strong>coste, tiempo de ciclo y sus percentiles</strong> (p50/p95).',
+      'Añadiendo recurso: <strong>esperas en cola, utilización (ρ) y cuello de botella</strong>.',
+      'Añadiendo fallo y retrabajo: <strong>calidad y su impacto en el ciclo</strong>.',
+      'Con frecuencia y barrera: <strong>ciclo de lote, parones y esperas de firma</strong>.',
+      'Con masa y distancia (bloque A5): <strong>toneladas movidas y kg·m</strong>, separando lo cargado de lo arrastrado.'
+    ],
+    ojo: [
+      'La <strong>unidad</strong> se escribe en plural (<code>minutes</code>): un <code>minute</code> se interpretaría como milisegundos, un factor de 60 000, y sin ningún aviso.'
+    ]
+  },
+  flows: {
+    titulo: 'Flujos: el reparto de cada compuerta',
+    campos: [
+      [ 'Probabilidad (%)', 'el reparto de las salidas de una compuerta <strong>exclusiva</strong>.' ]
+    ],
+    mide: [
+      'La <strong>mezcla de caminos</strong>: cuántos casos van por cada rama, y con eso el volumen y el coste por camino.'
+    ],
+    ojo: [
+      'El reparto de cada compuerta <strong>debe sumar 100 %</strong>: el motor acumula y manda todo el sobrante a la última rama sin avisar. El guardado lo bloquea.',
+      'Al cambiar una salida, <strong>las demás se ajustan solas</strong> (a partes iguales si estaban iguales, en proporción si no).',
+      'Una compuerta de <strong>una sola salida</strong> aparece fija al 100 %: el motor siempre la toma y no lee su probabilidad.'
+    ]
+  },
+  resources: {
+    titulo: 'Recursos: las piscinas de unidades equivalentes',
+    campos: [
+      [ 'Nombre', 'el de la piscina. Debe ser único.' ],
+      [ 'Cantidad', 'cuántas unidades idénticas hay (personas, máquinas, vehículos).' ],
+      [ 'Miembros (A5)', 'opcional: nombres con tarifa, habilidades y carga máxima dentro de la piscina.' ]
+    ],
+    mide: [
+      'Con la cantidad: <strong>utilización (ρ), colas y cuello de botella</strong>, que es lo que dice si el plan cabe en la plantilla.',
+      'Con miembros con nombre (A5): <strong>quién trabaja, cuánto tiempo y qué carga movió</strong>, más el <strong>bloqueo por habilidad</strong> y el diagnóstico de absorción.'
+    ],
+    ojo: [
+      'La cantidad es <strong>capacidad</strong>: los miembros con nombre no la cambian, solo dan identidad y tarifa.',
+      'Una tarea que apunta a una piscina que no existe <strong>ignora el recurso en silencio</strong>. Por eso la columna «Recurso» de Tareas es un desplegable y no texto libre.'
+    ]
+  },
+  global: {
+    titulo: 'Global: el reloj, el coste y las reglas',
+    campos: [
+      [ 'Tasa de llegada', 'llegadas por unidad de tiempo. Es una TASA, no un intervalo.' ],
+      [ 'Tarifa y coste de espera', 'lo que cuesta la hora trabajada y la hora en cola.' ],
+      [ 'Jornada, descansos y arranque', 'el reloj real: tramos, pausas y arranque lento.' ],
+      [ 'Horas extra', 'el cupo semanal y sus multiplicadores (LFT arts. 66 y 68).' ],
+      [ 'Lotes y semilla', 'llegadas en serie y reproducibilidad de la corrida.' ],
+      [ 'Reglas laborales (A2)', 'turno, topes del art. 65, primas de domingo y festivo, y sus vigencias.' ]
+    ],
+    mide: [
+      'Con la jornada y los descansos: <strong>capacidad real</strong>, sin inflarla (una jornada de 8 h no son 8 h de trabajo).',
+      'Con el cupo y las primas: <strong>coste real con horas extra</strong> y su reparto doble/triple.',
+      'Con las reglas laborales: <strong>cumplimiento de la LFT</strong> — cuántas semanas se pasaron del tope, y por cuánto.',
+      'Con la semilla: <strong>reproducibilidad y comparación limpia</strong> entre planes (mismo azar para los dos).'
+    ],
+    ojo: [
+      'La tasa de llegada es <strong>una tasa</strong>: <code>60</code> por <code>minute</code> es una llegada por <em>segundo</em>, no una cada 60 minutos.',
+      'Sin <strong>evento raíz</strong> la simulación no arranca, aunque todo lo demás esté relleno.'
+    ]
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Unidades. NO unificar en una sola lista: el motor usa DOS convenciones
 // distintas y confundirlas produce errores silenciosos.
 //
@@ -280,6 +367,10 @@ const TestDataIcon = '<path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.
 const ExportIcon = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
 const ImportIcon = '<path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/>';
 const CloseIcon = '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>';
+
+// El mismo icono de ayuda que usa el panel de graficos, para que «ayuda» se
+// reconozca igual en los dos sitios.
+const HelpIcon = '<path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/>';
 // Lapiz del acceso directo sobre la figura seleccionada.
 const EditIcon = '<path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>';
 
@@ -367,6 +458,7 @@ export default class DataTablePanel {
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
           <div class="panel-actions">
+            <button class="btn-ayuda" title="Ayuda de esta pestaña" data-tip="Qué datos hay aquí y qué se puede medir con ellos">${svg(HelpIcon)}</button>
             <button class="btn-test" title="Datos de prueba" data-tip="Rellena la pestaña con datos de prueba, para revisarlos antes de guardar">${svg(TestDataIcon)}</button>
             <button class="btn-export" title="Exportar CSV" data-tip="Exportar la pestaña actual a CSV (para Excel)">${svg(ExportIcon)}</button>
             <button class="btn-import" title="Importar CSV" data-tip="Importar un CSV exportado, editado en Excel">${svg(ImportIcon)}</button>
@@ -379,6 +471,7 @@ export default class DataTablePanel {
           <button data-tab="resources">Recursos</button>
           <button data-tab="global">Global</button>
         </div>
+        <div class="panel-ayuda hidden"></div>
         <div class="panel-body"></div>
         <div class="panel-footer">
           <span class="status"></span>
@@ -391,9 +484,11 @@ export default class DataTablePanel {
     this._canvas.getContainer().appendChild(panel);
 
     this._body = panel.querySelector('.panel-body');
+    this._ayuda = panel.querySelector('.panel-ayuda');
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
+    domEvent.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
     domEvent.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
     domEvent.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
     domEvent.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
@@ -405,6 +500,13 @@ export default class DataTablePanel {
       domEvent.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
         panel.querySelectorAll('.panel-tabs button').forEach((b) => domClasses(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        // Si la ayuda esta abierta, se RECARGA con la pestana nueva: si no, al
+        // cambiar de pestana seguiria explicando la anterior, que es peor que no
+        // tener ayuda porque el usuario lee la respuesta equivocada.
+        if (this._ayuda && !domClasses(this._ayuda).has('hidden')) {
+          domClasses(this._ayuda).add('hidden');
+          this._toggleAyuda();
+        }
         this._render();
       });
     });
@@ -614,6 +716,41 @@ export default class DataTablePanel {
     else this._renderGlobal();
 
     this._avisarSinRaiz();
+  }
+
+  /**
+   * Ayuda de la pestana activa: campos, qué se mide con ellos y la trampa.
+   *
+   * Se redibuja en cada llamada porque el contenido depende de la PESTANA, y la
+   * pestana puede haber cambiado desde la ultima vez. Se mantiene abierta/cerrada
+   * con una clase para que el usuario no tenga que reabrirla al cambiar de tab.
+   */
+  _toggleAyuda() {
+    if (!this._ayuda) return;
+    const a = AYUDA_PESTANA[this._activeTab];
+    if (!a) return;
+
+    const listas = (items, clase) => `<ul class="${clase}">${items.map((i) => (
+      Array.isArray(i) ? `<li><strong>${i[0]}</strong>: ${i[1]}</li>` : `<li>${i}</li>`
+    )).join('')}</ul>`;
+
+    this._ayuda.innerHTML = `
+      <h4>${a.titulo}</h4>
+      <div class="columnas">
+        <div>
+          <h5>Qué se declara aquí</h5>
+          ${listas(a.campos, 'campos')}
+        </div>
+        <div>
+          <h5>Qué se puede medir con estos datos</h5>
+          ${listas(a.mide, 'mide')}
+        </div>
+      </div>
+      <h5 class="ojo-titulo">Lo que hay que tener presente</h5>
+      ${listas(a.ojo, 'ojo')}
+    `;
+
+    domClasses(this._ayuda).toggle('hidden');
   }
 
   /**

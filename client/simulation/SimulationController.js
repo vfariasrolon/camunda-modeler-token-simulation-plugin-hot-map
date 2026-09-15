@@ -59,6 +59,18 @@ const ReportIcon = `
 // un subproceso grande generaria un circulo que tapa el diagrama entero.
 const MAX_BLOB_RADIUS = 240;
 
+// Diagnostico de datos: responde «¿tengo lo necesario para medir esto?» antes de
+// simular. La lista con la marca de verificacion se lee de un vistazo, que es
+// justo lo que se pide a un icono de «que datos tengo».
+const AuditIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M6.3 10.6l-2.1 2.1 4.6 4.6L20 6.1 17.9 4 8.8 13.1l-2.5-2.5z"/>
+      <path fill="currentColor" opacity="0.45" d="M3 19h18v2H3z"/>
+    </svg>
+  </span>
+`;
+
 // Tipos de figura que reciben mancha del mapa de calor.
 //
 // Se deja como lista explicita (en vez de "todo FlowNode") para poder ajustarla
@@ -163,6 +175,7 @@ export default class SimulationController {
     const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
     const tableButton = domify(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
     const reportButton = domify(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
+    const auditButton = domify(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
@@ -171,6 +184,8 @@ export default class SimulationController {
     // Por evento y no llamando al panel: el modulo del informe se registra
     // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
     domEvent.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
+    // Mismo motivo: el panel de diagnostico se registra despues.
+    domEvent.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
 
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
@@ -178,6 +193,7 @@ export default class SimulationController {
     this._tokenSimulationPalette.addEntry(chartButton, 14);
     this._tokenSimulationPalette.addEntry(tableButton, 15);
     this._tokenSimulationPalette.addEntry(reportButton, 16);
+    this._tokenSimulationPalette.addEntry(auditButton, 17);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));

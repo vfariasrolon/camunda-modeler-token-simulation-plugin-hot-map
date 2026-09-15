@@ -461,6 +461,94 @@
   min-width: 128px;
 }
 
+/* --- ayuda por pestana --- */
+
+/* El bloque de ayuda vive entre las pestanas y el cuerpo: se despliega a lo
+   ancho y NO se va con el scroll del cuerpo, porque es una referencia que se
+   consulta mientras se rellena. */
+.sim-data-table-panel .panel-ayuda {
+  padding: 14px 20px;
+  background: #f7faff;
+  border-bottom: 1px solid #dbe6f5;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.sim-data-table-panel .panel-ayuda.hidden {
+  display: none;
+}
+
+.sim-data-table-panel .panel-ayuda h4 {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  color: #1565c0;
+}
+
+.sim-data-table-panel .panel-ayuda h5 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5a6b81;
+}
+
+/* Dos columnas: «que se declara» y «que se mide con ello». Van juntas a
+   proposito, porque la segunda es la razon de ser de la primera. */
+.sim-data-table-panel .panel-ayuda .columnas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 12px;
+}
+
+.sim-data-table-panel .panel-ayuda ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #333;
+}
+
+.sim-data-table-panel .panel-ayuda li {
+  margin-bottom: 4px;
+}
+
+.sim-data-table-panel .panel-ayuda code {
+  background: #e8eef7;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+
+/* La trampa, marcada aparte: es lo que se salta al leer deprisa. */
+.sim-data-table-panel .panel-ayuda .ojo-titulo {
+  color: #a35b00;
+}
+
+.sim-data-table-panel .panel-ayuda ul.ojo li {
+  color: #7a4a00;
+}
+
+/* Boton de ayuda: mismo aspecto que el de graficos, para que se reconozca. */
+.sim-data-table-panel .btn-ayuda {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #1565c0;
+  padding: 3px 5px;
+  border-radius: 4px;
+}
+
+.sim-data-table-panel .btn-ayuda:hover {
+  background: #e3f0ff;
+}
+
+.sim-data-table-panel .btn-ayuda svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;
