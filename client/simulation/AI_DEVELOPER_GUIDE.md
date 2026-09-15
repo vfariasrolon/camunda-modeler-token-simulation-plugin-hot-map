@@ -403,9 +403,59 @@ costeara al intentar, la tarea pagaría el tiempo extra y las primas de la franj
 recurso y trabaja el martes pagaba 1 h extra que no existió, y la apuntaba a la semana y al día
 equivocados. La espera se cobra aparte (`totalWaitTimeCost`), así que no se pierde nada.
 
-Si tocas ese camino, recuerda las tres cosas que van juntas: el **marcador** lleva `quantityRequired`
-y `waitStart` (la espera se mide al completar), el reencolado usa **`TASK_START`** y no el evento que
-ya tuviera, y `recursoTomado` evita pedir la unidad dos veces.
+⚠️ **`release()` devuelve `{ task, miembro }`, no el marcador pelado.** Si tocas ese bucle, recuerda
+las tres cosas que van juntas: el **marcador** lleva `quantityRequired` y `waitStart`, el reencolado
+usa **`TASK_START`** y `recursoTomado: true`, y el `miembro` que devuelve `release()` hay que
+pasarlo tal cual para que la carga vaya al mismo nombre que hizo el trabajo.
+
+### Carga física y colaboradores (`Workload.js`)
+
+```json
+"carga": { "masaCargadaKg": 12, "masaArrastradaKg": 0, "distanciaM": 8 },
+"habilidad": "soldadura",
+"resources": { "pool": "Operarios", "quantityRequired": 1 }
+```
+
+En la piscina:
+
+```json
+"resourcePools": [ {
+  "name": "Operarios", "quantity": 2,
+  "members": [ { "nombre": "Ana", "tarifaHora": 55, "habilidades": [ "soldadura" ], "cargaMaximaKg": 25 } ]
+} ]
+```
+
+**La regla que no se puede romper: masa cargada y masa arrastrada NUNCA se suman.** Son dos
+acumuladores distintos (`carga.area`, `carga.porTarea`, `carga.porMiembro`) y el informe los imprime
+en columnas separadas, sin ninguna fila de total conjunto. Cargar (soportar) y arrastrar (deslizar)
+no son la misma magnitud. Si añades una vista nueva, añádela para **las dos series**.
+
+⚠️ **La masa se aplica por EJECUCIÓN de la tarea, no por token.** Esto es automático porque
+`_anotarCarga` se llama una vez por `TASK_COMPLETE`, y una tarea `por lote` solo genera un
+`TASK_COMPLETE` por lote. Si algún día se contara por token, mover 12 kg por pieza en un lote de 20
+daría 240 kg cuando en planta fue un solo viaje.
+
+⚠️ **La carga se anota FUERA del bloque de recursos.** Es una propiedad del trabajo, no del recurso:
+una tarea sin piscina también mueve peso. Tenerla dentro del `if` de la piscina hacía que la tarea
+más común no reportara nada.
+
+**Habilidades: bloquean de verdad.** Con miembros y con una habilidad exigida que **nadie** de la
+piscina tiene, `scheduleTask()` **sale sin programar nada** y anota el bloqueo en
+`operatividad.tareasBloqueadas` y en `results[id].totalBlockedBySkill`. Es lo conservador: un dato que
+falta bloquea, no acelera. Sin miembros no se filtra (no hay datos que filtrar).
+
+**La tarifa** es la de la persona si la declaró, y si no la de la planta. Las **primas** (extra y de
+día) usan la MISMA tarifa que la operación; si se usara la de la planta, el cuadre del informe
+dejaría de cerrar.
+
+**El reparto va en ronda** (`_elegir`), no «la primera libre»: con dos personas equivalentes, la
+primera concentraría todo el trabajo y la otra saldría ociosa en el informe, cuando en la planta se
+reparten. La ronda avanza **sobre los aptos**, no sobre todos, para que filtrar por habilidad no
+descoloque el turno.
+
+**La carga máxima NO cambia los tiempos.** `cargaMaximaKg` es un dato para avisar, no una restricción:
+el sistema reporta y marca, y decidir por seguridad no le toca. Si la convirtieras en un rechazo,
+moverías resultados que hoy nadie esperaría.
 
 **Nota:** El costo de la tarea **no** se define aquí; se calcula a partir de
 `cost.baseRatePerHour` de la configuración raíz. Cualquier campo `cost` dentro de una tarea

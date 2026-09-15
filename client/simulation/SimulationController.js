@@ -363,9 +363,33 @@ export default class SimulationController {
             ? JSON.parse(JSON.stringify(this._simulationEngine.premiumStats))
             : null,
 
-        // Piscinas declaradas en el proceso, tal como las leyo el motor.
+        // Carga fisica y operatividad (A5). Los Map se convierten a arrays para
+        // que el informe no dependa de la estructura interna del motor.
+        carga: this._simulationEngine.carga ? {
+            area: { ...this._simulationEngine.carga.area },
+            porTarea: Array.from(this._simulationEngine.carga.porTarea.entries())
+                .map(([ id, c ]) => ({ id, ...c })),
+            porPersona: Array.from(this._simulationEngine.carga.porPersona.entries())
+                .map(([ nombre, c ]) => ({ nombre, ...c })),
+            porMiembro: Array.from(this._simulationEngine.carga.porMiembro.entries())
+                .map(([ nombre, c ]) => ({ nombre, ...c }))
+        } : null,
+        operatividad: this._simulationEngine.operatividad
+            ? { ...this._simulationEngine.operatividad }
+            : null,
+
+        // Piscinas declaradas en el proceso, tal como las leyo el motor. Los
+        // miembros van con ellas: el informe los necesita para saber a quien
+        // atribuir el tiempo y la carga.
         resourcePools: Array.from(this._simulationEngine.resourcePools.values())
-            .map((p) => ({ name: p.name, quantity: p.quantity }))
+            .map((p) => ({
+                name: p.name,
+                quantity: p.quantity,
+                members: (p.members || []).map((m) => ({ ...m })),
+                // Ocupacion por persona, ya acumulada por el motor.
+                porMiembro: Array.from((p.porMiembro || new Map()).values())
+                    .map((f) => ({ ...f, carga: { ...f.carga } }))
+            }))
     };
     return report;
   }

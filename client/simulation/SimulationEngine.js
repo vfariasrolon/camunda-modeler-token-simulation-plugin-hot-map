@@ -814,19 +814,21 @@ export default class SimulationEngine {
    * (soportar) y arrastrar (deslizar) no son la misma magnitud. Es la regla
    * invariable nº 1 del diseno, y aqui es donde se aplica de verdad.
    *
-   * `veces` sale de la FRECUENCIA de la tarea (1 por lote o 1 por pieza), no del
-   * numero de tokens: mover 12 kg por pieza en un lote de 20 serian 240 kg
-   * cuando en planta se hizo un solo viaje.
+   * La masa se aplica UNA vez por ejecucion de la tarea. Y aqui esta la clave:
+   * una tarea `por lote` se ejecuta una vez por LOTE, no una por pieza, asi que
+   * mueve su masa una vez por lote. Es automatico porque se cuenta por EJECUCION
+   * y no por token: si se contara por token, mover 12 kg por pieza en un lote de
+   * 20 daria 240 kg cuando en planta fue un solo viaje.
    */
   _anotarCarga(event, data, pool) {
     const carga = normalizeCarga(data.carga);
-    const veces = (data.frequency === 'lot' && this.lotConfig.enabled) ? 1 : 1;
-    const inc = cargaDeUnaEjecucion(carga, veces);
+    const inc = cargaDeUnaEjecucion(carga, 1);
 
     const vacia = inc.cargadaKg === 0 && inc.arrastradaKg === 0;
-    // El area SIEMPRE se anota: aunque sea cero, tener la clave evita que el
-    // informe tenga que distinguir «no hay tarea» de «la tarea no mueve peso».
-    this.carga.area = acumularCarga(this.carga.area, { ...inc, veces: 0 });
+    // El area se anota SIEMPRE, incluso con carga cero: asi el informe puede
+    // decir «no hay carga declarada» en vez de tener que distinguir «no hay
+    // tareas» de «las tareas no mueven peso».
+    this.carga.area = acumularCarga(this.carga.area, inc);
 
     if (vacia) return inc;
 
@@ -1007,8 +1009,19 @@ export default class SimulationEngine {
         }
 
         const data = getSimulationData(event.element);
-        if (data && data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
-          const pool = this.resourcePools.get(data.resources.pool);
+
+        // La CARGA se anota SIEMPRE, tenga o no piscina la tarea. Antes vivia
+        // dentro del bloque de recursos, asi que una tarea sin piscina —lo mas
+        // comun— no reportaba nada de lo que movia. La carga es una propiedad del
+        // TRABAJO, no del recurso que lo hace.
+        const poolDeLaTarea = (data && data.resources && data.resources.pool
+          && this.resourcePools.has(data.resources.pool))
+          ? this.resourcePools.get(data.resources.pool)
+          : null;
+        this._anotarCarga(event, data || {}, poolDeLaTarea);
+
+        if (poolDeLaTarea) {
+          const pool = poolDeLaTarea;
 
           // Utilizacion: minutos-recurso consumidos. Se cuentan al COMPLETAR la
           // tarea (no al pedir el recurso) porque solo entonces consta que el
@@ -1016,13 +1029,11 @@ export default class SimulationEngine {
           // lento al arrancar, el puesto esta ocupado mas tiempo.
           pool.busyMinutes += ((event.effectiveDuration || event.totalDuration) / 60000) * event.quantityRequired;
 
-          // Carga fisica de ESTA ejecucion. `veces` sale de la frecuencia de la
-          // tarea: una tarea por lote mueve su masa UNA vez por lote. Si no, 12 kg
-          // por pieza en un lote de 20 serian 240 kg cuando en planta fue un viaje.
-          this._anotarCarga(event, data, pool);
-
           const newTasks = pool.release(event.quantityRequired);
-          newTasks.forEach(marcador => {
+          // `release()` devuelve { task, miembro }: la tarea que estaba esperando
+          // Y la persona que le toca. Se conserva la persona elegida al liberar
+          // para que el trabajo y su carga vayan al mismo nombre.
+          newTasks.forEach(({ task: marcador, miembro }) => {
             const nextTaskResults = this.results.get(marcador.element.id);
             const standardCalendar = this.standardCalendar;
             const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(marcador.waitStart), new Date(this.clock));
@@ -1049,7 +1060,7 @@ export default class SimulationEngine {
               recursoTomado: true,
               // Y la persona tambien: volver a elegirla cambiaria quien hizo el
               // trabajo y la carga iria a otro nombre.
-              miembro: marcador.miembro || null
+              miembro
             });
           });
         }

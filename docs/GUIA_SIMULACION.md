@@ -162,6 +162,8 @@ en la primera semana. El informe de la consola imprime la tasa **ya resuelta**
 | **Cant.** | Cuántas unidades toma a la vez. | Entero ≥ 1. Con 2 y una piscina de 3, dos tareas lo agotan. |
 | **Frecuencia** | `por token` (lo de siempre) o `por lote` (una sola vez por lote). | «Llenar la orden» es `por lote`; «registrar cada pieza» es `por token`. Ver §4.1. |
 | **Barrera** (`disp.` / `mín` / `moda` / `máx` / `tol.`) | Quien firma: probabilidad de atender a la primera, espera si no atiende, y tolerancia. | Solo se lee con `por lote`. Con `disp.` a 1 no hay ninguna espera. Ver §4.2. |
+| **Carga física** (`kg` / `kg` / `m`) | **Masa cargada** (la que soporta), **masa arrastrada** (la que desliza) y **distancia**. | Opcional. Ver §4.8. Deja las casillas **vacías** si no aplica: vacío es «no lo sabemos». |
+| **Habilidad** | La etiqueta que la tarea **exige**. Varias, separadas por comas. | Si nadie de la piscina la tiene, la tarea se **bloquea**. Ver §4.9. |
 
 > **Scrap vs. retrabajo.** Este motor modela **retrabajo**, no chatarra: un fallo
 > añade tiempo y el caso continúa. No hay pérdida de piezas. Si tu proceso descarta
@@ -182,6 +184,69 @@ es la probabilidad de tomar ese camino.
 
 `nombre` + `cantidad`. Es un grupo de `cantidad` unidades **idénticas e
 intercambiables**. Se guardan en el **proceso** (o participante), no en la tarea.
+
+Opcionalmente, cada piscina puede declarar **miembros con nombre** (§4.10): cada uno con su
+**tarifa** ($/h), su **carga máxima** (kg) y sus **habilidades**. Ver §4.9 y §4.10.
+
+### 4.8 Carga física: dos series que no se suman
+
+Cada tarea puede declarar cuánta masa mueve y a qué distancia:
+
+| Campo | Qué es |
+|---|---|
+| **Masa cargada (kg)** | Lo que la persona **soporta**: en brazos, al hombro, en la mano. |
+| **Masa arrastrada (kg)** | Lo que **no soporta**: un carro, una tarima con ruedas, algo que se desliza. |
+| **Distancia (m)** | Lo que recorre moviéndola. |
+
+De ahí salen tres cifras: **kg movidos**, **kg·m** (masa × distancia) y **toneladas** acumuladas.
+
+> **La regla que importa: cargada y arrastrada NUNCA se suman.** Cargar (soportar el peso) y
+> arrastrar (deslizarlo) no son la misma magnitud, así que el informe las imprime en **columnas
+> distintas** y **no hay ninguna fila de total conjunto**. Si quieres una equivalencia, la declaras
+> tú: el programa no la inventa.
+
+**La masa se aplica una vez por ejecución de la tarea.** Y como una tarea `por lote` se ejecuta una
+vez por lote, mover 12 kg por pieza en un lote de 20 da **12 kg**, no 240: en planta se hizo un solo
+viaje.
+
+> **Alcance, explícito:** el sistema **da datos, no valoraciones**. Dice «moverás 12 t a 8 m durante
+> 6 h» y marca las bandas que tú hayas declarado. **No** evalúa posturas, ni riesgo, ni lesiones: eso
+> se hace fuera, con estos números.
+
+### 4.9 Habilidades: bloquean de verdad
+
+Una tarea puede **exigir** una habilidad (o varias, separadas por comas), y una persona declara las
+que **tiene**. Si **ninguna unidad de la piscina** tiene las que la tarea exige, la tarea **no
+arranca**: se bloquea y el tiempo se cuenta en su propia categoría.
+
+Es la decisión **conservadora**: un dato que falta bloquea, no acelera. Y es lo único que puede
+producir la categoría «bloqueado por habilidad» del informe.
+
+Si la tarea no exige ninguna habilidad, nunca se bloquea (aunque la piscina tenga nombres).
+
+### 4.10 Colaboradores con nombre
+
+Con **miembros** declarados, cada unidad de la piscina pasa a ser **una persona concreta**:
+
+| Campo del miembro | Qué aporta |
+|---|---|
+| **Nombre** | Identidad: el informe y las cargas se atribuyen a esa persona. |
+| **Tarifa ($/h)** | Su coste propio. Si no la pones, se usa la tarifa de la planta. |
+| **Carga máxima (kg)** | Un dato para **avisar** de un exceso, no para rechazar trabajo. |
+| **Habilidades** | Las que tiene, para saber si puede hacer una tarea. |
+
+Tres cosas que conviene saber:
+
+- **La cantidad sigue mandando la capacidad.** Los nombres dan identidad, no plazas. Una piscina de 3
+  con 2 nombres sigue teniendo 3 puestos.
+- **El reparto va en ronda.** Dos personas equivalentes trabajan lo mismo, en vez de que una acapare
+  todo y la otra salga ociosa.
+- **Sin miembros, todo se comporta como antes.** Poner un nombre no cambia ningún tiempo por sí solo,
+  y solo cambia el coste si le pones tarifa propia.
+
+> **El sistema no asigna personal.** Muestra quién trabajó, cuánto y qué movió, y quién tiene holgura;
+> mover gente es tu decisión. Para comprobarla, cambia la política y **vuelve a simular**: la política
+> es declarada, no una caja negra.
 
 ### Pestaña **Global**
 

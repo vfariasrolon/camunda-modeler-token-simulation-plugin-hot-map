@@ -426,6 +426,80 @@
   border-color: #1565c0;
 }
 
+/* Tabla de miembros dentro de una piscina: va ANIDADA en la celda de la piscina,
+   asi que se pinta como una tarjeta sin bordes de tabla para que no compita
+   visualmente con la tabla de fuera. */
+.sim-data-table-panel .celda-miembros {
+  padding: 4px 6px;
+}
+
+.sim-data-table-panel .tabla-miembros {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 4px;
+}
+
+.sim-data-table-panel .tabla-miembros th {
+  position: static;
+  background: #eef2f7;
+  border: 1px solid #e2e8f0;
+  padding: 3px 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #5a6b81;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sim-data-table-panel .tabla-miembros td {
+  border: 1px solid #eef1f5;
+  padding: 2px 4px;
+}
+
+.sim-data-table-panel .tabla-miembros input {
+  width: 100%;
+  min-width: 56px;
+}
+
+.sim-data-table-panel .btn-anadir-miembro {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #1565c0;
+  background: #fff;
+  border: 1px solid #90caf9;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .btn-anadir-miembro:hover {
+  background: #e3f0ff;
+}
+
+.sim-data-table-panel .btn-quitar-miembro {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #999;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.sim-data-table-panel .btn-quitar-miembro:hover {
+  color: #c62828;
+}
+
+/* Encabezado del bloque de carga fisica (Tareas). Como el de la barrera: a dos
+   lineas, porque con `nowrap` empujaria la tabla. */
+.sim-data-table-panel .data-table th.col-carga {
+  font-weight: 500;
+  font-size: 11.5px;
+  line-height: 1.3;
+  white-space: normal;
+  border-left: 2px solid #ddd;
+  color: #555;
+}
+
 /* Campos compactos de la distribucion triangular (min / moda / max). */
 .sim-data-table-panel .cell.mini {
   min-width: 56px;

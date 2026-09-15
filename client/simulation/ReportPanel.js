@@ -201,6 +201,7 @@ export default class ReportPanel {
       ${this._metodologia()}
       ${this._comprobacion(contexto)}
       ${this._laboral(contexto)}
+      ${this._carga(contexto)}
       ${this._entradas()}
       ${this._resultados(contexto, figuras)}
       ${this._capacidad(contexto, figuras)}
@@ -289,7 +290,12 @@ export default class ReportPanel {
       laborDescripcion: (overtime && overtime.laborDescripcion) || null,
       cumplimiento: (overtime && overtime.compliance) || null,
       primasDeDia: suma(overtime, 'totalDayPremiumCost'),
-      primasDia: (overtime && overtime.dayPremiums) || null
+      primasDia: (overtime && overtime.dayPremiums) || null,
+      // Carga fisica y personas (A5). `carga` viene con las tres vistas ya
+      // aplanadas (area / por tarea / por persona) y NUNCA sumadas entre si.
+      carga: (overtime && overtime.carga) || null,
+      operatividad: (overtime && overtime.operatividad) || null,
+      pools: (overtime && overtime.resourcePools) || []
     };
   }
 
@@ -520,7 +526,7 @@ export default class ReportPanel {
 
     if (!c || !l) {
       return `
-        <h2>4 · Reglas laborales</h2>
+        <h2>4 · Reglas laborales, personas y carga</h2>
         <p class="sub">La corrida no dejó información laboral. Suele significar que el motor es anterior a este
         informe; vuelve a simular para que aparezca.</p>
       `;
@@ -537,7 +543,7 @@ export default class ReportPanel {
       </tr>`).join('');
 
     return `
-      <h2>4 · Reglas laborales</h2>
+      <h2>4 · Reglas laborales, personas y carga</h2>
       <p>Reglas <strong>resueltas</strong> para la fecha de arranque de esta corrida, no las de hoy. Es lo que
       hace que el informe siga siendo auditable cuando la ley cambie.</p>
       <table>
@@ -586,6 +592,125 @@ export default class ReportPanel {
           <thead><tr><th>Semana</th><th class="num">Extra (h)</th><th class="num">Días con extra</th><th>Cupo</th><th>Días</th></tr></thead>
           <tbody>${filas}</tbody>
         </table>
+      ` : ''}
+    `;
+  }
+
+  /**
+   * Carga física y personas.
+   *
+   * La regla que manda aquí: **la masa cargada y la arrastrada NUNCA se suman**.
+   * Cargar (soportar el peso) y arrastrar (deslizarlo) no son la misma magnitud,
+   * así que van en dos columnas y no hay ninguna fila de total conjunto. La
+   * equivalencia la declara el analista, no el programa.
+   *
+   * Y el límite de alcance, impreso: el sistema **no valora el riesgo**. Da la
+   * masa, la distancia y las horas; la valoración es de fuera.
+   */
+  _carga(ctx) {
+    const c = ctx.carga;
+    const op = ctx.operatividad;
+
+    if (!c) {
+      return `
+        <h3 class="salto">4.1 · Carga física y personas</h3>
+        <p class="sub">La corrida no dejó información de carga. Vuelve a simular para que aparezca.</p>
+      `;
+    }
+
+    const t = (kg) => (Number(kg) || 0) / 1000;
+    const area = c.area || {};
+    const hayAlgo = area.cargadaKg > 0 || area.arrastradaKg > 0;
+
+    const tablaPersonas = (c.porMiembro || []).map((p) => `
+      <tr>
+        <td>${esc(p.nombre)}</td>
+        <td class="num">${ent(p.tareas)}</td>
+        <td class="num">${num(p.busyMinutes, 0)}</td>
+        <td class="num">${num(t(p.carga.cargadaKg), 2)}</td>
+        <td class="num">${num(t(p.carga.arrastradaKg), 2)}</td>
+        <td class="num">${num(p.carga.cargadaKgM, 0)}</td>
+        <td class="num">${num(p.carga.arrastradaKgM, 0)}</td>
+      </tr>`).join('');
+
+    const tablaPiscinas = (c.porPersona || []).map((p) => `
+      <tr>
+        <td>${esc(p.nombre)} <span class="sub">(sin nombres asignados)</span></td>
+        <td class="num">${num(t(p.cargadaKg), 2)}</td>
+        <td class="num">${num(t(p.arrastradaKg), 2)}</td>
+      </tr>`).join('');
+
+    if (!hayAlgo) {
+      return `
+        <h3 class="salto">4.1 · Carga física y personas</h3>
+        <div class="aviso">
+          No hay <strong>carga declarada</strong> en ninguna tarea, así que esta corrida no puede decir
+          cuánta masa se movió. Se declara por tarea (masa cargada, masa arrastrada y distancia); el
+          diagnóstico de datos dice exactamente qué falta.
+        </div>
+        ${op && op.tareasBloqueadas ? `
+          <div class="aviso mal">
+            ${op.tareasBloqueadas} tarea(s) quedaron <strong>bloqueadas por habilidad</strong>: nadie de su
+            piscina tenía la habilidad que exigían. Esa es la razón de que no se completaran.
+          </div>` : ''}
+      `;
+    }
+
+    return `
+      <h3 class="salto">4.1 · Carga física y personas</h3>
+      <p>Masa movida en la corrida, en <strong>dos series separadas</strong>. No se suman: cargar (soportar)
+      y arrastrar (deslizar) no son la misma magnitud, y cualquier equivalencia la declara el analista.</p>
+
+      <table>
+        <thead><tr><th>Serie</th><th class="num">Masa</th><th class="num">Distancia acumulada</th><th class="num">Masa × distancia</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Cargada</strong> <span class="sub">(la soporta la persona)</span></td>
+              <td class="num">${num(t(area.cargadaKg), 2)} t</td>
+              <td class="num">${num(area.distanciaM, 0)} m</td>
+              <td class="num">${num(area.cargadaKgM, 0)} kg·m</td></tr>
+          <tr><td><strong>Arrastrada</strong> <span class="sub">(la desliza)</span></td>
+              <td class="num">${num(t(area.arrastradaKg), 2)} t</td>
+              <td class="num">—</td>
+              <td class="num">${num(area.arrastradaKgM, 0)} kg·m</td></tr>
+        </tbody>
+      </table>
+      <p class="sub">Ejecuciones contadas: ${ent(area.ejecuciones)}. La masa se aplica <strong>una vez por
+      ejecución de la tarea</strong>, y una tarea «por lote» se ejecuta una vez por lote.</p>
+
+      <div class="aviso">
+        <strong>Esto son datos, no una valoración.</strong> El sistema dice qué masa se movió, a qué distancia
+        y durante cuántas horas, y marca las bandas que el analista haya declarado. No evalúa posturas ni
+        riesgo: eso se hace fuera, con estos números.
+      </div>
+
+      ${tablaPersonas ? `
+        <h3>Por colaborador</h3>
+        <table>
+          <thead><tr><th>Persona</th><th class="num">Tareas</th><th class="num">Min. ocupada</th>
+            <th class="num">Cargada (t)</th><th class="num">Arrastrada (t)</th>
+            <th class="num">kg·m cargada</th><th class="num">kg·m arrastrada</th></tr></thead>
+          <tbody>${tablaPersonas}</tbody>
+        </table>
+        <p class="sub">Las dos series van en columnas distintas a propósito: sumarlas daría un número sin
+        significado.</p>
+      ` : ''}
+
+      ${tablaPiscinas ? `
+        <h3>Por piscina (sin nombres asignados)</h3>
+        <table>
+          <thead><tr><th>Piscina</th><th class="num">Cargada (t)</th><th class="num">Arrastrada (t)</th></tr></thead>
+          <tbody>${tablaPiscinas}</tbody>
+        </table>
+        <p class="sub">Declara <strong>miembros con nombre</strong> en la pestaña Recursos para que la carga se
+        atribuya a personas concretas en vez de a la piscina.</p>
+      ` : ''}
+
+      ${op && op.tareasBloqueadas ? `
+        <div class="aviso mal">
+          <strong>${op.tareasBloqueadas} tarea(s) bloqueadas por habilidad.</strong> Nadie de la piscina tenía
+          la habilidad que exigían, así que no arrancaron. Es una decisión de modelado conservadora: un dato
+          que falta bloquea, no acelera.
+        </div>
       ` : ''}
     `;
   }

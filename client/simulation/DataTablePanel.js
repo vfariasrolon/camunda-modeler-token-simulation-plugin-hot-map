@@ -30,17 +30,22 @@ const AYUDA_PESTANA = {
       [ 'Tasa de fallo y retrabajo', 'probabilidad de fallo por ejecución y el tiempo que se añade al repetir.' ],
       [ 'Recurso y Cant.', 'la piscina que consume y cuántas unidades toma a la vez.' ],
       [ 'Frecuencia', 'por token (una vez por pieza) o por lote (una vez por lote).' ],
-      [ 'Barrera', 'quien firma: probabilidad de atender, espera si no atiende, y tolerancia.' ]
+      [ 'Barrera', 'quien firma: probabilidad de atender, espera si no atiende, y tolerancia.' ],
+      [ 'Carga física', 'masa cargada (la que soporta), masa arrastrada (la que desliza) y distancia.' ],
+      [ 'Habilidad', 'la que exige la tarea (una etiqueta; varias, separadas por comas).' ]
     ],
     mide: [
       'Con tiempo y unidad: <strong>coste, tiempo de ciclo y sus percentiles</strong> (p50/p95).',
       'Añadiendo recurso: <strong>esperas en cola, utilización (ρ) y cuello de botella</strong>.',
       'Añadiendo fallo y retrabajo: <strong>calidad y su impacto en el ciclo</strong>.',
       'Con frecuencia y barrera: <strong>ciclo de lote, parones y esperas de firma</strong>.',
-      'Con masa y distancia (bloque A5): <strong>toneladas movidas y kg·m</strong>, separando lo cargado de lo arrastrado.'
+      'Con masa y distancia: <strong>toneladas movidas y kg·m</strong>, separando lo cargado de lo arrastrado.',
+      'Con habilidad y piscinas con nombres: <strong>bloqueo por habilidad</strong> y quién podría absorber la tarea.'
     ],
     ojo: [
-      'La <strong>unidad</strong> se escribe en plural (<code>minutes</code>): un <code>minute</code> se interpretaría como milisegundos, un factor de 60 000, y sin ningún aviso.'
+      'La <strong>unidad</strong> se escribe en plural (<code>minutes</code>): un <code>minute</code> se interpretaría como milisegundos, un factor de 60 000, y sin ningún aviso.',
+      'La masa se aplica según la <strong>frecuencia</strong>: una tarea «por lote» mueve su peso <em>una vez por lote</em>. Si no fuera así, 12 kg por pieza en un lote de 20 darían 240 kg cuando en planta se hizo un solo viaje.',
+      '<strong>Deja la carga vacía</strong> si no aplica. Un 0 dice «no mueve peso»; vacío dice «no lo sabemos», y el diagnóstico los distingue.'
     ]
   },
   flows: {
@@ -131,7 +136,12 @@ const TASK_DEFAULTS = () => ({
   failureRate: 0,
   reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' },
   frequency: 'token',
-  barrier: BARRIER_DEFAULTS()
+  barrier: BARRIER_DEFAULTS(),
+  // Carga fisica y habilidad: vacias por defecto. Se dejan SIN declarar para que
+  // el motor las ignore (una masa de 0 kg declarada es distinta de no declararla:
+  // la primera dice «no mueve peso», la segunda «no lo sabemos»).
+  carga: { masaCargadaKg: null, masaArrastradaKg: null, distanciaM: null },
+  habilidad: ''
 });
 
 const FLOW_DEFAULTS = () => ({ branchingProbability: 0.5 });
@@ -673,7 +683,11 @@ export default class DataTablePanel {
       ...raw,
       processingTime: { ...d.processingTime, ...(raw.processingTime || {}) },
       reworkTime: { ...d.reworkTime, ...(raw.reworkTime || {}) },
-      barrier: { ...d.barrier, ...(raw.barrier || {}) }
+      barrier: { ...d.barrier, ...(raw.barrier || {}) },
+      // La carga se mezcla campo a campo, igual que la barrera: si el modelo solo
+      // declarara la distancia, las otras dos casillas tienen que salir vacias y
+      // no `undefined` (que se pintaria como la cadena «undefined»).
+      carga: { ...d.carga, ...(raw.carga || {}) }
     };
   }
 
@@ -800,6 +814,8 @@ export default class DataTablePanel {
             <th>Cant.</th>
             <th>Frecuencia</th>
             <th colspan="5" class="col-barrera">Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia</th>
+            <th colspan="3" class="col-carga">Carga física (opcional): cargada kg · arrastrada kg · distancia m</th>
+            <th>Habilidad</th>
           </tr>
         </thead>
         <tbody>
@@ -838,6 +854,19 @@ export default class DataTablePanel {
               + ` data-field="barrier.${campo}" value="${valor == null ? '' : valor}"`
               + ` placeholder="${marcador}"${esLote ? '' : ' disabled title="Solo para tareas «por lote»"'}></td>`;
 
+            // Carga fisica. `carga` va vacia por defecto en TASK_DEFAULTS, asi que
+            // una tarea sin carga declarada muestra las casillas en blanco (y no
+            // un 0, que se confundiria con «pesa cero»).
+            const c = d.carga || {};
+            const celdaCarga = (campo, valor, marcador, atributos) =>
+              `<td><input type="number" ${atributos} class="cell mini"`
+              + ` data-field="carga.${campo}" value="${valor == null ? '' : valor}" placeholder="${marcador}"></td>`;
+
+            // Habilidad exigida: UNA sola etiqueta, no una lista. El caso comun es
+            // «esta tarea necesita soldadura», y para varias se escribe separado
+            // por comas (el motor acepta las dos formas).
+            const habilidad = Array.isArray(d.habilidades) ? d.habilidades.join(', ') : (d.habilidad || '');
+
             return `
               <tr data-el-id="${el.id}">
                 <td class="col-name" title="${esc(this._label(el))}">${esc(this._label(el))}</td>
@@ -867,6 +896,11 @@ export default class DataTablePanel {
                 ${celdaBarrera('waitMode', b.waitMode, 'moda', 'step="any" min="0"')}
                 ${celdaBarrera('waitMax', b.waitMax, 'máx', 'step="any" min="0"')}
                 ${celdaBarrera('toleranceMinutes', b.toleranceMinutes, 'tol.', 'step="any" min="0"')}
+                ${celdaCarga('masaCargadaKg', c.masaCargadaKg, 'kg', 'step="any" min="0"')}
+                ${celdaCarga('masaArrastradaKg', c.masaArrastradaKg, 'kg', 'step="any" min="0"')}
+                ${celdaCarga('distanciaM', c.distanciaM, 'm', 'step="any" min="0"')}
+                <td><input type="text" class="cell mini" data-field="habilidad"
+                  value="${esc(habilidad)}" placeholder="p. ej. soldadura"></td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -954,15 +988,22 @@ export default class DataTablePanel {
       </p>
       <table class="data-table">
         <thead>
-          <tr><th>Nombre de la piscina</th><th>Cantidad</th><th></th></tr>
+          <tr><th>Nombre de la piscina</th><th>Cantidad</th><th>Miembros con nombre (opcional)</th><th></th></tr>
         </thead>
         <tbody class="filas-pool">
-          ${pools.map((p) => this._filaPool(p.name, p.quantity)).join('')}
+          ${pools.map((p) => this._filaPool(p)).join('')}
         </tbody>
       </table>
       <p class="hint">
         Los nombres deben ser <strong>únicos</strong> y las cantidades enteros ≥ 1.
         Después podrás asignarlas en la pestaña <strong>Tareas</strong>.
+      </p>
+      <p class="hint">
+        <strong>Miembros</strong>: si los declaras, cada unidad pasa a ser <em>una persona concreta</em> con su
+        tarifa, sus habilidades y su carga máxima. Entonces el informe puede decir <strong>quién</strong> trabajó,
+        cuánto y qué movió, y una tarea cuya habilidad no tenga nadie <strong>se bloquea</strong>.
+        La <strong>cantidad sigue mandando la capacidad</strong>: los nombres solo dan identidad.
+        Sin miembros, todo se comporta como siempre.
       </p>
       <button class="btn-anadir-fila" type="button">+ Añadir piscina</button>
     `;
@@ -973,30 +1014,87 @@ export default class DataTablePanel {
         const tbody = this._body.querySelector('.filas-pool');
         // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
         // parseo de un contenedor que no sea <table>/<tbody>.
-        tbody.insertAdjacentHTML('beforeend', this._filaPool('', 1));
+        tbody.insertAdjacentHTML('beforeend', this._filaPool(null));
       });
     }
 
     // Delegacion: un unico manejador en el tbody cubre las filas que se añadan
-    // despues, y evita re-vincular los botones que ya existian.
+    // despues, y evita re-vincular los botones que ya existian. Cubre las dos
+    // acciones: quitar una piscina y quitar un miembro.
     const tbody = this._body.querySelector('.filas-pool');
     if (tbody) {
       domEvent.bind(tbody, 'click', (e) => {
-        const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
-        if (!btn) return;
-        const tr = btn.closest('tr');
-        if (tr) tr.remove();
+        const objetivo = e.target;
+        if (!objetivo || !objetivo.closest) return;
+
+        const quitarMiembro = objetivo.closest('.btn-quitar-miembro');
+        if (quitarMiembro) {
+          const tr = quitarMiembro.closest('tr');
+          if (tr) tr.remove();
+          return;
+        }
+
+        const quitarPool = objetivo.closest('.btn-quitar-pool');
+        if (quitarPool) {
+          const tr = quitarPool.closest('tr');
+          if (tr) tr.remove();
+          return;
+        }
+
+        const anadir = objetivo.closest('.btn-anadir-miembro');
+        if (anadir) {
+          const lista = anadir.closest('td').querySelector('.filas-miembro');
+          lista.insertAdjacentHTML('beforeend', this._filaMiembro(null));
+        }
       });
     }
   }
 
-  _filaPool(nombre, cantidad) {
+  /**
+   * Una fila de miembro con nombre.
+   *
+   * `habilidades` se escribe separadas por comas (una sola caja) en vez de una
+   * lista aparte: en planta la gente tiene una o dos etiquetas, y una rejilla de
+   * casillas por habilidad obligaria a conocer de antemano todas las del proceso.
+   */
+  _filaMiembro(m) {
+    const hab = Array.isArray(m && m.habilidades) ? m.habilidades.join(', ') : '';
+    const v = (x) => (x == null || x === '' ? '' : x);
+    return `
+      <tr class="fila-miembro">
+        <td><input type="text" class="cell mini" data-miembro="nombre"
+          value="${esc(v(m && m.nombre))}" placeholder="nombre"></td>
+        <td><input type="number" step="any" min="0" class="cell mini" data-miembro="tarifaHora"
+          value="${esc(v(m && m.tarifaHora))}" placeholder="$/h"></td>
+        <td><input type="number" step="any" min="0" class="cell mini" data-miembro="cargaMaximaKg"
+          value="${esc(v(m && m.cargaMaximaKg))}" placeholder="kg"></td>
+        <td><input type="text" class="cell mini" data-miembro="habilidades"
+          value="${esc(hab)}" placeholder="soldadura, pintura"></td>
+        <td><button class="btn-quitar-miembro" type="button" title="Quitar este miembro" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
+  }
+
+  _filaPool(p) {
+    const nombre = p && p.name;
+    const cantidad = p && p.quantity;
+    const miembros = (p && Array.isArray(p.members) ? p.members : []);
     const valor = cantidad == null || cantidad === '' ? 1 : cantidad;
     return `
       <tr>
         <td><input type="text" class="cell" data-field="pool.name"
           value="${esc(nombre == null ? '' : nombre)}" placeholder="p. ej. Analistas"></td>
         <td><input type="number" step="1" min="1" class="cell mini" data-field="pool.quantity" value="${valor}"></td>
+        <td class="celda-miembros">
+          <table class="tabla-miembros">
+            <thead>
+              <tr><th>Nombre</th><th>Tarifa $/h</th><th>Carga máx. kg</th><th>Habilidades</th><th></th></tr>
+            </thead>
+            <tbody class="filas-miembro">
+              ${miembros.map((m) => this._filaMiembro(m)).join('')}
+            </tbody>
+          </table>
+          <button class="btn-anadir-miembro" type="button">+ Añadir miembro</button>
+        </td>
         <td><button class="btn-quitar-pool" type="button" title="Quitar esta piscina" data-tip="Quitar esta fila">×</button></td>
       </tr>`;
   }
@@ -1558,7 +1656,7 @@ export default class DataTablePanel {
     const writes = [];
 
     if (this._activeTab === 'tasks') {
-      this._body.querySelectorAll('tbody tr').forEach((tr) => {
+      this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
         const el = this._elementRegistry.get(tr.dataset.elId);
         if (!el) return;
 
@@ -1675,6 +1773,41 @@ export default class DataTablePanel {
           delete datos.barrier;
         }
 
+        // CARGA FISICA. Una casilla vacia se guarda como AUSENTE, no como 0: un 0
+        // dice «esta tarea no mueve peso» y el vacio dice «no lo sabemos», y el
+        // diagnostico de datos los distingue. Las claves vacias se OMITEN en vez de
+        // guardarse como `null` (un JSON con nulls es mas dificil de leer a mano y
+        // el motor los trataria igual, pero ensucia el XML).
+        const cargaOpcional = (campo, etiqueta) => {
+          const bruto = val(`carga.${campo}`);
+          if (String(bruto).trim() === '') return undefined;
+          const n = this._num(bruto, `${name} · ${etiqueta}`);
+          if (n < 0) throw new Error(`${name}: ${etiqueta} no puede ser negativo`);
+          return n;
+        };
+        const carga = {};
+        const masa = cargaOpcional('masaCargadaKg', 'masa cargada');
+        const arrastre = cargaOpcional('masaArrastradaKg', 'masa arrastrada');
+        const distancia = cargaOpcional('distanciaM', 'distancia');
+        if (masa !== undefined) carga.masaCargadaKg = masa;
+        if (arrastre !== undefined) carga.masaArrastradaKg = arrastre;
+        if (distancia !== undefined) carga.distanciaM = distancia;
+
+        delete datos.carga;
+        if (Object.keys(carga).length) datos.carga = carga;
+
+        // HABILIDAD exigida. Se admite una o varias separadas por comas, y se
+        // guarda `habilidad` (singular) cuando es una sola porque es el caso
+        // comun y asi el XML queda legible.
+        const habilidadBruta = String(val('habilidad') == null ? '' : val('habilidad')).trim();
+        delete datos.habilidad;
+        delete datos.habilidades;
+        if (habilidadBruta) {
+          const lista = habilidadBruta.split(',').map((h) => h.trim()).filter(Boolean);
+          if (lista.length === 1) datos.habilidad = lista[0];
+          else if (lista.length > 1) datos.habilidades = lista;
+        }
+
         writes.push({ element: el, data: datos });
       });
       return writes;
@@ -1687,7 +1820,10 @@ export default class DataTablePanel {
       const pools = [];
       const vistos = new Set();
 
-      this._body.querySelectorAll('.filas-pool tr').forEach((tr, i) => {
+      // `.filas-pool > tr` y no `.filas-pool tr`: dentro de cada piscina hay una
+      // tabla de MIEMBROS, cuyas filas tambien son `tr`. Sin el hijo directo, cada
+      // miembro se leería como una piscina sin nombre.
+      this._body.querySelectorAll('.filas-pool > tr').forEach((tr, i) => {
         const nombre = String(tr.querySelector('[data-field="pool.name"]').value || '').trim();
         const cantRaw = String(tr.querySelector('[data-field="pool.quantity"]').value || '').trim();
 
@@ -1704,7 +1840,49 @@ export default class DataTablePanel {
           throw new Error(`Piscina «${nombre}»: la cantidad debe ser un entero mayor o igual que 1`);
         }
 
-        pools.push({ name: nombre, quantity: cantidad });
+        // Miembros con nombre: opcionales. Se leen del sublistado de ESTA fila.
+        const members = [];
+        const nombresVistos = new Set();
+        tr.querySelectorAll('.filas-miembro tr').forEach((filaM, j) => {
+          const valor = (campo) => {
+            const el = filaM.querySelector(`[data-miembro="${campo}"]`);
+            return el ? String(el.value).trim() : '';
+          };
+          const nombreM = valor('nombre');
+          const tarifa = valor('tarifaHora');
+          const cargaMax = valor('cargaMaximaKg');
+          const habs = valor('habilidades');
+
+          // Fila vacia: se ignora, para que la recien anadida no bloquee.
+          if (!nombreM && !tarifa && !cargaMax && !habs) return;
+          if (!nombreM) throw new Error(`Piscina «${nombre}» · miembro ${j + 1}: falta el nombre`);
+          if (nombresVistos.has(nombreM)) {
+            throw new Error(`Piscina «${nombre}»: el miembro «${nombreM}» está repetido`);
+          }
+          nombresVistos.add(nombreM);
+
+          const miembro = { nombre: nombreM };
+          if (tarifa !== '') {
+            const t = this._num(tarifa, `Piscina «${nombre}» · ${nombreM} · tarifa`);
+            if (t < 0) throw new Error(`Piscina «${nombre}» · ${nombreM}: la tarifa no puede ser negativa`);
+            miembro.tarifaHora = t;
+          }
+          if (cargaMax !== '') {
+            const c = this._num(cargaMax, `Piscina «${nombre}» · ${nombreM} · carga máxima`);
+            if (c < 0) throw new Error(`Piscina «${nombre}» · ${nombreM}: la carga máxima no puede ser negativa`);
+            miembro.cargaMaximaKg = c;
+          }
+          if (habs !== '') {
+            miembro.habilidades = habs.split(',').map((h) => h.trim()).filter(Boolean);
+          }
+          members.push(miembro);
+        });
+
+        const pool = { name: nombre, quantity: cantidad };
+        // `members` solo se guarda si hay alguno: una lista vacia en el XML es
+        // ruido, y el motor trata «sin miembros» y «lista vacia» igual.
+        if (members.length) pool.members = members;
+        pools.push(pool);
       });
 
       writes.push({
@@ -1721,7 +1899,7 @@ export default class DataTablePanel {
       // motor, que acumula, mandaba todo lo sobrante a la ultima rama.
       const porCompuerta = new Map();
 
-      this._body.querySelectorAll('tbody tr').forEach((tr) => {
+      this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
         const el = this._elementRegistry.get(tr.dataset.elId);
         if (!el || !el.source) return;
 
@@ -1983,7 +2161,9 @@ export default class DataTablePanel {
       return;
     }
 
-    const filas = Array.from(this._body.querySelectorAll('tbody tr'));
+    // Solo las filas de la tabla principal: en Recursos hay subfilas de miembros
+    // que no tienen `data-field`.
+    const filas = Array.from(this._body.querySelectorAll('tbody tr[data-el-id]'));
     if (!filas.length) {
       this._setStatus('No hay filas que rellenar en esta pestaña.', 'info');
       return;
@@ -2013,6 +2193,14 @@ export default class DataTablePanel {
         poner('failureRate', (0.01 + Math.random() * 0.29).toFixed(2));
         poner('reworkTime.value', this._azar(5, 30));
         poner('reworkTime.unit', 'minutes');
+
+        // Carga de prueba: una tarea pesada y otra de arrastre, para que el
+        // informe tenga algo que separar. Es lo que hace visible que las dos
+        // series NO se suman.
+        const tirando = Math.random() < 0.5;
+        poner('carga.masaCargadaKg', tirando ? this._azar(5, 25) : '');
+        poner('carga.masaArrastradaKg', tirando ? '' : this._azar(40, 200));
+        poner('carga.distanciaM', this._azar(2, 20));
 
         const selPool = tr.querySelector('[data-field="resources.pool"]');
         if (selPool && primeraPool) {
@@ -2202,7 +2390,8 @@ export default class DataTablePanel {
         'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
         'tasa_fallo', 'retrabajo', 'unidad_retrabajo',
         'recurso', 'cant_recurso',
-        'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol'
+        'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol',
+        'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad'
       ] ];
       this._getTasks().forEach((el) => {
         const d = this._taskData(el);
@@ -2230,15 +2419,35 @@ export default class DataTablePanel {
           esLote ? b.waitMin : '',
           esLote ? b.waitMode : '',
           esLote ? b.waitMax : '',
-          esLote ? b.toleranceMinutes : ''
+          esLote ? b.toleranceMinutes : '',
+          // La carga se exporta tal como esta declarada: vacio es «no lo sabemos»
+          // y 0 es «no mueve peso». Convertir uno en otro al pasar por Excel
+          // borraria esa diferencia, que es justo la que distingue un dato que
+          // falta de un dato declarado.
+          (d.carga && d.carga.masaCargadaKg != null) ? d.carga.masaCargadaKg : '',
+          (d.carga && d.carga.masaArrastradaKg != null) ? d.carga.masaArrastradaKg : '',
+          (d.carga && d.carga.distanciaM != null) ? d.carga.distanciaM : '',
+          Array.isArray(d.habilidades) ? d.habilidades.join(' ') : (d.habilidad || '')
         ]);
       });
       return rows;
     }
 
     if (this._activeTab === 'resources') {
-      const rows = [ [ 'nombre', 'cantidad' ] ];
-      this._getPools().forEach((p) => rows.push([ p.name, p.quantity ]));
+      // Una fila por PISCINA, y los miembros en columnas aparte. Se aplana en vez
+      // de sacar una fila por miembro porque en Excel una piscina con nombres es
+      // mas facil de leer asi, y al importar se reconstruye igual.
+      const rows = [ [ 'nombre', 'cantidad', 'miembros' ] ];
+      this._getPools().forEach((p) => {
+        const miembros = (p.members || []).map((m) => {
+          const partes = [ m.nombre ];
+          partes.push(m.tarifaHora != null ? m.tarifaHora : '');
+          partes.push(m.cargaMaximaKg != null ? m.cargaMaximaKg : '');
+          partes.push((m.habilidades || []).join(' '));
+          return partes.join('|');
+        }).join(';');
+        rows.push([ p.name, p.quantity, miembros ]);
+      });
       return rows;
     }
 
@@ -2467,6 +2676,35 @@ export default class DataTablePanel {
           throw new Error(`Línea ${line}: frecuencia «${freqRaw}» inválida (usa token o lot)`);
         }
 
+        // Carga fisica y habilidad: columnas OPCIONALES, como la frecuencia. Una
+        // celda vacia se guarda como AUSENTE (no como 0): «no lo sabemos» y «no
+        // mueve peso» son cosas distintas, y el diagnostico las separa.
+        const opcional = (nombre) => {
+          const i = header.indexOf(nombre);
+          if (i === -1 || r[i] === undefined) return null;
+          const bruto = String(r[i]).trim();
+          if (bruto === '') return null;
+          const v = this._num(bruto, `Línea ${line}: ${nombre}`);
+          if (v < 0) throw new Error(`Línea ${line}: «${nombre}» no puede ser negativo`);
+          return v;
+        };
+        const cargaImp = {
+          masaCargadaKg: opcional('carga_kg'),
+          masaArrastradaKg: opcional('arrastre_kg'),
+          distanciaM: opcional('distancia_m')
+        };
+        delete data.carga;
+        if (Object.values(cargaImp).some((v) => v != null)) data.carga = cargaImp;
+
+        const iHab = header.indexOf('habilidad');
+        delete data.habilidad;
+        delete data.habilidades;
+        if (iHab !== -1 && r[iHab] !== undefined) {
+          const lista = String(r[iHab]).split(/[,\s]+/).map((h) => h.trim()).filter(Boolean);
+          if (lista.length === 1) data.habilidad = lista[0];
+          else if (lista.length > 1) data.habilidades = lista;
+        }
+
         updates.push({ element: el, data });
       });
       return updates;
@@ -2478,6 +2716,9 @@ export default class DataTablePanel {
 
       const iN = idx('nombre');
       const iC = idx('cantidad');
+      // Columna OPCIONAL: un CSV exportado antes de A5 no la trae, y en ese caso
+      // la piscina se queda sin miembros en vez de reventar.
+      const iM = header.indexOf('miembros');
 
       const pools = [];
       const vistos = new Set();
@@ -2493,7 +2734,38 @@ export default class DataTablePanel {
         if (!Number.isInteger(cantidad) || cantidad < 1) {
           throw new Error(`Línea ${line}: la cantidad debe ser un entero mayor o igual que 1`);
         }
-        pools.push({ name: nombre, quantity: cantidad });
+
+        const pool = { name: nombre, quantity: cantidad };
+
+        const crudoMiembros = iM !== -1 ? String(r[iM] == null ? '' : r[iM]).trim() : '';
+        if (crudoMiembros) {
+          const members = [];
+          const nombresVistos = new Set();
+          // Formato: `nombre|tarifa|cargaMax|habilidad1 habilidad2` y los miembros
+          // separados por `;`. Los campos posicionales vacios se omiten.
+          crudoMiembros.split(';').forEach((trozo, j) => {
+            const partes = trozo.split('|').map((x) => x.trim());
+            const nombreM = partes[0] || '';
+            if (!nombreM) throw new Error(`Línea ${line}: el miembro ${j + 1} de «${nombre}» no tiene nombre`);
+            if (nombresVistos.has(nombreM)) {
+              throw new Error(`Línea ${line}: el miembro «${nombreM}» está repetido en «${nombre}»`);
+            }
+            nombresVistos.add(nombreM);
+
+            const miembro = { nombre: nombreM };
+            if (partes[1]) {
+              miembro.tarifaHora = this._num(partes[1], `Línea ${line}: tarifa de ${nombreM}`);
+            }
+            if (partes[2]) {
+              miembro.cargaMaximaKg = this._num(partes[2], `Línea ${line}: carga máxima de ${nombreM}`);
+            }
+            if (partes[3]) miembro.habilidades = partes[3].split(/\s+/).filter(Boolean);
+            members.push(miembro);
+          });
+          if (members.length) pool.members = members;
+        }
+
+        pools.push(pool);
       });
 
       updates.push({ element: root, data: { ...(getSimulationData(root) || {}), resourcePools: pools } });

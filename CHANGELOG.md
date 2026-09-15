@@ -4,6 +4,38 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **carga física por tarea** (bloque A5). Cada tarea declara **masa cargada**, **masa
+  arrastrada** y **distancia**, y el motor acumula kg, kg·m y toneladas. Las dos series **nunca se
+  suman**: cargar (soportar el peso) y arrastrar (deslizarlo) no son la misma magnitud, y el informe
+  las imprime en columnas distintas sin ninguna fila de total conjunto. La masa se aplica **una vez
+  por ejecución de la tarea**, y como una tarea «por lote» se ejecuta una vez por lote, mover 12 kg
+  por pieza en un lote de 20 da 12 kg y no 240.
+* `FEAT`: **colaboradores con nombre** dentro de una piscina, con **tarifa**, **habilidades** y
+  **carga máxima**. Sin miembros nada cambia (compatibilidad total). Con miembros, cada unidad es una
+  persona concreta y el reparto va **en ronda**, para que dos personas equivalentes trabajen lo mismo
+  en vez de acaparar una. La **cantidad sigue mandando la capacidad**: los nombres solo dan identidad.
+* `FEAT`: la **tarifa por persona** sustituye a la de la planta cuando existe, y las primas se
+  calculan con la misma tarifa que la operación (si no, el cuadre del informe dejaría de cerrar).
+  Quien no tenga tarifa usa la de la planta, así que poner nombres no mueve el coste por sí solo.
+* `FEAT`: las **habilidades bloquean de verdad**. Si ninguna unidad de la piscina tiene la que la
+  tarea exige, la tarea **no arranca** y el tiempo se cuenta en su propia categoría («bloqueado por
+  habilidad»). Es la decisión conservadora —un dato que falta bloquea, no acelera— y es lo único que
+  puede producir esa categoría de tiempo muerto.
+* `FEAT`: **editor de todo lo anterior**: columnas de carga y habilidad en Tareas, subtabla de
+  miembros en Recursos (con añadir y quitar por fila), generación de datos de prueba que incluye una
+  tarea de carga y otra de arrastre, y round-trip completo por CSV. Los CSV exportados antes siguen
+  importándose: las columnas nuevas son opcionales.
+* `FEAT`: el **informe técnico** gana una subsección de carga física y personas con las dos series
+  separadas, la tabla por colaborador y el **aviso de alcance impreso**: el sistema da masa,
+  distancia y horas, y **no valora posturas ni riesgo**.
+* `FIX`: **sin piscina asignada no se anotaba ninguna carga.** El acumulador vivía dentro del bloque
+  de recursos, así que una tarea sin piscina —lo más común— no reportaba nada de lo que movía. La
+  carga es una propiedad del **trabajo**, no del recurso que lo hace.
+* `FIX`: `release()` devolvía la tarea que esperaba y la persona que le tocaba, pero el bucle de
+  liberación seguía tratándolo como si fuera el marcador: la simulación **se caía** en cuanto una
+  tarea por lote esperaba por un recurso.
+* `FIX`: las filas **anidadas** de la tabla de miembros se leían como piscinas. Los recorridos de la
+  tabla principal ahora se limitan a las filas con `data-el-id` y a los hijos directos del cuerpo.
 * `FEAT`: **diagnóstico de datos** (icono nuevo en la barra). Responde a la pregunta que se hace
   *antes* de simular: «quiero medir esto, ¿qué me falta?». Lista las **13 capacidades** del sistema
   (coste, ciclo, capacidad, colas, lotes, cumplimiento LFT, calendario, calidad, carga física,

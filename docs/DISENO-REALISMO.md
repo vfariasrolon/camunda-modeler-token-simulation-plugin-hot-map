@@ -468,8 +468,33 @@ Todos **ajustables** y **todos impresos en el informe** junto al resultado.
 
 ## 8. A5 · Personas, carga y operatividad
 
-> **Estado: DISEÑO CERRADO, sin implementar.** Las decisiones de abajo se tomaron al abrir el
-> bloque y **no se pueden deshacer sin reescribir el motor**, así que quedan escritas con su motivo.
+> **Estado: IMPLEMENTADO (motor, editor, CSV e informe).** Falta solo el panel de gráficos por
+> persona (barras de activo/ocioso y líneas a lo largo del día), que se apoya en estos datos.
+> Verificado con **29 comprobaciones** sobre el motor real y **25** sobre el editor en un DOM real.
+>
+> **Tres defectos reales que encontró la verificación** (los tres corregidos):
+>
+> - **Sin piscina asignada no se anotaba ninguna carga.** El acumulador vivía dentro del bloque de
+>   recursos, así que una tarea sin piscina —lo más común— no reportaba nada de lo que movía. La
+>   carga es una propiedad del **trabajo**, no del recurso.
+> - **La simulación se caía** en cuanto una tarea por lote esperaba por un recurso: `release()`
+>   pasó a devolver `{ task, miembro }` y el bucle de liberación seguía tratándolo como el marcador.
+> - **Las filas anidadas de la tabla de miembros se leían como piscinas**, así que una piscina con
+>   nombres se habría guardado como varias piscinas sin nombre.
+>
+> **Decisión de implementación que conviene recordar:** la masa se anota **por ejecución de la
+> tarea** y no por token. Como una tarea `por lote` solo genera un `TASK_COMPLETE` por lote, el
+> reparto por frecuencia sale **gratis** en vez de necesitar una bandera aparte. Si algún día se
+> contara por token, mover 12 kg por pieza en un lote de 20 daría 240 kg.
+>
+> **Pendiente de refinar (documentado, no olvidado):**
+>
+> - **El tiempo muerto por persona no se desglosa todavía en las cuatro categorías.** El motor ya
+>   cuenta los bloqueos por habilidad y las esperas de firma, pero «sin trabajo» y «con trabajo
+>   asignable» necesitan saber qué cola había en cada instante, que es otro paso.
+> - **La carga máxima no se compara todavía con la masa por levantamiento.** El motor acumula
+>   toneladas y kg·m; para avisar de «esta persona supera sus 25 kg» hace falta la masa **por
+>   levantamiento**, que ya está declarada pero no se compara con `cargaMaximaKg`.
 
 ### 8.1 Realismo de las masas: dos series que nunca se suman
 
