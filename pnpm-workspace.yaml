@@ -1,0 +1,30 @@
+# Configuración de pnpm — endurecimiento contra ataques de cadena de suministro
+#
+# IMPORTANTE: pnpm 11 NO lee `.npmrc`. La configuración de proyecto vive aquí,
+# en `pnpm-workspace.yaml`, con notación camelCase. Comprobado empíricamente:
+# un `.npmrc` con `ignore-scripts=true` devuelve `undefined` en
+# `pnpm config get ignore-scripts`; estas claves devuelven el valor real.
+#
+# El registro NO cambia: pnpm y npm descargan ambos de registry.npmjs.org.
+# Lo que se controla aquí es la EJECUCIÓN de código durante la instalación.
+
+# 1) La palanca más importante. Bloquea todos los lifecycle scripts
+#    (preinstall, install, postinstall, prepare) de cualquier paquete.
+#    Sin esto, el "prepare": "run-s bundle" del package.json se dispara
+#    solo al instalar — y con él, cualquier script de una dependencia
+#    comprometida. Para compilar: pnpm run bundle (explícito).
+ignoreScripts: true
+
+# 2) Fijar versiones exactas al añadir dependencias (sin ^ ni ~).
+saveExact: true
+
+# 3) Verifica la integridad del contenido descargado contra lo que el
+#    registro declaró. Detecta paquetes manipulados en el store.
+strictStorePkgContentCheck: true
+
+# 4) Si algún paquete necesita ejecutar un script de build de verdad,
+#    autorízalo explícitamente y de uno en uno:
+#      onlyBuiltDependencies:
+#        - nombre-del-paquete
+#    No desactivar ignoreScripts en bloque.
+onlyBuiltDependencies: []
