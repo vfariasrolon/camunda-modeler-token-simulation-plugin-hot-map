@@ -203,11 +203,24 @@ SimpleHeatSVG.prototype = {
     return this;
   },
 
+  /**
+   * Dibuja las manchas.
+   *
+   * Cada punto es [cx, cy, valor] y opcionalmente [cx, cy, valor, radio].
+   * El cuarto elemento permite que una figura grande reciba una mancha mas
+   * grande que una pequena. Si falta, se usa el radio global (this._r).
+   *
+   * El degradado del borde esta definido en porcentajes del radio, asi que al
+   * variar el radio el desvanecido se escala en la misma proporcion: no hace
+   * falta recalcular la gradiente por punto.
+   */
   draw: function(minOpacity) {
     if (!this._r) this.radius(this.defaultRadius, this.defaultBlur);
 
     const ns = 'http://www.w3.org/2000/svg';
-    minOpacity = minOpacity === undefined ? 0.05 : minOpacity;
+    // 0.05 hacia que un valor 0 quedase practicamente invisible; 0.10 se
+    // percibe como "hay algo" sin ensuciar el diagrama.
+    minOpacity = minOpacity === undefined ? 0.10 : minOpacity;
 
     // clear previous heatmap content
     this._heatGroup.innerHTML = '';
@@ -215,10 +228,12 @@ SimpleHeatSVG.prototype = {
     for (var i = 0, len = this._data.length, p; i < len; i++) {
       p = this._data[i];
 
+      const r = p.length > 3 && p[3] > 0 ? p[3] : this._r;
+
       const circle = document.createElementNS(ns, 'circle');
       circle.setAttribute('cx', p[0]);
       circle.setAttribute('cy', p[1]);
-      circle.setAttribute('r', this._r);
+      circle.setAttribute('r', r);
       circle.setAttribute('fill', 'url(#heatmap-blur-gradient)');
 
       const opacity = Math.min(Math.max(p[2] / this._max, minOpacity), 1);

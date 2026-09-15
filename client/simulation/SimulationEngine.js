@@ -1,5 +1,5 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
-import { getSimulationData } from './util';
+import { getSimulationData, isLabel } from './util';
 import BusinessCalendar from './BusinessCalendar.js';
 
 const triangular = (min, mode, max) => {
@@ -273,7 +273,7 @@ export default class SimulationEngine {
   }
 
   _findRootConfig() {
-    const startEvents = this._elementRegistry.filter(el => is(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !isLabel(el) && is(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => getSimulationData(el)?.isRoot);
 
     if (rootEvents.length === 1) {
@@ -328,7 +328,7 @@ export default class SimulationEngine {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
 
-    const startEvents = this._elementRegistry.filter(el => is(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !isLabel(el) && is(el, 'bpmn:StartEvent'));
     if (!startEvents.length) {
       console.error("No start event found. Cannot run simulation.");
       return this.results;

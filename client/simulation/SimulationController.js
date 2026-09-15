@@ -6,7 +6,7 @@ import {
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
-import { getSimulationData, getExtensionProperty, formatMilliseconds, formatCurrency } from './util';
+import { getSimulationData, getExtensionProperty, formatMilliseconds, formatCurrency, isLabel } from './util';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -36,8 +36,62 @@ const ChartIcon = `
   </span>
 `;
 
+// Icono de tabla (Material Symbols "table") para el editor de datos en bloque.
+const TableIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M20 3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 2v2H4V5h16zM4 10h3v3H4v-3zm0 5h3v3H4v-3zm5 3v-3h3v3H9zm3-5H9v-3h3v3zm2 0v-3h3v3h-3zm3 2v3h-3v-3h3zm2-2h-2v-3h3v3h-1z"/>
+    </svg>
+  </span>
+`;
+
+// Tope del radio de una mancha del mapa de calor, en px de diagrama. Sin tope,
+// un subproceso grande generaria un circulo que tapa el diagrama entero.
+const MAX_BLOB_RADIUS = 240;
+
+// Tipos de figura que reciben mancha del mapa de calor.
+//
+// Se deja como lista explicita (en vez de "todo FlowNode") para poder ajustarla
+// sin ambiguedad. Ojo si se quiere la metrica de tiempo de ciclo: la paleta la
+// documenta "sobre los eventos de fin", asi que habria que anadir 'bpmn:Event'.
+const HEATMAP_TYPES = [ 'bpmn:Task', 'bpmn:Gateway' ];
+
+// Nombre legible de cada metrica, para el nombre del archivo exportado.
+const NOMBRES_METRICA = {
+  cost: 'costo',
+  waitTime: 'espera-promedio',
+  totalWaitTime: 'espera-total',
+  cycleTime: 'tiempo-de-ciclo',
+  frequency: 'frecuencia',
+  processTime: 'tiempo-de-proceso',
+  failureRate: 'tasa-de-fallos',
+  reworkTime: 'tiempo-de-reparacion',
+  reworkCost: 'costo-de-reparacion',
+  overtime: 'horas-extras',
+  waitTimeCost: 'costo-tiempos-muertos',
+  transportWaitTime: 'espera-de-transporte',
+  inefficientDispatch: 'despachos-ineficientes',
+  resourceQuantity: 'cantidad-de-recursos'
+};
+
+// Quita caracteres que no son validos en un nombre de archivo.
+const limpiarNombre = (s) => String(s || '')
+  .replace(/[\\/:*?"<>|]+/g, '-')
+  .replace(/\s+/g, '-')
+  .replace(/-+/g, '-')
+  .replace(/^-|-$/g, '')
+  .slice(0, 80);
+
+// Decide si un elemento recibe mancha. isLabel viene de util.js: descarta las
+// etiquetas (textos), que comparten el businessObject de su figura y por tanto
+// pasarian cualquier comprobacion de tipo.
+const isSimulatedElement = (element) => {
+  if (isLabel(element)) return false;
+  return HEATMAP_TYPES.some((type) => is(element, type));
+};
+
 export default class SimulationController {
-  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel) {
+  constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel, dataTablePanel, matrixLoader) {
     this._canvas = canvas;
     this._eventBus = eventBus;
     this._simulationPalette = simulationPalette;
@@ -47,6 +101,8 @@ export default class SimulationController {
     this._tokenSimulationPalette = tokenSimulationPalette;
     this._notifications = notifications;
     this._chartPanel = chartPanel;
+    this._dataTablePanel = dataTablePanel;
+    this._matrixLoader = matrixLoader;
 
     this._heatmap = null;
     this._chart = null;
@@ -64,22 +120,29 @@ export default class SimulationController {
   }
 
   init() {
-    const runButton = domify(`<div class="bts-entry" title="Ejecutar Simulación">${RunIcon}</div>`);
-    const showButton = domify(`<div class="bts-entry" title="Mostrar Análisis">${ShowIcon}</div>`);
-    const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos">${ChartIcon}</div>`);
+    // data-tip alimenta el tooltip CSS (ver simulation.css). Se mantiene tambien
+    // el atributo title por accesibilidad: los lectores de pantalla lo anuncian,
+    // y sirve como respaldo si el CSS no carga.
+    const runButton = domify(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
+    const showButton = domify(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
+    const chartButton = domify(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
+    const tableButton = domify(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
     domEvent.bind(chartButton, 'click', () => this._chartPanel.toggle());
+    domEvent.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
 
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
+    this._tokenSimulationPalette.addEntry(tableButton, 15);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
+    this._simulationPalette.setExportCallback(this.exportHeatmapPng.bind(this));
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
@@ -204,6 +267,24 @@ export default class SimulationController {
       return;
     }
 
+    // Se muestra el modal y se APLAZA la simulacion. No es un adorno: el motor
+    // es sincrono y bloquea el hilo principal, asi que si se ejecutase aqui
+    // mismo el navegador no llegaria a pintar el modal nunca. Dos
+    // requestAnimationFrame encadenados garantizan que ya se ha pintado.
+    this._matrixLoader.show();
+
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try {
+        this._ejecutarSimulaciones();
+      } finally {
+        // En finally para que el modal se cierre tambien si la simulacion lanza
+        // o sale por un return anticipado: si no, quedaria tapando la pantalla.
+        this._matrixLoader.hide();
+      }
+    }));
+  }
+
+  _ejecutarSimulaciones() {
     this._notifications.showNotification({ text: 'Ejecutando simulaciones (normal y con horas extras)...', type: 'info', duration: 2000 });
 
     this.lastMetric = null;
@@ -239,6 +320,310 @@ export default class SimulationController {
       if (this.lastMetric) this.showMetric(this.lastMetric);
   }
 
+  /**
+   * Radio de la mancha para un elemento.
+   *
+   * Antes el radio era fijo (this._radius + this._blur = 30 px) mientras que las
+   * tareas miden 100x80: la mancha cubria solo el centro y los bordes quedaban
+   * sin colorear, asi que parecia que el mapa de calor "no llegaba" a la figura.
+   *
+   * El desvanecido del borde ocupa el ultimo tramo del radio, de modo que para
+   * que la mancha cubra la figura de forma solida hay que escalar el radio total
+   * en la misma proporcion que la figura:
+   *   total = (radio + desenfoque) * (semiFigura / radio)
+   */
+  _blobRadius(element) {
+    const base = this._radius + this._blur;
+
+    // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
+    // englobante daria manchas enormes. Se queda con el radio base.
+    if (!is(element, 'bpmn:FlowNode')) return base;
+
+    const half = Math.max(element.width || 0, element.height || 0) / 2;
+    if (!half || half <= this._radius) return base;
+
+    return Math.min(base * (half / this._radius), MAX_BLOB_RADIUS);
+  }
+
+  /**
+   * Anade un punto al mapa de calor, centrado en la figura.
+   *
+   * Se anade SIEMPRE que exista resultado, aunque el valor sea 0. El filtro
+   * anterior (value > 0) hacia que toda tarea sin fallos, o de costo 0, no
+   * dibujase nada: el diagrama parecia tener figuras "sin analizar" cuando en
+   * realidad su valor era cero. Con valor 0 la mancha sale con la opacidad
+   * minima, que es informacion util (se ve que se contabilizo y dio cero).
+   */
+  _pushPoint(dataPoints, element, value) {
+    const cx = Math.round(element.x + (element.width || 0) / 2);
+    const cy = Math.round(element.y + (element.height || 0) / 2);
+    dataPoints.push([ cx, cy, value, this._blobRadius(element) ]);
+  }
+
+  /**
+   * Nombre base del archivo exportado: "<archivo original>_<metrica>".
+   *
+   * El plugin no recibe la ruta del archivo abierto, asi que el nombre se toma
+   * del titulo de la ventana, que Camunda Modeler pone con el nombre del
+   * archivo. Si no se puede deducir, se cae a "mapa-calor".
+   */
+  _nombreExportado() {
+    const metrica = limpiarNombre(NOMBRES_METRICA[this.lastMetric] || this.lastMetric || 'simulacion');
+
+    // "stratech.bpmn - Camunda Modeler" -> "stratech"
+    // Tambien cubre separadores como "|" o guion largo.
+    const titulo = String(document.title || '')
+      .replace(/\s*[-–—|]\s*Camunda Modeler.*$/i, '')
+      .trim();
+
+    const original = limpiarNombre(titulo.replace(/\.(bpmn20\.xml|bpmn|xml)$/i, ''));
+
+    // Si el titulo quedase vacio o fuese solo el nombre de la aplicacion, no se usa.
+    const utilizable = original && !/^camunda-modeler$/i.test(original);
+
+    return utilizable ? `${original}_${metrica}` : `mapa-calor_${metrica}`;
+  }
+
+  /**
+   * Exporta un PNG con el diagrama y el mapa de calor superpuesto.
+   *
+   * NO se usa canvas.saveSVG() de bpmn-js: esa funcion exporta unicamente la
+   * capa ACTIVA (BaseViewer.js:471-472), que por defecto es 'base'. El mapa de
+   * calor se dibuja en la capa 'overlays' (simpleheat-svg.js:43), asi que
+   * saveSVG() devolveria el diagrama SIN calor. Aqui se serializa el viewport
+   * completo, que contiene todas las capas.
+   */
+  exportHeatmapPng() {
+    // Log de entrada: es lo PRIMERO que ocurre al pulsar el boton. Sirve para
+    // distinguir dos fallos que desde fuera se ven igual:
+    //   - si NO aparece este log  -> el clic no llega al metodo (boton mal
+    //                                conectado, o se esta pulsando otro boton)
+    //   - si aparece              -> el metodo entra y el problema esta despues
+    console.log('[mapa de calor] boton de exportar pulsado', {
+      hayMapaDeCalor: Boolean(this._heatmap),
+      metricaActiva: this.lastMetric
+    });
+
+    try {
+      // Se usa el SVG real del diagrama, no "el primer <svg>" del contenedor:
+      // el contenedor tambien aloja los botones de las paletas y CADA BOTON
+      // lleva su propio <svg> con el icono. Un icono no tiene capas, asi que
+      // buscar el primero puede devolver el equivocado.
+      //
+      // this._canvas._svg es el mismo SVG que emplea bpmn-js internamente
+      // (BaseViewer.js:473 lo consulta para localizar el <defs>).
+      const container = this._canvas.getContainer();
+      const rootSvg = this._canvas._svg ||
+        Array.from(container.querySelectorAll('svg')).find((s) => s.querySelector('g'));
+
+      if (!rootSvg) {
+        const n = container.querySelectorAll('svg').length;
+        throw new Error(`no se encontró el SVG del diagrama (${n} <svg> en el contenedor)`);
+      }
+
+      const defs = rootSvg.querySelector('defs');
+
+      // El viewport es el <g> que contiene TODAS las capas: el diagrama y el
+      // mapa de calor. Se exporta entero para no depender del nombre de ninguna
+      // capa: canvas.getLayer() CREA la capa si el nombre no existe
+      // (diagram-js Canvas.js:414-418), asi que devolveria un <g> vacio.
+      const viewport = rootSvg.querySelector(':scope > g') || rootSvg.querySelector('g');
+
+      if (!viewport) {
+        throw new Error(`el SVG del diagrama no tiene capas (hijos: ${rootSvg.children.length})`);
+      }
+
+      // Los rotulos de datos ("Costo: $120") son overlays HTML dentro de un
+      // <foreignObject> y Chromium no los rasteriza de forma fiable al cargar
+      // el SVG como imagen. Se quitan del clon: el diagrama real no se toca.
+      const clone = viewport.cloneNode(true);
+      clone.querySelectorAll('foreignObject').forEach((node) => {
+        const group = node.closest('.djs-overlay') || node;
+        group.remove();
+      });
+
+      // BBox a partir de la GEOMETRIA DE LAS FIGURAS, no de viewport.getBBox().
+      //
+      // getBBox() del viewport incluye elementos auxiliares (overlays del
+      // token-simulation, contenedores) cuyo tamano es un centinela de
+      // 100000x100000. Eso producia un viewBox imposible, el lienzo no se podia
+      // crear y toBlob() devolvia null: "el lienzo no devolvio datos".
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      let figuras = 0;
+
+      this._elementRegistry.getAll().forEach((el) => {
+        if (isLabel(el)) return;
+        if (typeof el.x !== 'number' || typeof el.y !== 'number') return;
+        if (!(el.width > 0) || !(el.height > 0)) return;
+        if (el.width > 50000 || el.height > 50000) return; // centinelas de la raiz
+        minX = Math.min(minX, el.x);
+        minY = Math.min(minY, el.y);
+        maxX = Math.max(maxX, el.x + el.width);
+        maxY = Math.max(maxY, el.y + el.height);
+        figuras++;
+      });
+
+      if (!figuras || !isFinite(minX) || !isFinite(maxX) || maxX <= minX || maxY <= minY) {
+        throw new Error('no se pudo medir el diagrama: no hay figuras con geometría');
+      }
+
+      const bbox = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+
+      // Se cuenta el calor por lo que hay DIBUJADO, no por la bandera interna
+      // this._heatmap: esa bandera se pone a null en clear() y puede no coincidir
+      // con lo que se ve en pantalla. El DOM es la fuente fiable.
+      const manchas = viewport.querySelectorAll('circle[fill*="heatmap-blur-gradient"]').length;
+
+      // Diagnostico: si la exportacion vuelve a fallar, este log dice
+      // exactamente que SVG y que estructura se encontraron.
+      console.log('[mapa de calor] exportando', {
+        svgsEnElContenedor: container.querySelectorAll('svg').length,
+        svgUsado: rootSvg.getAttribute('class') || '(sin clase)',
+        hijosDelSvg: Array.from(rootSvg.children).map((c) => c.tagName),
+        viewportHijos: viewport.children.length,
+        manchasDeCalor: manchas,
+        tamano: `${Math.round(bbox.width)}x${Math.round(bbox.height)}`
+      });
+
+      const PAD = 20;
+      const x = Math.floor(bbox.x - PAD);
+      const y = Math.floor(bbox.y - PAD);
+      const w = Math.ceil(bbox.width + PAD * 2);
+      const h = Math.ceil(bbox.height + PAD * 2);
+
+      // El degradado y el filtro que dan COLOR a las manchas NO estan en el
+      // <defs> del canvas. simpleheat-svg.js los crea en el <defs> del primer
+      // <svg> del contenedor (simpleheat-svg.js:36), y con ~190 <svg> -los
+      // iconos de las paletas- ese primero puede ser el de un boton.
+      //
+      // En pantalla funciona porque en SVG los url(#id) se resuelven a nivel de
+      // documento, asi que las manchas encuentran el filtro igualmente. Pero al
+      // exportar solo se serializaba el <defs> del canvas: faltaba el filtro,
+      // las manchas se dibujaban en blanco y quedaban invisibles sobre el fondo
+      // blanco. Por eso salian las figuras pero no el calor.
+      //
+      // Se recogen POR ID, esten donde esten. Si algun dia los defs del calor
+      // ya estan dentro del <defs> del canvas (p. ej. tras corregir
+      // simpleheat-svg), no se duplican: repetir ids en un documento SVG
+      // funciona pero ensucia el archivo.
+      const yaEnDefs = Boolean(defs && defs.querySelector('#heatmap-colorize'));
+      const heatDefs = yaEnDefs ? '' : Array.from(
+        container.querySelectorAll('#heatmap-blur-gradient, #heatmap-colorize')
+      ).map((node) => node.outerHTML).join('');
+
+      const svg =
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ' +
+        `width="${w}" height="${h}" viewBox="${x} ${y} ${w} ${h}">` +
+        '<defs>' + (defs ? defs.innerHTML : '') + heatDefs + '</defs>' +
+        clone.innerHTML +
+        '</svg>';
+
+      // Escala adaptativa: un diagrama grande a 2x puede superar el maximo de
+      // lienzo del navegador, y entonces getContext('2d') devuelve null. Se
+      // limita el area total para evitarlo.
+      const MAX_PIXELS = 16e6;
+      let scale = 2;
+      if (w * h * scale * scale > MAX_PIXELS) {
+        scale = Math.max(1, Math.sqrt(MAX_PIXELS / (w * h)));
+      }
+
+      // "<archivo original>_<metrica>.png", p. ej. "stratech_costo.png"
+      const nombreBase = this._nombreExportado();
+      console.log('[mapa de calor] nombre del archivo', {
+        tituloDeLaVentana: document.title,
+        nombreBase
+      });
+
+      const img = new Image();
+
+      // Todo el cuerpo va en try/catch: img.onload es ASINCRONO, asi que un
+      // fallo aqui NO lo cubre el try exterior. Sin esto, cualquier error
+      // despues de cargar la imagen se pierde en silencio: el boton no hace
+      // nada y no aparece ningun archivo.
+      img.onload = () => {
+        try {
+          const canvasEl = document.createElement('canvas');
+          canvasEl.width = Math.round(w * scale);
+          canvasEl.height = Math.round(h * scale);
+
+          const ctx = canvasEl.getContext('2d');
+          if (!ctx) {
+            throw new Error(`no se pudo crear el lienzo de ${canvasEl.width}x${canvasEl.height} px`);
+          }
+
+          // Fondo blanco: el PNG tendria transparencia y se ve mal al pegarlo.
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+          ctx.drawImage(img, 0, 0, canvasEl.width, canvasEl.height);
+
+          canvasEl.toBlob((blob) => {
+            try {
+              if (!blob) {
+                throw new Error('el lienzo no devolvió datos');
+              }
+
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = `${nombreBase}.png`;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+              URL.revokeObjectURL(url);
+
+              // Se informa del tamano generado: si el archivo no aparece en
+              // Descargas pese a este aviso, el problema esta en la descarga
+              // de Electron y no en la generacion de la imagen.
+              const kb = Math.round(blob.size / 1024);
+              const detalle = manchas === 0
+                ? ' OJO: no había calor activo, así que la imagen es solo el diagrama.'
+                : ` Incluye ${manchas} mancha(s) de calor.`;
+              this._notifications.showNotification({
+                text: `PNG generado (${canvasEl.width}x${canvasEl.height} px, ${kb} KB).${detalle} Revisa tu carpeta de Descargas.`,
+                type: 'info',
+                duration: 9000
+              });
+            } catch (err) {
+              console.error('[mapa de calor] fallo al guardar el PNG', err);
+              this._notifications.showNotification({
+                text: `No se pudo guardar el PNG: ${err.message || err}`,
+                type: 'error',
+                duration: 8000
+              });
+            }
+          }, 'image/png');
+        } catch (err) {
+          console.error('[mapa de calor] fallo al generar el PNG', err);
+          this._notifications.showNotification({
+            text: `No se pudo generar el PNG: ${err.message || err}`,
+            type: 'error',
+            duration: 8000
+          });
+        }
+      };
+
+      img.onerror = () => {
+        console.error('[mapa de calor] el SVG no se pudo cargar como imagen');
+        this._notifications.showNotification({
+          text: 'No se pudo convertir el diagrama a imagen (el SVG no cargó).',
+          type: 'error',
+          duration: 8000
+        });
+      };
+
+      // encodeURIComponent NO es opcional: los rellenos del calor son
+      // url(#heatmap-blur-gradient) y el '#' sin escapar rompe el data URL.
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    } catch (err) {
+      console.error('[mapa de calor] fallo al preparar la exportacion', err);
+      this._notifications.showNotification({
+        text: `No se pudo exportar la imagen: ${err.message}`,
+        type: 'error',
+        duration: 8000
+      });
+    }
+  }
+
   showMetric(metric) {
     this.clearOverlaysAndHeatmap();
     this.lastMetric = metric;
@@ -247,11 +632,11 @@ export default class SimulationController {
 
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
-        if (is(element, 'bpmn:Task')) {
+        if (is(element, 'bpmn:Task') && !isLabel(element)) {
           const data = getSimulationData(element);
           const value = (data && data.resources && data.resources.quantityRequired) || 0;
           if (value > max) max = value;
-          if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
+          this._pushPoint(dataPoints, element, value);
         }
       });
     } else {
@@ -261,7 +646,7 @@ export default class SimulationController {
       }
       this.simulationResults.forEach((result, elementId) => {
           const element = this._elementRegistry.get(elementId);
-          if (!element || !is(element, 'bpmn:FlowNode')) return;
+          if (!element || !isSimulatedElement(element)) return;
 
           let value = 0;
           if (metric === 'frequency') value = result.executionCount;
@@ -280,7 +665,7 @@ export default class SimulationController {
 
 
           if (value > max) max = value;
-          if (value > 0) dataPoints.push([ Math.round(element.x + element.width / 2), Math.round(element.y + element.height / 2), value ]);
+          this._pushPoint(dataPoints, element, value);
       });
     }
 
@@ -291,7 +676,7 @@ export default class SimulationController {
 
   showOverlays(metric) {
     const elements = metric === 'resourceQuantity'
-      ? this._elementRegistry.filter(el => is(el, 'bpmn:Task'))
+      ? this._elementRegistry.filter(el => !isLabel(el) && is(el, 'bpmn:Task'))
       : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
 
     elements.forEach(element => {
@@ -304,7 +689,7 @@ export default class SimulationController {
             const value = (data && data.resources && data.resources.quantityRequired) || 0;
             if (value > 0) overlayText = `Recursos: ${value}`;
         } else if (result) {
-            if (is(element, 'bpmn:Task')) {
+            if (is(element, 'bpmn:Task') && !isLabel(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${formatCurrency(result.totalCost, 'MXN')}`;
                 else if (metric === 'waitTime') overlayText = `Espera Prom: ${formatMilliseconds(result.totalWaitTime / (result.executionCount || 1))}`;
                 else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${formatMilliseconds(result.totalWaitTime)}`;
@@ -331,7 +716,10 @@ export default class SimulationController {
 
         if (overlayText) this._overlays.add(element, 'simulation-overlay', { position: { bottom: -5, left: element.width / 2 - 20 }, html: `<div class="simulation-overlay-text">${overlayText}</div>` });
 
-        if (result && is(element, 'bpmn:ExclusiveGateway')) {
+        // El guard !isLabel es imprescindible: una etiqueta de compuerta pasa
+        // is(el, 'bpmn:ExclusiveGateway'), pero NO tiene `outgoing`, asi que
+        // element.outgoing.forEach lanzaria TypeError.
+        if (result && is(element, 'bpmn:ExclusiveGateway') && !isLabel(element)) {
             element.outgoing.forEach(flow => {
                 const flowResult = this.simulationResults.get(flow.id);
                 if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
@@ -572,7 +960,7 @@ export default class SimulationController {
     const allElements = this._elementRegistry.getAll();
     const elementsWithData = [];
     allElements.forEach(element => {
-      if (is(element, 'bpmn:Process') || is(element, 'bpmn:Participant') || is(element, 'bpmn:Task') || is(element, 'bpmn:StartEvent') || (is(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway')) {
+      if (!isLabel(element) && (is(element, 'bpmn:Process') || is(element, 'bpmn:Participant') || is(element, 'bpmn:Task') || is(element, 'bpmn:StartEvent') || (is(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
         const data = getSimulationData(element);
         if (data && Object.keys(data).length > 0) {
           elementsWithData.push({
@@ -807,7 +1195,7 @@ export default class SimulationController {
 
     if (metric === 'resourceQuantity') {
         this._elementRegistry.forEach(element => {
-            if (is(element, 'bpmn:Task')) {
+            if (is(element, 'bpmn:Task') && !isLabel(element)) {
                 const data = getSimulationData(element);
                 const value = (data && data.resources && data.resources.quantityRequired) || 0;
                 tasks.push({ name: element.businessObject.name || element.id, value: value });
@@ -816,7 +1204,7 @@ export default class SimulationController {
     } else {
         this.simulationResults.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
-            if (element && is(element, 'bpmn:Task')) {
+            if (element && is(element, 'bpmn:Task') && !isLabel(element)) {
                 tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
@@ -1167,7 +1555,9 @@ SimulationController.$inject = [
   'overlays',
   'tokenSimulationPalette',
   'notifications',
-  'chartPanel'
+  'chartPanel',
+  'dataTablePanel',
+  'matrixLoader'
 ];
 
 // Jules verification comment 2

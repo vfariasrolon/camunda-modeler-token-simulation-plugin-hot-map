@@ -1,5 +1,19 @@
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 
+/**
+ * Indica si un elemento del registro es una ETIQUETA (un texto).
+ *
+ * En bpmn-js cada texto es un elemento propio del registro y COMPARTE el
+ * businessObject de su figura. Como `is()` mira el businessObject y no el tipo
+ * del elemento, comprobaciones como is(etiquetaDeTarea, 'bpmn:Task') devuelven
+ * true. Sin descartarlas, cualquier filtro por tipo incluye los textos: aparecen
+ * manchas sobre ellos, filas duplicadas en tablas y etiquetas de datos de mas.
+ *
+ * Usar SIEMPRE antes de comprobar el tipo de un elemento del registro.
+ */
+export const isLabel = (element) =>
+  Boolean(element && (element.labelTarget || element.type === 'label'));
+
 export const getExtensionProperty = (element, name) => {
   if (!element || !element.businessObject) return null;
   const bo = element.businessObject;
@@ -23,6 +37,44 @@ export const getSimulationData = (element) => {
     console.error(`Error parsing simulationData for element ${element.id}`, e);
     return null;
   }
+};
+
+/**
+ * Escribe simulationData en un elemento, creando la jerarquia de extension
+ * elements si no existe:
+ *   bpmn:ExtensionElements > camunda:Properties > camunda:Property(name=simulationData)
+ *
+ * El valor se guarda como string JSON, que es el formato que leen
+ * getSimulationData() y el motor de simulacion.
+ *
+ * @param {Object} element            elemento de bpmn-js
+ * @param {Object} data               objeto de datos de simulacion
+ * @param {Object} services           { modeling, bpmnFactory }
+ */
+export const setSimulationData = (element, data, services) => {
+  const { modeling, bpmnFactory } = services;
+  const businessObject = element.businessObject;
+
+  let extensionElements = businessObject.get('extensionElements');
+  if (!extensionElements) {
+    extensionElements = bpmnFactory.create('bpmn:ExtensionElements', { values: [] });
+  }
+
+  let properties = extensionElements.get('values').find(v => v.$type === 'camunda:Properties');
+  if (!properties) {
+    properties = bpmnFactory.create('camunda:Properties', { values: [] });
+    extensionElements.get('values').push(properties);
+  }
+
+  let simProperty = properties.get('values').find(p => p.name === 'simulationData');
+  if (!simProperty) {
+    simProperty = bpmnFactory.create('camunda:Property', { name: 'simulationData' });
+    properties.get('values').push(simProperty);
+  }
+
+  simProperty.value = JSON.stringify(data, null, 2);
+
+  modeling.updateProperties(element, { extensionElements });
 };
 
 export const formatMilliseconds = (ms) => {

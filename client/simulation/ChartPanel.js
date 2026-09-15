@@ -8,9 +8,15 @@ const PALETTE_CLS = 'simulation-chart-panel';
 const PALETTE_OPEN_CLS = 'open';
 const HELP_OPEN_CLS = 'help-open';
 
-const HelpIcon = '<path d="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zm1,15h-2v-2h2v2zm0,-4h-2V7h2v6z"/>';
-const ClockIcon = '<path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm4.2 14.2L11 13V7h1.5v5.2l4.5 2.7-.8 1.3z" style="fill: #1565c0;" />';
-const DollarIcon = '<path d="M11.8,10.9c-2.27-.59-3-1.2-3-2.15c0-1.09,1.01-1.85,2.7-1.85c1.78,0,2.44,0.85,2.5,2.1h-2.21c-0.07-0.55-0.47-0.9-1.09-0.9c-0.64,0-1.02,0.45-1.02,1c0,0.68,0.52,1,2.5,1.5c2.9,0.75,3.5,1.55,3.5,2.5c0,1.23-1.05,2.2-2.9,2.2c-1.95,0-2.86-0.93-2.96-2.14h2.21c0.07,0.59,0.57,1.04,1.29,1.04c0.75,0,1.22-0.45,1.22-1.14c0-0.74-0.63-1.15-2.5-1.63Z" />';
+// Iconos de la cabecera del panel. Material Symbols (Apache 2.0), SVG inline.
+// Todos usan fill="currentColor" para heredar el color del boton y funcionar en
+// cualquier tema. No usar estilos inline de color: rompen la homogeneidad.
+const SummaryIcon = '<path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>';
+const CompareIcon = '<path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>';
+const HelpIcon = '<path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/>';
+const CloseIcon = '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>';
+
+const icon = (path) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">${path}</svg>`;
 
 
 export default class ChartPanel {
@@ -43,10 +49,10 @@ export default class ChartPanel {
             <option value="allWaitTimes">Tiempos de Espera por Tarea (Completo)</option>
           </select>
           <div class="header-buttons">
-            <button class="summary-button" title="Ver Resumen General"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${ClockIcon}</svg></button>
-            <button class="comparison-button" title="Ver Comparativo de Planes"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${DollarIcon}</svg></button>
-            <button class="help-button" title="Ayuda"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${HelpIcon}</svg></button>
-            <button class="close" title="Cerrar">×</button>
+            <button class="summary-button" title="Ver Resumen General" data-tip="Resumen General — métricas totales de la simulación">${icon(SummaryIcon)}</button>
+            <button class="comparison-button" title="Ver Comparativo de Planes" data-tip="Comparativo de Planes — Plan Normal vs. Horas Extras">${icon(CompareIcon)}</button>
+            <button class="help-button" title="Ayuda" data-tip="Ayuda sobre gráficos y tablas">${icon(HelpIcon)}</button>
+            <button class="close" title="Cerrar" data-tip="Cerrar el panel" data-tip-pos="left">${icon(CloseIcon)}</button>
           </div>
         </div>
         <div class="content">
@@ -61,7 +67,7 @@ export default class ChartPanel {
             <div class="generic-modal">
                 <div class="generic-modal-header">
                     <h3 id="generic-modal-title"></h3>
-                    <button class="close-modal" title="Cerrar">×</button>
+                    <button class="close-modal" title="Cerrar" data-tip="Cerrar" data-tip-pos="left">${icon(CloseIcon)}</button>
                 </div>
                 <div class="generic-modal-content"></div>
             </div>

@@ -43,6 +43,10 @@
   background: #eee;
 }
 
+.simulation-palette .bts-entry.active {
+  background: #e3f0ff;
+}
+
 .simulation-palette .bts-entry svg {
   width: 20px;
   height: 20px;
@@ -55,6 +59,153 @@
   border-left: none;
   border-right: none;
   padding: 0;
+}
+
+/* Tooltip para cualquier elemento con atributo data-tip.
+   Cubre las dos paletas y tambien la cabecera del panel de graficos:
+     - .bts-palette          (barra principal del token-simulation)
+     - .simulation-palette   (paleta de analisis)
+     - .simulation-chart-panel .header-buttons  (panel de graficos)
+   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms
+   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.
+   El title se conserva para accesibilidad (lectores de pantalla). */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  padding: 6px 9px;
+  border-radius: 5px;
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .09s ease, visibility .09s;
+  pointer-events: none;
+  z-index: 50;
+}
+
+[data-tip]::before {
+  content: "";
+  position: absolute;
+  left: calc(100% + 5px);
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-right-color: #2b2b2b;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .09s ease, visibility .09s;
+  pointer-events: none;
+  z-index: 51;
+}
+
+[data-tip]:hover::after,
+[data-tip]:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar
+   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse
+   de la ventana. */
+[data-tip][data-tip-pos="left"]::after {
+  left: auto;
+  right: calc(100% + 10px);
+}
+
+[data-tip][data-tip-pos="left"]::before {
+  left: auto;
+  right: calc(100% + 5px);
+  border-right-color: transparent;
+  border-left-color: #2b2b2b;
+}
+
+/* Panel de ayuda de la paleta (botón ?) */
+.simulation-palette .palette-help-panel {
+  display: none;
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 0;
+  width: 460px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);
+  padding: 12px 16px 16px;
+  z-index: 60;
+}
+
+.simulation-palette .palette-help-panel.palette-help-open {
+  display: block;
+}
+
+.simulation-palette .palette-help-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 6px;
+}
+
+.simulation-palette .palette-help-section {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: #888;
+  margin: 16px 0 6px;
+}
+
+.simulation-palette .palette-help-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.simulation-palette .palette-help-table td {
+  padding: 6px 6px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+
+.simulation-palette .palette-help-table tr:last-child td {
+  border-bottom: none;
+}
+
+.simulation-palette .palette-help-table td.ic {
+  width: 30px;
+  text-align: center;
+}
+
+.simulation-palette .palette-help-table td.ic svg {
+  width: 19px;
+  height: 19px;
+  display: block;
+  margin: 0 auto;
+}
+
+.simulation-palette .palette-help-table td.nm {
+  width: 150px;
+  font-weight: 600;
+  color: #333;
+}
+
+.simulation-palette .palette-help-table td.ds {
+  color: #555;
+  line-height: 1.45;
 }
 
 
@@ -84,75 +235,200 @@
     opacity: 0.7;
 }
 
-/* Chart Panel */
+/* Chart Panel (panel de graficos) */
 .simulation-chart-panel {
   position: absolute;
   bottom: 20px;
   right: 20px;
+  /* Ocupa casi todo el ancho disponible sin desbordar en pantallas pequenas. */
+  width: min(1500px, calc(100vw - 60px));
+  max-height: calc(100vh - 60px);
+  display: none;
+  flex-direction: column;
   background: #fff;
   border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 10px;
-  display: none;
+  border-radius: 8px;
+  padding: 14px 18px 18px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
   z-index: 100;
-  width: 1000px;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.2);
 }
 
 .simulation-chart-panel.open {
-  display: block;
+  display: flex;
 }
 
 .simulation-chart-panel .header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 12px;
   border-bottom: 1px solid #eee;
-  padding-bottom: 5px;
-  margin-bottom: 10px;
-  font-weight: bold;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
 }
 
-.simulation-chart-panel .header .close,
-.simulation-chart-panel .header .help-button,
-.simulation-chart-panel .header .schedule-button {
+.simulation-chart-panel .header .chart-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 520px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: #212121;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.simulation-chart-panel .header .chart-select:focus {
+  outline: 2px solid #90caf9;
+  outline-offset: -1px;
+}
+
+.simulation-chart-panel .header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* Los CUATRO botones de la cabecera comparten tamano y estado.
+   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo
+   que los SVG de summary-button y comparison-button quedaban sin width/height y
+   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo
+   la cabecera. */
+.simulation-chart-panel .header-buttons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 0;
+  padding: 0;
   background: none;
   border: none;
+  border-radius: 4px;
+  color: #444;
   cursor: pointer;
-  padding: 0 5px;
 }
 
-.simulation-chart-panel .header .help-button svg,
-.simulation-chart-panel .header .schedule-button svg {
-    width: 18px;
-    height: 18px;
+.simulation-chart-panel .header-buttons button:hover {
+  background: #eee;
+  color: #111;
 }
 
-.simulation-chart-panel .header .close {
-  font-size: 20px;
+.simulation-chart-panel .header-buttons button svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  fill: currentColor;
+}
+
+.simulation-chart-panel .header-buttons button.close:hover {
+  background: #fdecea;
+  color: #c62828;
 }
 
 .simulation-chart-panel .help-content {
-    padding: 10px;
-    border-top: 1px solid #eee;
+  padding: 12px 2px;
+  border-top: 1px solid #eee;
+  overflow-y: auto;
 }
 
 .simulation-chart-panel .help-content.hidden,
 .simulation-chart-panel .content.hidden,
 .simulation-chart-panel .html-content.hidden {
-    display: none;
+  display: none;
 }
 
 /* Styles for HTML Table Views */
 .simulation-chart-panel .content {
-    max-height: 60vh; /* Limit height to 60% of viewport height */
-    overflow-y: auto; /* Add vertical scroll if content overflows */
+  flex: 1;
+  min-height: 0;
+  max-height: 72vh;
+  overflow-y: auto;
 }
 
 .simulation-chart-panel .html-content {
-    width: 100%;
-    height: 100%;
-    overflow: auto; /* Scrollbars for the table container itself */
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+/* Modal generico (Resumen General / Comparativo de Planes).
+   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo
+   definido, asi que el modal se renderizaba como contenido en linea dentro del
+   panel en lugar de aparecer centrado sobre la interfaz. */
+.generic-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  z-index: 1003;
+}
+
+.generic-modal-overlay.hidden {
+  display: none;
+}
+
+.generic-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1200px, 100%);
+  max-height: 100%;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);
+  overflow: hidden;
+}
+
+.generic-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid #eee;
+  background: #fafafa;
+}
+
+.generic-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #212121;
+}
+
+.generic-modal-header .close-modal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #444;
+  cursor: pointer;
+}
+
+.generic-modal-header .close-modal:hover {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.generic-modal-header .close-modal svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  fill: currentColor;
+}
+
+.generic-modal-content {
+  padding: 20px;
+  overflow-y: auto;
 }
 
 .sim-results-table {

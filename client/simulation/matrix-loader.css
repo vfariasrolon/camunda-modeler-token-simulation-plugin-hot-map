@@ -1,0 +1,94 @@
+/* Aviso de carga estilo "matrix": caja mediana centrada con lluvia de caracteres
+   verdes y un unico mensaje.
+
+   IMPORTANTE: la animacion usa `transform`, no `top`/`left`. Las animaciones de
+   transform y opacity las ejecuta el hilo de composicion del navegador, asi que
+   siguen corriendo aunque el hilo principal este bloqueado por la simulacion.
+   Con `top` la lluvia se congelaria durante toda la ejecucion.
+
+   La capa exterior NO pinta fondo: no cubre la pantalla. Solo se ve la caja. */
+
+.sim-matrix-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000; /* por encima de todos los paneles del plugin */
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  /* Sin pointer-events: si el cierre fallase alguna vez, este aviso no podria
+     dejar al usuario sin poder pulsar nada. */
+  pointer-events: none;
+}
+
+.sim-matrix-overlay.open {
+  display: flex;
+}
+
+/* --- caja --- */
+.sim-matrix-overlay .caja {
+  position: relative;
+  width: 460px;
+  height: 260px;
+  overflow: hidden; /* recorta la lluvia al rectangulo de la caja */
+  border-radius: 8px;
+  background: #000;
+  border: 1px solid rgba(0, 255, 102, 0.45);
+  box-shadow:
+    0 0 22px rgba(0, 255, 102, 0.18),
+    0 18px 50px rgba(0, 0, 0, 0.55);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* --- lluvia --- */
+.sim-matrix-overlay .rain {
+  position: absolute;
+  inset: 0;
+}
+
+.sim-matrix-overlay .col {
+  position: absolute;
+  top: 0;
+  white-space: pre;
+  font-size: 13px;
+  line-height: 1.05;
+  color: #00ff66;
+  text-shadow: 0 0 6px rgba(0, 255, 102, 0.55);
+  will-change: transform;
+  animation-name: sim-matrix-caida;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* De -100% a 100% del propio alto de la columna, que se fija igual al alto de
+   la caja: asi el recorrido no depende de la ventana. */
+@keyframes sim-matrix-caida {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(100%); }
+}
+
+/* --- mensaje unico --- */
+.sim-matrix-overlay .mensaje {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  letter-spacing: 2px;
+  color: #b6ffce;
+  text-shadow: 0 0 10px #00ff66, 0 0 24px rgba(0, 255, 102, 0.45);
+  /* Velo radial para que el texto se lea sobre la lluvia. */
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0, 0, 0, 0.9) 0%,
+    rgba(0, 0, 0, 0.6) 55%,
+    rgba(0, 0, 0, 0) 85%
+  );
+  animation: sim-matrix-parpadeo 1.7s ease-in-out infinite;
+}
+
+@keyframes sim-matrix-parpadeo {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
