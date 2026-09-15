@@ -265,6 +265,13 @@
   border-color: #1565c0;
 }
 
+/* Campos compactos de la distribucion triangular (min / moda / max). */
+.sim-data-table-panel .cell.mini {
+  min-width: 56px;
+  padding: 5px 4px;
+  text-align: center;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;

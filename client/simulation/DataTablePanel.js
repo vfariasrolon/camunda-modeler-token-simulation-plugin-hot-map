@@ -341,8 +341,12 @@ export default class DataTablePanel {
         <thead>
           <tr>
             <th class="col-name">Tarea</th>
-            <th>Tiempo de proceso</th>
+            <th>Distribución</th>
+            <th>Tiempo</th>
             <th>Unidad</th>
+            <th>mín</th>
+            <th>moda</th>
+            <th>máx</th>
             <th>Tasa de fallo</th>
             <th>Retrabajo</th>
             <th>Unidad</th>
@@ -353,11 +357,25 @@ export default class DataTablePanel {
             const d = this._taskData(el);
             const units = (selected) => TASK_UNITS
               .map((u) => `<option value="${u}" ${selected === u ? 'selected' : ''}>${u}</option>`).join('');
+            const dist = d.processingTime.distribution || 'fixed';
+            const tri = dist === 'triangular';
+            // Los campos de min/moda/max solo se leen cuando la distribucion es
+            // triangular; con "fija" se ignora lo que haya en ellos.
+            const p = (campo, valor, marcador) =>
+              `<input type="number" step="any" min="0" class="cell mini" `
+              + `data-field="${campo}" value="${valor == null ? '' : valor}" placeholder="${marcador}">`;
             return `
               <tr data-el-id="${el.id}">
                 <td class="col-name" title="${esc(this._label(el))}">${esc(this._label(el))}</td>
+                <td><select class="cell" data-field="processingTime.distribution">
+                  <option value="fixed" ${!tri ? 'selected' : ''}>fija</option>
+                  <option value="triangular" ${tri ? 'selected' : ''}>triangular</option>
+                </select></td>
                 <td><input type="number" step="any" min="0" class="cell" data-field="processingTime.value" value="${d.processingTime.value}"></td>
                 <td><select class="cell" data-field="processingTime.unit">${units(d.processingTime.unit)}</select></td>
+                <td>${p('processingTime.min', d.processingTime.min, 'mín')}</td>
+                <td>${p('processingTime.mode', d.processingTime.mode, 'moda')}</td>
+                <td>${p('processingTime.max', d.processingTime.max, 'máx')}</td>
                 <td><input type="number" step="0.01" min="0" max="1" class="cell" data-field="failureRate" value="${d.failureRate}"></td>
                 <td><input type="number" step="any" min="0" class="cell" data-field="reworkTime.value" value="${d.reworkTime.value}"></td>
                 <td><select class="cell" data-field="reworkTime.unit">${units(d.reworkTime.unit)}</select></td>
@@ -365,7 +383,12 @@ export default class DataTablePanel {
           }).join('')}
         </tbody>
       </table>
-      <p class="hint">Unidades de tarea en <strong>plural</strong> (<code>minutes</code>/<code>hours</code>/<code>seconds</code>). El motor no reconoce otra forma y la interpretaría como milisegundos.</p>
+      <p class="hint">
+        El tiempo se interpreta de una forma u otra según la <strong>distribución</strong>:
+        con <em>fija</em> se usa el valor de «Tiempo»; con <em>triangular</em> se usan
+        <strong>mín</strong>, <strong>moda</strong> y <strong>máx</strong>, y el valor de «Tiempo» se ignora.
+        Con la distribución fija la simulación es determinista.
+      </p>
     `;
   }
 
@@ -511,23 +534,59 @@ export default class DataTablePanel {
       this._body.querySelectorAll('tbody tr').forEach((tr) => {
         const el = this._elementRegistry.get(tr.dataset.elId);
         if (!el) return;
-        const val = (f) => tr.querySelector(`[data-field="${f}"]`).value;
+
         const name = this._label(el);
+        const val = (f) => {
+          const input = tr.querySelector(`[data-field="${f}"]`);
+          return input ? input.value : '';
+        };
+        const num = (f, etiqueta) => this._num(val(f), `${name} · ${etiqueta}`);
 
-        const processing = this._num(val('processingTime.value'), `${name} · tiempo de proceso`, tr);
-        const rework = this._num(val('reworkTime.value'), `${name} · retrabajo`, tr);
-        const failure = this._num(val('failureRate'), `${name} · tasa de fallo`, tr);
+        const distribucion = val('processingTime.distribution') || 'fixed';
+        const unit = val('processingTime.unit');
+        const unitRetrabajo = val('reworkTime.unit');
 
-        if (processing < 0 || rework < 0) throw new Error(`${name}: los tiempos no pueden ser negativos`);
-        if (failure < 0 || failure > 1) throw new Error(`${name}: la tasa de fallo debe estar entre 0 y 1`);
+        const failure = num('failureRate', 'tasa de fallo');
+        if (failure < 0 || failure > 1) {
+          throw new Error(`${name}: la tasa de fallo debe estar entre 0 y 1`);
+        }
+
+        // El tiempo de proceso se lee SEGUN la distribucion elegida: con
+        // triangular mandan min/moda/max y el campo "Tiempo" no se lee en
+        // absoluto. Leer los dos seria peor que no leer ninguno: se guardaria
+        // un valor que el motor va a ignorar.
+        let processingTime;
+        if (distribucion === 'triangular') {
+          const min = num('processingTime.min', 'mínimo');
+          const mode = num('processingTime.mode', 'moda');
+          const max = num('processingTime.max', 'máximo');
+
+          if (!(min <= mode && mode <= max)) {
+            throw new Error(
+              `${name}: en la distribución triangular debe cumplirse mínimo ≤ moda ≤ máximo `
+              + `(has puesto ${min}, ${mode}, ${max})`
+            );
+          }
+          processingTime = { distribution: 'triangular', min, mode, max, unit };
+        } else {
+          const value = num('processingTime.value', 'tiempo de proceso');
+          if (value < 0) throw new Error(`${name}: el tiempo de proceso no puede ser negativo`);
+          processingTime = { distribution: 'fixed', value, unit };
+        }
+
+        const reworkValue = num('reworkTime.value', 'retrabajo');
+        if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
 
         const current = this._taskData(el);
         writes.push({
           element: el,
           data: {
             ...current,
-            processingTime: { ...current.processingTime, value: processing, unit: val('processingTime.unit') },
-            reworkTime: { ...current.reworkTime, value: rework, unit: val('reworkTime.unit') },
+            processingTime,
+            // Se conserva la distribucion del retrabajo que hubiera: la tabla
+            // todavia no la edita, y forzarla a "fixed" destruiria un triangular
+            // configurado. Mismo error que tenia el modal del lapiz.
+            reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
             failureRate: failure
           }
         });
@@ -632,6 +691,11 @@ export default class DataTablePanel {
           if (el) el.value = valor;
         };
 
+        // La distribucion se fija a "fixed" para que el valor generado sea el
+        // que se use: si quedara "triangular", el motor ignoraria el tiempo y
+        // tomaria min/moda/max, y el usuario veria resultados que no cuadran con
+        // lo que relleno el boton.
+        poner('processingTime.distribution', 'fixed');
         poner('processingTime.value', this._azar(5, 45));
         poner('processingTime.unit', 'minutes');
         poner('failureRate', (0.01 + Math.random() * 0.29).toFixed(2));
