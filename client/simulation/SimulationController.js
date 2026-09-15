@@ -7,6 +7,7 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
+import { describeLabor } from './LaborRules.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -331,6 +332,21 @@ export default class SimulationController {
         // y no debe cambiar si despues el usuario edita el diagrama.
         config: this._configSnapshot(),
 
+        // Reglas laborales RESUELTAS y cumplimiento (A2). Van aqui, y no dentro
+        // de `config`, porque no son lo que el usuario escribio: son lo que el
+        // motor APLICO tras resolver la vigencia por fecha. El informe tiene que
+        // imprimir lo aplicado, que es lo que permite auditar la corrida.
+        labor: this._simulationEngine.labor ? JSON.parse(JSON.stringify(this._simulationEngine.labor)) : null,
+        laborDescripcion: this._simulationEngine.labor
+            ? describeLabor(this._simulationEngine.labor)
+            : null,
+        compliance: this._simulationEngine.compliance
+            ? JSON.parse(JSON.stringify(this._simulationEngine.compliance))
+            : null,
+        dayPremiums: this._simulationEngine.premiumStats
+            ? JSON.parse(JSON.stringify(this._simulationEngine.premiumStats))
+            : null,
+
         // Piscinas declaradas en el proceso, tal como las leyo el motor.
         resourcePools: Array.from(this._simulationEngine.resourcePools.values())
             .map((p) => ({ name: p.name, quantity: p.quantity }))
@@ -347,6 +363,7 @@ export default class SimulationController {
       calendar: copia(c.calendar),
       cost: copia(c.cost),
       overtime: copia(c.overtime),
+      labor: copia(c.labor),
       simulationConfig: copia(c.simulationConfig),
       startDate: c.startDate || ''
     };

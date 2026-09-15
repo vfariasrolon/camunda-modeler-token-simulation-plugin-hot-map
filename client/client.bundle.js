@@ -472,6 +472,18 @@ class BusinessCalendar {
     // precalcular, se precalcula aqui una sola vez.
     this._dias = new Set(this.config.workingDays || []);
     this._festivos = new Set(this.config.holidays || []);
+    // Un festivo se cierra SOLO si el dia de la semana no esta declarado
+    // laborable. Si lo esta, la planta esta abierta ese dia y se TRABAJA, asi
+    // que no puede ser a la vez laborable y no laborable: el calendario se
+    // contradecia consigo mismo (la lista de dias decia «abierto» y la de
+    // festivos «cerrado»), y la corrida se saltaba el dia en silencio, con lo
+    // que la prima de festivo del art. 74 nunca se podia pagar.
+    this._festivosCerrados = new Set(
+      Array.from(this._festivos).filter((clave) => {
+        const [ a, m, d ] = clave.split('-').map(Number);
+        return !this._dias.has(new Date(a, m - 1, d).getDay());
+      })
+    );
     this._jornada = {
       inicio: aMinutos(this.config.workingHours && this.config.workingHours.start),
       fin: aMinutos(this.config.workingHours && this.config.workingHours.end)
@@ -494,10 +506,25 @@ class BusinessCalendar {
       .filter((b) => Number.isFinite(b.inicio) && Number.isFinite(b.fin) && b.fin > b.inicio);
   }
 
-  /** ¿El dia de esa fecha es laborable (dia de la semana y no festivo)? */
+  /**
+   * ¿El dia de esa fecha es laborable?
+   *
+   * Un festivo cierra el dia SOLO si ese dia de la semana no esta declarado
+   * laborable (ver `_festivosCerrados`). Es la unica lectura coherente de las dos
+   * listas: si el dia de la semana esta en `workingDays`, la planta esta abierta.
+   */
   _esDiaLaborable(date) {
     if (!this._dias.has(date.getDay())) return false;
-    return !this._festivos.has(claveDeDia(date));
+    return !this._festivosCerrados.has(claveDeDia(date));
+  }
+
+  /**
+   * ¿Esa fecha es festivo declarado? Publico porque las primas de dia festivo
+   * (LFT art. 74) se pagan por la fecha, no por horario, y quien las calcula es
+   * el motor, no el calendario.
+   */
+  esDiaFestivo(date) {
+    return this._festivos.has(claveDeDia(date));
   }
 
   /**
@@ -3598,6 +3625,182 @@ DataTablePanel.$inject = [
 
 /***/ }),
 
+/***/ "./client/simulation/LaborRules.js":
+/*!*****************************************!*\
+  !*** ./client/simulation/LaborRules.js ***!
+  \*****************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   HORAS_BASE_POR_TURNO: () => (/* binding */ HORAS_BASE_POR_TURNO),
+/* harmony export */   LABOR_DEFAULTS: () => (/* binding */ LABOR_DEFAULTS),
+/* harmony export */   LIMITE_DIARIO_HORAS: () => (/* binding */ LIMITE_DIARIO_HORAS),
+/* harmony export */   MAX_DIAS_CON_EXTRA_POR_SEMANA: () => (/* binding */ MAX_DIAS_CON_EXTRA_POR_SEMANA),
+/* harmony export */   PRIMA_DOMINICAL_PCT: () => (/* binding */ PRIMA_DOMINICAL_PCT),
+/* harmony export */   PRIMA_FESTIVO_PCT: () => (/* binding */ PRIMA_FESTIVO_PCT),
+/* harmony export */   TURNOS: () => (/* binding */ TURNOS),
+/* harmony export */   describeLabor: () => (/* binding */ describeLabor),
+/* harmony export */   esFechaValida: () => (/* binding */ esFechaValida),
+/* harmony export */   normalizeLabor: () => (/* binding */ normalizeLabor),
+/* harmony export */   resolveLabor: () => (/* binding */ resolveLabor)
+/* harmony export */ });
+/**
+ * Reglas laborales: turno, límites y primas, VERSIONADAS POR FECHA.
+ *
+ * Por qué una tabla y no una casilla: la ley cambia, y una casilla reescribe el
+ * pasado. Si el límite semanal de horas extra se guarda como un número suelto y
+ * mañana el legislador lo baja de 9 a 8, todos los informes ya emitidos pasan a
+ * estar mal (se recalcularían con la ley nueva) y dejan de ser auditables. Con
+ * una fila por vigencia, cada corrida guarda QUÉ versión usó y un informe de hoy
+ * sigue cuadrando dentro de tres años.
+ *
+ * Alcance, explícito: esto es una tabla de TASAS Y UMBRALES para costear el
+ * proceso, no una nómina. No se calculan IMSS, ISR, aguinaldo, prima vacacional
+ * ni finiquitos.
+ */
+
+// LFT art. 61: la jornada diurna es de 8 h, la nocturna de 7 y la mixta de 7,5.
+// Es la LÍNEA BASE de la extra: lo que pase de aquí en el día ya es tiempo extra,
+// aunque el horario declarado sea más largo.
+const TURNOS = [ 'diurna', 'nocturna', 'mixta' ];
+
+const HORAS_BASE_POR_TURNO = { diurna: 8, nocturna: 7, mixta: 7.5 };
+
+// LFT art. 65: la jornada puede prolongarse hasta 3 h al día y como máximo 3
+// veces por semana. Es un TOPE DE LEGALIDAD: no cambia lo que se paga (eso lo
+// fijan los arts. 66 y 68), cambia lo que se puede decir de la corrida.
+const LIMITE_DIARIO_HORAS = 3;
+const MAX_DIAS_CON_EXTRA_POR_SEMANA = 3;
+
+// LFT art. 73: prima dominical del 25 % sobre el salario de los días ordinarios.
+const PRIMA_DOMINICAL_PCT = 25;
+
+// LFT art. 74: los días de descanso obligatorio se pagan con prima. Cuánto
+// depende del contrato y de si el festivo cae en domingo, así que el default es
+// 0 y quien lo sepa lo declara: inventar un número sería peor que no tenerlo.
+const PRIMA_FESTIVO_PCT = 0;
+
+const LABOR_DEFAULTS = () => ({
+  shiftType: 'diurna',
+  dailyOvertimeLimitHours: LIMITE_DIARIO_HORAS,
+  maxOvertimeDaysPerWeek: MAX_DIAS_CON_EXTRA_POR_SEMANA,
+  sundayPremiumPercent: PRIMA_DOMINICAL_PCT,
+  holidayPremiumPercent: PRIMA_FESTIVO_PCT,
+  // Una fila por vigencia: [{ desde: '2026-01-01', ...lo que cambie }]
+  rules: []
+});
+
+const num = (v, alt) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : alt;
+};
+
+/** Una fecha de vigencia válida es `YYYY-MM-DD`; cualquier otra cosa se ignora. */
+const esFechaValida = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v == null ? '' : v).trim());
+
+/**
+ * Normaliza la configuración laboral. Todo es tolerante: lo que no venga se
+ * queda en el valor por defecto, que ya es la ley.
+ */
+const normalizeLabor = (cfg) => {
+  const d = LABOR_DEFAULTS();
+  const c = cfg && typeof cfg === 'object' ? cfg : {};
+
+  const turno = TURNOS.includes(c.shiftType) ? c.shiftType : d.shiftType;
+
+  const reglas = (Array.isArray(c.rules) ? c.rules : [])
+    .filter((r) => r && esFechaValida(r.desde))
+    .map((r) => {
+      const limpia = { desde: String(r.desde).trim() };
+      if (TURNOS.includes(r.shiftType)) limpia.shiftType = r.shiftType;
+      const campos = [
+        'limitHours', 'payMultiplier', 'excessPayMultiplier',
+        'dailyOvertimeLimitHours', 'maxOvertimeDaysPerWeek',
+        'sundayPremiumPercent', 'holidayPremiumPercent'
+      ];
+      campos.forEach((k) => {
+        const v = Number(r[k]);
+        if (Number.isFinite(v)) limpia[k] = v;
+      });
+      return limpia;
+    })
+    // Orden ascendente por vigencia: la resolución aplica de mayor a menor, así
+    // que el orden de las filas en el CSV no puede cambiar el resultado.
+    .sort((a, b) => (a.desde < b.desde ? -1 : a.desde > b.desde ? 1 : 0));
+
+  return {
+    shiftType: turno,
+    dailyOvertimeLimitHours: num(c.dailyOvertimeLimitHours, d.dailyOvertimeLimitHours),
+    maxOvertimeDaysPerWeek: num(c.maxOvertimeDaysPerWeek, d.maxOvertimeDaysPerWeek),
+    sundayPremiumPercent: num(c.sundayPremiumPercent, d.sundayPremiumPercent),
+    holidayPremiumPercent: num(c.holidayPremiumPercent, d.holidayPremiumPercent),
+    rules: reglas
+  };
+};
+
+/**
+ * Reglas que rigen en una fecha concreta.
+ *
+ * Se parte de los valores de siempre (`overtime.limitHours`, `payMultiplier`,
+ * `excessPayMultiplier`), que son los que ya usaban los diagramas existentes, y
+ * encima se aplican las filas con `desde <= fecha` en orden ascendente: la
+ * última que rija manda. Sin filas, el resultado es exactamente el de antes.
+ *
+ * @param {Object} laborCfg   configuración `labor` (o nada)
+ * @param {Object} overtimeCfg configuración `overtime` del diagrama
+ * @param {string} fechaISO   fecha de arranque de la corrida (`YYYY-MM-DD`)
+ */
+const resolveLabor = (laborCfg, overtimeCfg, fechaISO) => {
+  const labor = normalizeLabor(laborCfg);
+  const ot = overtimeCfg && typeof overtimeCfg === 'object' ? overtimeCfg : {};
+
+  const resuelto = {
+    shiftType: labor.shiftType,
+    limitHours: num(ot.limitHours, 0),
+    payMultiplier: num(ot.payMultiplier, 1),
+    excessPayMultiplier: num(ot.excessPayMultiplier, 1),
+    dailyOvertimeLimitHours: labor.dailyOvertimeLimitHours,
+    maxOvertimeDaysPerWeek: labor.maxOvertimeDaysPerWeek,
+    sundayPremiumPercent: labor.sundayPremiumPercent,
+    holidayPremiumPercent: labor.holidayPremiumPercent
+  };
+
+  // La versión es la vigencia que manda, para poder imprimirla y compararla. Si
+  // la corrida arranca ANTES de la primera fila, manda el valor de siempre y se
+  // dice así, en vez de fingir que hay una versión aplicada.
+  let version = null;
+  if (esFechaValida(fechaISO)) {
+    labor.rules.forEach((r) => {
+      if (r.desde > fechaISO) return;
+      version = r.desde;
+      Object.keys(r).forEach((k) => {
+        if (k !== 'desde') resuelto[k] = r[k];
+      });
+    });
+  }
+
+  resuelto.version = version;
+  resuelto.baseDailyHours = HORAS_BASE_POR_TURNO[resuelto.shiftType] || HORAS_BASE_POR_TURNO.diurna;
+  resuelto.vigentes = labor.rules.filter((r) => version && r.desde <= version).length;
+  return resuelto;
+};
+
+/** Redacción del juego de reglas resuelto, para el informe. */
+const describeLabor = (r) => {
+  if (!r) return 'sin reglas laborales declaradas';
+  const h = (v) => `${Number(v).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')} h`;
+  return `turno ${r.shiftType} (base ${h(r.baseDailyHours)}/día) · extra hasta ${h(r.limitHours)}/semana al `
+    + `${r.payMultiplier}x y el resto al ${r.excessPayMultiplier}x · tope de ${h(r.dailyOvertimeLimitHours)}/día `
+    + `y ${r.maxOvertimeDaysPerWeek} días/semana · dominical ${r.sundayPremiumPercent} %`
+    + ` · festivo ${r.holidayPremiumPercent} %`
+    + (r.version ? ` · vigencia desde ${r.version}` : ' · valores por defecto (sin vigencia declarada)');
+};
+
+
+/***/ }),
+
 /***/ "./client/simulation/MatrixLoader.js":
 /*!*******************************************!*\
   !*** ./client/simulation/MatrixLoader.js ***!
@@ -4801,12 +5004,14 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationController)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var chart_js_auto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! chart.js/auto */ "./node_modules/.pnpm/chart.js@4.5.0/node_modules/chart.js/auto/auto.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
+/* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
+
 
 
 
@@ -4926,7 +5131,7 @@ const limpiarNombre = (s) => String(s || '')
 // pasarian cualquier comprobacion de tipo.
 const isSimulatedElement = (element) => {
   if ((0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) return false;
-  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, type));
+  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, type));
 };
 
 class SimulationController {
@@ -4962,21 +5167,21 @@ class SimulationController {
     // data-tip alimenta el tooltip CSS (ver simulation.css). Se mantiene tambien
     // el atributo title por accesibilidad: los lectores de pantalla lo anuncian,
     // y sirve como respaldo si el CSS no carga.
-    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
-    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
-    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
-    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
-    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
+    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
+    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
+    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
+    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
+    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
 
-    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(runButton, 'click', () => this.runSimulation());
-    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(runButton, 'click', () => this.runSimulation());
+    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
     // Por evento y no llamando al panel: el modulo del informe se registra
     // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
-    min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
 
-    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_4__.domify)('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
@@ -5007,9 +5212,9 @@ class SimulationController {
     return {
       normal: this.normalReport,
       overtime: this.overtimeReport,
-      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Task')),
+      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task')),
       flujos: this._elementRegistry.filter(
-        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el.source, 'bpmn:ExclusiveGateway')
+        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el.source, 'bpmn:ExclusiveGateway')
       )
     };
   }
@@ -5136,6 +5341,21 @@ class SimulationController {
         // y no debe cambiar si despues el usuario edita el diagrama.
         config: this._configSnapshot(),
 
+        // Reglas laborales RESUELTAS y cumplimiento (A2). Van aqui, y no dentro
+        // de `config`, porque no son lo que el usuario escribio: son lo que el
+        // motor APLICO tras resolver la vigencia por fecha. El informe tiene que
+        // imprimir lo aplicado, que es lo que permite auditar la corrida.
+        labor: this._simulationEngine.labor ? JSON.parse(JSON.stringify(this._simulationEngine.labor)) : null,
+        laborDescripcion: this._simulationEngine.labor
+            ? (0,_LaborRules_js__WEBPACK_IMPORTED_MODULE_3__.describeLabor)(this._simulationEngine.labor)
+            : null,
+        compliance: this._simulationEngine.compliance
+            ? JSON.parse(JSON.stringify(this._simulationEngine.compliance))
+            : null,
+        dayPremiums: this._simulationEngine.premiumStats
+            ? JSON.parse(JSON.stringify(this._simulationEngine.premiumStats))
+            : null,
+
         // Piscinas declaradas en el proceso, tal como las leyo el motor.
         resourcePools: Array.from(this._simulationEngine.resourcePools.values())
             .map((p) => ({ name: p.name, quantity: p.quantity }))
@@ -5152,6 +5372,7 @@ class SimulationController {
       calendar: copia(c.calendar),
       cost: copia(c.cost),
       overtime: copia(c.overtime),
+      labor: copia(c.labor),
       simulationConfig: copia(c.simulationConfig),
       startDate: c.startDate || ''
     };
@@ -5244,7 +5465,7 @@ class SimulationController {
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:FlowNode')) return base;
+    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:FlowNode')) return base;
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
     if (!half || half <= this._radius) return base;
@@ -5539,7 +5760,7 @@ class SimulationController {
 
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
-        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
           const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
           const value = (data && data.resources && data.resources.quantityRequired) || 0;
           if (value > max) max = value;
@@ -5580,7 +5801,7 @@ class SimulationController {
 
   showOverlays(metric) {
     const elements = metric === 'resourceQuantity'
-      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Task'))
+      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task'))
       : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
 
     elements.forEach(element => {
@@ -5593,7 +5814,7 @@ class SimulationController {
             const value = (data && data.resources && data.resources.quantityRequired) || 0;
             if (value > 0) overlayText = `Recursos: ${value}`;
         } else if (result) {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalCost, 'MXN')}`;
                 else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime / (result.executionCount || 1))}`;
                 else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime)}`;
@@ -5606,7 +5827,7 @@ class SimulationController {
                 else if (metric === 'overtime') overlayText = `H. Extras: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalOvertime)}`;
                 else if (metric === 'reworkTime') overlayText = `T. Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalReworkTime)}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalWaitTimeCost, 'MXN')}`;
-            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
@@ -5616,7 +5837,7 @@ class SimulationController {
         // El guard !isLabel es imprescindible: una etiqueta de compuerta pasa
         // is(el, 'bpmn:ExclusiveGateway'), pero NO tiene `outgoing`, asi que
         // element.outgoing.forEach lanzaria TypeError.
-        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
             element.outgoing.forEach(flow => {
                 const flowResult = this.simulationResults.get(flow.id);
                 if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
@@ -6000,7 +6221,7 @@ class SimulationController {
     const allElements = this._elementRegistry.getAll();
     const elementsWithData = [];
     allElements.forEach(element => {
-      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
+      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
         if (data && Object.keys(data).length > 0) {
           elementsWithData.push({
@@ -6240,7 +6461,7 @@ class SimulationController {
     const tareas = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Task')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task')) return;
 
       const operacion = r.totalOperationCost || 0;
       const doble = r.totalDoubleOvertimeCost || 0;
@@ -6263,7 +6484,7 @@ class SimulationController {
     const caminos = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:SequenceFlow')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:SequenceFlow')) return;
       if (!r.executionCount) return;
 
       caminos.push({
@@ -6402,7 +6623,7 @@ class SimulationController {
 
     if (metric === 'resourceQuantity') {
         this._elementRegistry.forEach(element => {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
                 const value = (data && data.resources && data.resources.quantityRequired) || 0;
                 tasks.push({ name: element.businessObject.name || element.id, value: value });
@@ -6411,7 +6632,7 @@ class SimulationController {
     } else {
         this.simulationResults.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
-            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
@@ -6742,14 +6963,14 @@ class SimulationController {
       this._heatmap.destroy();
       this._heatmap = null;
     }
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
     this._overlays.remove({ type: 'simulation-overlay' });
   }
 
   createHeatmap() {
     if (this._heatmap) return;
     this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_4__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   showPlanBreakdown() {
@@ -6945,10 +7166,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationEngine)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./BusinessCalendar.js */ "./client/simulation/BusinessCalendar.js");
 /* harmony import */ var _WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./WarmupCurve.js */ "./client/simulation/WarmupCurve.js");
+/* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
+
 
 
 
@@ -7206,6 +7429,30 @@ class SimulationEngine {
     this.weeklyStats = new Map();
     this.dailyCompletions = new Map();
 
+    // Reglas laborales VERSIONADAS por fecha (§A2). Se resuelven con la fecha de
+    // arranque de la corrida, no con la de hoy: un informe de enero debe seguir
+    // saliendo con la ley de enero aunque se reabra en junio.
+    this.labor = (0,_LaborRules_js__WEBPACK_IMPORTED_MODULE_3__.resolveLabor)(rootConfig.labor, rootConfig.overtime, this._claveDeFecha(simStart));
+
+    // Calendario LEGAL: el mismo horario declarado pero con el dia cortado en la
+    // jornada base del turno (8 h diurna / 7 nocturna / 7,5 mixta). Contra ESTE
+    // se mide la extra, no contra el horario declarado: un horario de 9 h en
+    // turno diurno ya lleva 1 h extra dentro, y con el calendario estandar esa
+    // hora se pagaba a tarifa base. Con un horario de 8 h o menos, este
+    // calendario es identico al estandar y no cambia nada.
+    this.legalCalendar = this._construirCalendarioLegal(rootConfig.calendar);
+
+    // Tiempo extra por DIA y dias con extra por SEMANA: son los dos topes del
+    // art. 65 (max. 3 h al dia y 3 veces por semana). Se cuentan aparte del cupo
+    // semanal de pago porque son cosas distintas: el cupo de 9 h (art. 66) fija
+    // lo que se PAGA, y estos dos fijan lo que se PUEDE decir de la corrida.
+    this.dailyStats = new Map();
+    this.daysWithOvertime = new Map();
+
+    // Primas por dia trabajado: dominical (art. 73) y festivo (art. 74). Se
+    // llevan en su propio cubo para que el cuadre del informe pueda demostrarlas.
+    this.premiumStats = { dominicalMs: 0, festivoMs: 0, imponible: 0 };
+
     // Muestras por caso. Los totales por elemento dan medias, pero una media
     // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
     this.instanceCycleTimes = [];
@@ -7229,9 +7476,69 @@ class SimulationEngine {
         totalOperationCost: 0,
         totalDoubleOvertimeCost: 0,
         totalTripleOvertimeCost: 0,
+        totalDayPremiumCost: 0,
         name: element.businessObject.name || element.id
       });
     });
+  }
+
+  /** Clave de dia LOCAL (`YYYY-MM-DD`). UTC no sirve: desplaza el dia. */
+  _claveDeFecha(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  /**
+   * El calendario contra el que se decide qué es tiempo extra: el horario
+   * declarado con el final del dia recortado a la jornada base del turno.
+   *
+   * Es un recorte, nunca una ampliacion: si la jornada declarada ya es mas corta
+   * que la legal, manda la declarada (nadie hace horas extra por trabajar menos).
+   */
+  _construirCalendarioLegal(calendarConfig) {
+    const cfg = JSON.parse(JSON.stringify(calendarConfig || {}));
+    const base = this.labor.baseDailyHours;
+    const inicio = cfg.workingHours && cfg.workingHours.start;
+    const fin = cfg.workingHours && cfg.workingHours.end;
+    if (!inicio || !fin || !(base > 0)) return new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](cfg);
+
+    const inicioMin = (inicio.hour || 0) * 60 + (inicio.minute || 0);
+    const finDeclaradoMin = (fin.hour || 0) * 60 + (fin.minute || 0);
+    const finLegalMin = inicioMin + Math.round(base * 60);
+
+    if (finDeclaradoMin > finLegalMin) {
+      cfg.workingHours.end = {
+        hour: Math.floor(finLegalMin / 60) % 24,
+        minute: finLegalMin % 60
+      };
+      this.legalDayRecortadoMin = finDeclaradoMin - finLegalMin;
+    } else {
+      this.legalDayRecortadoMin = 0;
+    }
+
+    return new _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__["default"](cfg);
+  }
+
+  /**
+   * Acumula el tiempo extra del DIA en el que ARRANCA la tarea.
+   *
+   * Se imputa al dia de inicio, no se reparte: una tarea que cruza la medianoche
+   * pertenece al dia en que empezo, que es como se lee un turno en planta. La
+   * regla es unica y esta declarada, para que el tope del art. 65 sea
+   * comprobable a mano.
+   */
+  _anotarExtraDelDia(inicioMs, extraMs, trabajadoMs) {
+    const dia = new Date(inicioMs);
+    const clave = this._claveDeFecha(dia);
+    const actual = this.dailyStats.get(clave) || { extraMs: 0, trabajadoMs: 0 };
+    actual.extraMs += Math.max(0, extraMs || 0);
+    actual.trabajadoMs += Math.max(0, trabajadoMs || 0);
+    this.dailyStats.set(clave, actual);
+
+    if (actual.extraMs > 0) {
+      const semana = this.calendar.getWeekKey(dia);
+      if (!this.daysWithOvertime.has(semana)) this.daysWithOvertime.set(semana, new Set());
+      this.daysWithOvertime.get(semana).add(clave);
+    }
   }
 
   findNextElements(element) {
@@ -7239,7 +7546,7 @@ class SimulationEngine {
       return [];
     }
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:ParallelGateway')) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -7248,7 +7555,7 @@ class SimulationEngine {
     }
 
     let chosenFlow = null;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = this._random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
@@ -7325,7 +7632,7 @@ class SimulationEngine {
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(nextElement);
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
 
@@ -7334,7 +7641,7 @@ class SimulationEngine {
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(nextElement, 'bpmn:Task') && data) {
+      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(nextElement, 'bpmn:Task') && data) {
         // Tarea POR LOTE: la ejecuta una sola vez el primer token que llega, y
         // los demas esperan (barrera). Ver _atenderTareaPorLote.
         if (data.frequency === 'lot' && this.lotConfig.enabled) {
@@ -7352,6 +7659,32 @@ class SimulationEngine {
     const { element, time, instanceId, startTime } = taskEvent;
     const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(element);
     const baseRatePerHour = this.rootConfig.cost.baseRatePerHour || 0;
+
+    // El RECURSO se pide ANTES de calcular nada: si no hay unidades libres, la
+    // tarea no empieza y no se puede costear todavia. Costearla aqui seria
+    // costear un trabajo que aun no ha ocurrido, con la hora del INTENTO en vez
+    // de la hora real: una tarea que arranca a las 18:00 (todo extra), espera al
+    // recurso y trabaja el martes a las 09:00 pagaba 1 h extra que no existio.
+    // La espera se cobra aparte (waitTimeCost), asi que aqui no se pierde nada.
+    const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
+    const pool = data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)
+      ? this.resourcePools.get(data.resources.pool)
+      : null;
+
+    if (pool && !taskEvent.recursoTomado) {
+      const marcador = {
+        element,
+        instanceId,
+        startTime,
+        quantityRequired,
+        waitStart: time,
+        esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
+        lotNumber: taskEvent.lotNumber || null
+      };
+      // El marcador se queda en la cola de la piscina; `release()` lo devuelve
+      // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
+      if (!pool.request(quantityRequired, marcador)) return;
+    }
 
     let processingTime = 0;
     const pt = data.processingTime;
@@ -7386,7 +7719,16 @@ class SimulationEngine {
     // por fin empieza, el tramo ya lleva una hora en marcha).
     const duracionEfectivaMs = this._msConArranque(totalTaskDurationInMillis, new Date(time));
 
-    const { overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), duracionEfectivaMs / 60000, this.standardCalendar);
+    // El fin de reloj se calcula con el calendario del PLAN (que puede traer el
+    // dia extendido), pero la extra se mide contra el calendario LEGAL: lo que
+    // pasa de la jornada base del turno ya es tiempo extra aunque estuviera
+    // dentro del horario declarado.
+    const { overtime, endTime } = this.calendar.calculateBusinessTime(
+      new Date(time), duracionEfectivaMs / 60000, this.legalCalendar
+    );
+
+    // La extra del dia se apunta al dia en que ARRANCA la tarea (art. 65).
+    this._anotarExtraDelDia(time, overtime, duracionEfectivaMs);
 
     // "Costo de Operación" es el coste de las horas que se PAGAN a tarifa base.
     // Se usa la duracion efectiva: si alguien va lento al arrancar esta en el
@@ -7395,12 +7737,32 @@ class SimulationEngine {
     // efectiva es la real y el coste no cambia.
     const operationCost = (duracionEfectivaMs / 3600000) * baseRatePerHour;
 
+    // Prima dominical (art. 73) y de dia festivo (art. 74). Se aplican sobre el
+    // tiempo PAGADO de la tarea y se llevan en su propio cubo: sumarlas a la
+    // prima de horas extra haria imposible comprobar el reparto en el informe.
+    const diaDeInicio = new Date(time);
+    const esDomingo = diaDeInicio.getDay() === 0;
+    const esFestivo = this.legalCalendar.esDiaFestivo(diaDeInicio);
+    let dayPremiumPercent = 0;
+    let dayPremiumKind = null;
+    if (esFestivo && this.labor.holidayPremiumPercent !== 0) {
+      dayPremiumPercent = this.labor.holidayPremiumPercent;
+      dayPremiumKind = 'festivo';
+    } else if (esDomingo && this.labor.sundayPremiumPercent !== 0) {
+      dayPremiumPercent = this.labor.sundayPremiumPercent;
+      dayPremiumKind = 'dominical';
+    }
+    const dayPremium = (duracionEfectivaMs / 3600000) * baseRatePerHour * (dayPremiumPercent / 100);
+    if (dayPremiumKind === 'festivo') this.premiumStats.festivoMs += duracionEfectivaMs;
+    else if (dayPremiumKind === 'dominical') this.premiumStats.dominicalMs += duracionEfectivaMs;
+    this.premiumStats.imponible += dayPremium;
+
     // Overtime cost is the PREMIUM ONLY.
     // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
     // numero, la semana 1 de un año y la del siguiente compartian contador.
     const weekKey = this.calendar.getWeekKey(new Date(endTime));
     const currentWeeklyOvertime = this.weeklyStats.get(weekKey) || 0;
-    const overtimeRules = this.rootConfig.overtime;
+    const overtimeRules = this.labor;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
 
     const taskOvertimeDuration = overtime;
@@ -7414,8 +7776,6 @@ class SimulationEngine {
     this.overtimeBreakdown.excessMs += excessOvertime;
 
     this.weeklyStats.set(weekKey, currentWeeklyOvertime + taskOvertimeDuration);
-
-    const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
 
     const newTaskEvent = {
       type: 'TASK_COMPLETE',
@@ -7431,30 +7791,83 @@ class SimulationEngine {
       tripleOvertimePremium,
       quantityRequired,
       totalDuration: totalTaskDurationInMillis,
-      // Duracion de RELOJ con el arranque aplicado. Se guarda aparte de
-      // `totalDuration` porque el camino de espera por recursos vuelve a calcular
-      // el fin desde su propio inicio, y alli el arranque se reevalua.
+      // Duracion de RELOJ con el arranque aplicado, ya desde el inicio REAL (si
+      // la tarea espero por un recurso, esto se recalculo al liberarse).
       effectiveDuration: duracionEfectivaMs,
+      // Prima del dia (dominical o festivo). Va con su tipo para que el informe
+      // pueda separar las dos, que se pagan por articulos distintos.
+      dayPremium,
+      dayPremiumKind,
       // Tareas POR LOTE: al terminar hay que despertar a los tokens que esperaban
       // la barrera, y hay que saber de que lote era.
       esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
       lotNumber: taskEvent.lotNumber || null
     };
 
-    if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
-      const pool = this.resourcePools.get(data.resources.pool);
-      if (!pool.request(quantityRequired, newTaskEvent)) {
-        newTaskEvent.waitStart = time;
-      } else {
-        this.eventQueue.add(newTaskEvent);
-      }
-    } else {
-      this.eventQueue.add(newTaskEvent);
-    }
+    // El recurso ya esta pedido arriba (y si no habia hueco, esta tarea ni
+    // siquiera habria llegado hasta aqui): solo queda encolarla.
+    this.eventQueue.add(newTaskEvent);
+  }
+
+  /**
+   * Cumplimiento de los topes del art. 65 (max. 3 h al dia y 3 veces por semana).
+   *
+   * Es una salida DISTINTA del coste: excederse cuesta mas, pero ademas es
+   * ilegal, y la simulacion puede decirlo ANTES de que ocurra. El tope diario NO
+   * cambia lo que se paga (eso lo fijan los arts. 66 y 68, que son semanales):
+   * cambia lo que se puede afirmar de la corrida, que es justo el punto.
+   */
+  _calcularCumplimiento() {
+    const limiteDiarioMs = (this.labor.dailyOvertimeLimitHours || 0) * 3600000;
+    const maxDias = this.labor.maxOvertimeDaysPerWeek || 0;
+
+    const dias = Array.from(this.dailyStats.entries())
+      .map(([ clave, v ]) => ({ clave, extraMs: v.extraMs, trabajadoMs: v.trabajadoMs }))
+      .filter((d) => d.extraMs > 0)
+      .sort((a, b) => (a.clave < b.clave ? -1 : 1));
+
+    const diasSobreLimite = dias.filter((d) => d.extraMs > limiteDiarioMs && limiteDiarioMs > 0);
+
+    const semanas = Array.from(this.weeklyStats.entries()).map(([ clave, extraMs ]) => {
+      const conExtra = this.daysWithOvertime.get(clave) || new Set();
+      return {
+        clave,
+        extraMs,
+        diasConExtra: conExtra.size,
+        sobreLimiteSemanal: (this.labor.limitHours || 0) > 0 && extraMs > (this.labor.limitHours * 3600000),
+        sobreDiasConExtra: maxDias > 0 && conExtra.size > maxDias
+      };
+    }).sort((a, b) => (a.clave < b.clave ? -1 : 1));
+
+    const semanasSobreLimite = semanas.filter((s) => s.sobreLimiteSemanal);
+    const semanasSobreDias = semanas.filter((s) => s.sobreDiasConExtra);
+    const excesoTotal = semanasSobreLimite.reduce((acc, s) => acc + (s.extraMs - this.labor.limitHours * 3600000), 0);
+
+    return {
+      limiteSemanalHoras: this.labor.limitHours,
+      limiteDiarioHoras: this.labor.dailyOvertimeLimitHours,
+      maxDiasConExtraPorSemana: maxDias,
+      semanas: semanas.length,
+      semanasSobreLimite: semanasSobreLimite.length,
+      semanasSobreDias: semanasSobreDias.length,
+      excesoTotalHoras: excesoTotal / 3600000,
+      excesoMedioSemanasSobreLimite: semanasSobreLimite.length ? (excesoTotal / 3600000) / semanasSobreLimite.length : 0,
+      diasConExtra: dias.length,
+      diasSobreLimiteDiario: diasSobreLimite.length,
+      maxExtraDiaHoras: dias.length ? Math.max(...dias.map((d) => d.extraMs / 3600000)) : 0,
+      detalleDias: dias.map((d) => ({ dia: d.clave, extraHoras: d.extraMs / 3600000 })),
+      detalleSemanas: semanas.map((s) => ({
+        semana: s.clave,
+        extraHoras: s.extraMs / 3600000,
+        diasConExtra: s.diasConExtra,
+        sobreLimiteSemanal: s.sobreLimiteSemanal,
+        sobreDiasConExtra: s.sobreDiasConExtra
+      }))
+    };
   }
 
   _findRootConfig() {
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el)?.isRoot);
 
     if (rootEvents.length === 1) {
@@ -7482,7 +7895,10 @@ class SimulationEngine {
     const originalCalendar = this.calendar;
     if (options.useOvertime && this.rootConfig.overtime) {
       const overtimeCalendarConfig = JSON.parse(JSON.stringify(rootConfig.calendar));
-      const weeklyOvertimeLimit = this.rootConfig.overtime.limitHours || 0;
+      // El cupo que reparte las horas extra entre los dias laborables es el de la
+      // version de las reglas que rige en esta corrida, no el del diagrama: si la
+      // ley cambio, el plan tiene que alargar la jornada con la ley de la fecha.
+      const weeklyOvertimeLimit = this.labor.limitHours || 0;
       const workdaysInWeek = overtimeCalendarConfig.workingDays.length;
       if (workdaysInWeek > 0) {
         const dailyOvertimeHours = weeklyOvertimeLimit / workdaysInWeek;
@@ -7514,14 +7930,14 @@ class SimulationEngine {
 
     console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
 
-    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Participant'));
+    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Participant'));
     const processConfig = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(processRoot);
     const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
 
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:StartEvent'));
     if (!startEvents.length) {
       console.error("No start event found. Cannot run simulation.");
       return this.results;
@@ -7589,10 +8005,11 @@ class SimulationEngine {
         results.totalOperationCost += event.operationCost;
         results.totalDoubleOvertimeCost += event.doubleOvertimePremium;
         results.totalTripleOvertimeCost += event.tripleOvertimePremium;
+        results.totalDayPremiumCost += (event.dayPremium || 0);
 
         const waitTimeCost = results.totalWaitTimeCost;
         // The total cost is the sum of its parts.
-        results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + waitTimeCost;
+        results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + (event.dayPremium || 0) + waitTimeCost;
 
         if (event.waitStart) {
           const standardCalendar = this.standardCalendar;
@@ -7615,23 +8032,32 @@ class SimulationEngine {
           pool.busyMinutes += ((event.effectiveDuration || event.totalDuration) / 60000) * event.quantityRequired;
 
           const newTasks = pool.release(event.quantityRequired);
-          newTasks.forEach(nextTask => {
-            const nextTaskResults = this.results.get(nextTask.element.id);
+          newTasks.forEach(marcador => {
+            const nextTaskResults = this.results.get(marcador.element.id);
             const standardCalendar = this.standardCalendar;
-            const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(nextTask.waitStart), new Date(this.clock));
+            const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(marcador.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
             const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
             const currentWaitCost = (waitTime / 60) * waitCostPerHour;
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
 
-            // La tarea arranca AHORA: el arranque se reevalua desde este inicio,
-            // no desde el que tenia cuando se encolo.
-            const efectiva = this._msConArranque(nextTask.totalDuration, new Date(this.clock));
-            nextTask.effectiveDuration = efectiva;
-            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), efectiva / 60000).getTime();
-            delete nextTask.waitStart;
-            this.eventQueue.add(nextTask);
+            // La tarea arranca AHORA: se vuelve a programar desde el inicio real.
+            // Antes solo se corregian su duracion y su fin, pero el tiempo extra y
+            // las primas se quedaban calculados con la hora del INTENTO (y ya
+            // contados en la semana y en el dia), asi que una tarea que esperaba
+            // al recurso pagaba la extra de una franja en la que no trabajo.
+            this.scheduleTask({
+              type: 'TASK_START',
+              element: marcador.element,
+              time: this.clock,
+              instanceId: marcador.instanceId,
+              startTime: marcador.startTime,
+              esTareaDeLote: marcador.esTareaDeLote,
+              lotNumber: marcador.lotNumber,
+              // La unidad ya esta tomada: pedirla otra vez la contaria dos veces.
+              recursoTomado: true
+            });
           });
         }
 
@@ -7648,7 +8074,7 @@ class SimulationEngine {
       // Llegada de la siguiente instancia. En modo LOTES no se usa: alli las
       // instancias de un lote entran juntas y el siguiente lote lo dispara el
       // cierre del anterior.
-      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
+      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
         this.instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
@@ -7664,6 +8090,10 @@ class SimulationEngine {
     console.log("--- Simulation Finished ---");
 
     this._calcularUtilizacion();
+
+    // Cumplimiento legal: se calcula al cerrar la corrida, cuando ya se sabe
+    // todo el tiempo extra por dia y por semana.
+    this.compliance = this._calcularCumplimiento();
 
     this._logReport(options.useOvertime, runValue);
 
@@ -8064,10 +8494,21 @@ class SimulationEngine {
       festivos: (cal.holidays || []).length,
       tarifaBasePorHora: cfg.cost && cfg.cost.baseRatePerHour,
       costoEsperaPorHora: cfg.cost && cfg.cost.waitCostPerHour,
-      horasExtra: cfg.overtime
+      horasExtra: cfg.overtime,
+      // Reglas laborales RESUELTAS para la fecha de esta corrida. Se imprime la
+      // version aplicada porque es lo que hace auditable un informe dentro de
+      // tres años, cuando la ley ya haya cambiado.
+      reglasLaborales: (0,_LaborRules_js__WEBPACK_IMPORTED_MODULE_3__.describeLabor)(this.labor),
+      versionDeLasReglas: this.labor.version || 'por defecto',
+      topeDeExtraAlDiaHoras: this.labor.dailyOvertimeLimitHours,
+      maxDiasConExtraPorSemana: this.labor.maxOvertimeDaysPerWeek,
+      // Si el horario declarado pasa de la jornada base del turno, ese tramo ya
+      // cuenta como extra. Se imprime el recorte para que el resultado no
+      // dependa de un numero que no se ve.
+      minutosDelDiaQueYaSonExtra: this.legalDayRecortadoMin || 0
     });
 
-    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(el, 'bpmn:Task'));
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task'));
 
     if (!tareas.length) {
       console.log('No hay tareas en el diagrama.');
@@ -8121,6 +8562,7 @@ class SimulationEngine {
     const totalDoble = suma('totalDoubleOvertimeCost');
     const totalTriple = suma('totalTripleOvertimeCost');
     const totalEsperaCosto = suma('totalWaitTimeCost');
+    const totalPrimasDeDia = suma('totalDayPremiumCost');
 
     console.log('SALIDAS · totales', {
       instanciasCompletadas: this.completedInstances,
@@ -8128,21 +8570,51 @@ class SimulationEngine {
       de_eso_operacion: Number(totalOperacion.toFixed(2)),
       de_eso_prima_doble: Number(totalDoble.toFixed(2)),
       de_eso_prima_triple: Number(totalTriple.toFixed(2)),
+      de_eso_prima_dominical_y_festivos: Number(totalPrimasDeDia.toFixed(2)),
       de_eso_costo_espera: Number(totalEsperaCosto.toFixed(2)),
-      cuadre_operacion_mas_primas: Number((totalOperacion + totalDoble + totalTriple + totalEsperaCosto).toFixed(2)),
+      cuadre_operacion_mas_primas: Number(
+        (totalOperacion + totalDoble + totalTriple + totalPrimasDeDia + totalEsperaCosto).toFixed(2)
+      ),
       // El reparto doble/triple depende del CUPO SEMANAL. Estas tres cifras lo
       // hacen comprobable: si solo hay 1 semana con extra, el tramo doble no
       // puede pasar del limite; con N semanas, hasta N x limite.
       semanas_con_horas_extra: this.weeklyStats.size,
       horas_extra_en_tramo_doble_h: Number((this.overtimeBreakdown.normalMs / 3600000).toFixed(2)),
       horas_extra_en_tramo_triple_h: Number((this.overtimeBreakdown.excessMs / 3600000).toFixed(2)),
-      limite_horas_extra_por_semana: (this.rootConfig.overtime || {}).limitHours,
+      limite_horas_extra_por_semana: this.labor.limitHours,
+      horas_pagadas_con_prima_dominical: Number((this.premiumStats.dominicalMs / 3600000).toFixed(2)),
+      horas_pagadas_con_prima_de_festivo: Number((this.premiumStats.festivoMs / 3600000).toFixed(2)),
       costo_promedio_por_instancia: this.completedInstances > 0
         ? Number((totalCosto / this.completedInstances).toFixed(2))
         : 0,
       espera_total_min: Math.round(suma('totalWaitTime')),
       fallos_totales: suma('failureCount')
     });
+
+    // Cumplimiento de la LFT (art. 65). Es una salida DISTINTA del coste: pasarse
+    // cuesta mas, pero ademas es ilegal, y la simulacion puede decirlo ANTES de
+    // que ocurra. Los topes van impresos junto al resultado, porque un aviso sin
+    // su umbral es una cifra con autoridad falsa.
+    if (this.compliance) {
+      const c = this.compliance;
+      console.log('SALIDAS · cumplimiento legal', {
+        reglas: (0,_LaborRules_js__WEBPACK_IMPORTED_MODULE_3__.describeLabor)(this.labor),
+        topes: `${this.labor.limitHours} h/semana · ${this.labor.dailyOvertimeLimitHours} h/día`
+          + ` · ${this.labor.maxOvertimeDaysPerWeek} días con extra por semana`,
+        semanas: c.semanas,
+        semanas_sobre_el_limite_semanal: c.semanasSobreLimite,
+        semanas_con_mas_dias_de_extra_de_los_permitidos: c.semanasSobreDias,
+        exceso_total_h: Number(c.excesoTotalHoras.toFixed(2)),
+        exceso_medio_por_semana_excedida_h: Number(c.excesoMedioSemanasSobreLimite.toFixed(2)),
+        dias_con_extra: c.diasConExtra,
+        dias_sobre_el_tope_diario: c.diasSobreLimiteDiario,
+        extra_maxima_en_un_dia_h: Number(c.maxExtraDiaHoras.toFixed(2)),
+        veredicto: (c.semanasSobreLimite || c.diasSobreLimiteDiario || c.semanasSobreDias)
+          ? 'NO CUMPLE: hay semanas o días por encima del tope legal'
+          : 'CUMPLE: ningún día ni semana supera los topes declarados'
+      });
+      if (c.detalleSemanas.length) console.table(c.detalleSemanas);
+    }
 
     // Lotes: el lote pasa a ser la unidad de analisis, no la pieza. Y ojo con el
     // tamano de muestra: 1.000 piezas en 50 lotes NO son 1.000 muestras del

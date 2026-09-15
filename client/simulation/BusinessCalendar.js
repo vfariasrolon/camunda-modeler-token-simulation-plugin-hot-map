@@ -57,6 +57,18 @@ export default class BusinessCalendar {
     // precalcular, se precalcula aqui una sola vez.
     this._dias = new Set(this.config.workingDays || []);
     this._festivos = new Set(this.config.holidays || []);
+    // Un festivo se cierra SOLO si el dia de la semana no esta declarado
+    // laborable. Si lo esta, la planta esta abierta ese dia y se TRABAJA, asi
+    // que no puede ser a la vez laborable y no laborable: el calendario se
+    // contradecia consigo mismo (la lista de dias decia «abierto» y la de
+    // festivos «cerrado»), y la corrida se saltaba el dia en silencio, con lo
+    // que la prima de festivo del art. 74 nunca se podia pagar.
+    this._festivosCerrados = new Set(
+      Array.from(this._festivos).filter((clave) => {
+        const [ a, m, d ] = clave.split('-').map(Number);
+        return !this._dias.has(new Date(a, m - 1, d).getDay());
+      })
+    );
     this._jornada = {
       inicio: aMinutos(this.config.workingHours && this.config.workingHours.start),
       fin: aMinutos(this.config.workingHours && this.config.workingHours.end)
@@ -79,10 +91,25 @@ export default class BusinessCalendar {
       .filter((b) => Number.isFinite(b.inicio) && Number.isFinite(b.fin) && b.fin > b.inicio);
   }
 
-  /** ¿El dia de esa fecha es laborable (dia de la semana y no festivo)? */
+  /**
+   * ¿El dia de esa fecha es laborable?
+   *
+   * Un festivo cierra el dia SOLO si ese dia de la semana no esta declarado
+   * laborable (ver `_festivosCerrados`). Es la unica lectura coherente de las dos
+   * listas: si el dia de la semana esta en `workingDays`, la planta esta abierta.
+   */
   _esDiaLaborable(date) {
     if (!this._dias.has(date.getDay())) return false;
-    return !this._festivos.has(claveDeDia(date));
+    return !this._festivosCerrados.has(claveDeDia(date));
+  }
+
+  /**
+   * ¿Esa fecha es festivo declarado? Publico porque las primas de dia festivo
+   * (LFT art. 74) se pagan por la fecha, no por horario, y quien las calcula es
+   * el motor, no el calendario.
+   */
+  esDiaFestivo(date) {
+    return this._festivos.has(claveDeDia(date));
   }
 
   /**

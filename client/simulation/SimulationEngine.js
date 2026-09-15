@@ -2,6 +2,7 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData, isLabel, resumenMuestras } from './util';
 import BusinessCalendar from './BusinessCalendar.js';
 import { normalizeWarmup, effectiveDuration, describeWarmup } from './WarmupCurve.js';
+import { resolveLabor, describeLabor } from './LaborRules.js';
 
 /**
  * Muestreo de una distribucion triangular por inversa de la CDF.
@@ -255,6 +256,30 @@ export default class SimulationEngine {
     this.weeklyStats = new Map();
     this.dailyCompletions = new Map();
 
+    // Reglas laborales VERSIONADAS por fecha (§A2). Se resuelven con la fecha de
+    // arranque de la corrida, no con la de hoy: un informe de enero debe seguir
+    // saliendo con la ley de enero aunque se reabra en junio.
+    this.labor = resolveLabor(rootConfig.labor, rootConfig.overtime, this._claveDeFecha(simStart));
+
+    // Calendario LEGAL: el mismo horario declarado pero con el dia cortado en la
+    // jornada base del turno (8 h diurna / 7 nocturna / 7,5 mixta). Contra ESTE
+    // se mide la extra, no contra el horario declarado: un horario de 9 h en
+    // turno diurno ya lleva 1 h extra dentro, y con el calendario estandar esa
+    // hora se pagaba a tarifa base. Con un horario de 8 h o menos, este
+    // calendario es identico al estandar y no cambia nada.
+    this.legalCalendar = this._construirCalendarioLegal(rootConfig.calendar);
+
+    // Tiempo extra por DIA y dias con extra por SEMANA: son los dos topes del
+    // art. 65 (max. 3 h al dia y 3 veces por semana). Se cuentan aparte del cupo
+    // semanal de pago porque son cosas distintas: el cupo de 9 h (art. 66) fija
+    // lo que se PAGA, y estos dos fijan lo que se PUEDE decir de la corrida.
+    this.dailyStats = new Map();
+    this.daysWithOvertime = new Map();
+
+    // Primas por dia trabajado: dominical (art. 73) y festivo (art. 74). Se
+    // llevan en su propio cubo para que el cuadre del informe pueda demostrarlas.
+    this.premiumStats = { dominicalMs: 0, festivoMs: 0, imponible: 0 };
+
     // Muestras por caso. Los totales por elemento dan medias, pero una media
     // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
     this.instanceCycleTimes = [];
@@ -278,9 +303,69 @@ export default class SimulationEngine {
         totalOperationCost: 0,
         totalDoubleOvertimeCost: 0,
         totalTripleOvertimeCost: 0,
+        totalDayPremiumCost: 0,
         name: element.businessObject.name || element.id
       });
     });
+  }
+
+  /** Clave de dia LOCAL (`YYYY-MM-DD`). UTC no sirve: desplaza el dia. */
+  _claveDeFecha(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  /**
+   * El calendario contra el que se decide qué es tiempo extra: el horario
+   * declarado con el final del dia recortado a la jornada base del turno.
+   *
+   * Es un recorte, nunca una ampliacion: si la jornada declarada ya es mas corta
+   * que la legal, manda la declarada (nadie hace horas extra por trabajar menos).
+   */
+  _construirCalendarioLegal(calendarConfig) {
+    const cfg = JSON.parse(JSON.stringify(calendarConfig || {}));
+    const base = this.labor.baseDailyHours;
+    const inicio = cfg.workingHours && cfg.workingHours.start;
+    const fin = cfg.workingHours && cfg.workingHours.end;
+    if (!inicio || !fin || !(base > 0)) return new BusinessCalendar(cfg);
+
+    const inicioMin = (inicio.hour || 0) * 60 + (inicio.minute || 0);
+    const finDeclaradoMin = (fin.hour || 0) * 60 + (fin.minute || 0);
+    const finLegalMin = inicioMin + Math.round(base * 60);
+
+    if (finDeclaradoMin > finLegalMin) {
+      cfg.workingHours.end = {
+        hour: Math.floor(finLegalMin / 60) % 24,
+        minute: finLegalMin % 60
+      };
+      this.legalDayRecortadoMin = finDeclaradoMin - finLegalMin;
+    } else {
+      this.legalDayRecortadoMin = 0;
+    }
+
+    return new BusinessCalendar(cfg);
+  }
+
+  /**
+   * Acumula el tiempo extra del DIA en el que ARRANCA la tarea.
+   *
+   * Se imputa al dia de inicio, no se reparte: una tarea que cruza la medianoche
+   * pertenece al dia en que empezo, que es como se lee un turno en planta. La
+   * regla es unica y esta declarada, para que el tope del art. 65 sea
+   * comprobable a mano.
+   */
+  _anotarExtraDelDia(inicioMs, extraMs, trabajadoMs) {
+    const dia = new Date(inicioMs);
+    const clave = this._claveDeFecha(dia);
+    const actual = this.dailyStats.get(clave) || { extraMs: 0, trabajadoMs: 0 };
+    actual.extraMs += Math.max(0, extraMs || 0);
+    actual.trabajadoMs += Math.max(0, trabajadoMs || 0);
+    this.dailyStats.set(clave, actual);
+
+    if (actual.extraMs > 0) {
+      const semana = this.calendar.getWeekKey(dia);
+      if (!this.daysWithOvertime.has(semana)) this.daysWithOvertime.set(semana, new Set());
+      this.daysWithOvertime.get(semana).add(clave);
+    }
   }
 
   findNextElements(element) {
@@ -402,6 +487,32 @@ export default class SimulationEngine {
     const data = getSimulationData(element);
     const baseRatePerHour = this.rootConfig.cost.baseRatePerHour || 0;
 
+    // El RECURSO se pide ANTES de calcular nada: si no hay unidades libres, la
+    // tarea no empieza y no se puede costear todavia. Costearla aqui seria
+    // costear un trabajo que aun no ha ocurrido, con la hora del INTENTO en vez
+    // de la hora real: una tarea que arranca a las 18:00 (todo extra), espera al
+    // recurso y trabaja el martes a las 09:00 pagaba 1 h extra que no existio.
+    // La espera se cobra aparte (waitTimeCost), asi que aqui no se pierde nada.
+    const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
+    const pool = data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)
+      ? this.resourcePools.get(data.resources.pool)
+      : null;
+
+    if (pool && !taskEvent.recursoTomado) {
+      const marcador = {
+        element,
+        instanceId,
+        startTime,
+        quantityRequired,
+        waitStart: time,
+        esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
+        lotNumber: taskEvent.lotNumber || null
+      };
+      // El marcador se queda en la cola de la piscina; `release()` lo devuelve
+      // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
+      if (!pool.request(quantityRequired, marcador)) return;
+    }
+
     let processingTime = 0;
     const pt = data.processingTime;
     if (pt) {
@@ -435,7 +546,16 @@ export default class SimulationEngine {
     // por fin empieza, el tramo ya lleva una hora en marcha).
     const duracionEfectivaMs = this._msConArranque(totalTaskDurationInMillis, new Date(time));
 
-    const { overtime, endTime } = this.calendar.calculateBusinessTime(new Date(time), duracionEfectivaMs / 60000, this.standardCalendar);
+    // El fin de reloj se calcula con el calendario del PLAN (que puede traer el
+    // dia extendido), pero la extra se mide contra el calendario LEGAL: lo que
+    // pasa de la jornada base del turno ya es tiempo extra aunque estuviera
+    // dentro del horario declarado.
+    const { overtime, endTime } = this.calendar.calculateBusinessTime(
+      new Date(time), duracionEfectivaMs / 60000, this.legalCalendar
+    );
+
+    // La extra del dia se apunta al dia en que ARRANCA la tarea (art. 65).
+    this._anotarExtraDelDia(time, overtime, duracionEfectivaMs);
 
     // "Costo de Operación" es el coste de las horas que se PAGAN a tarifa base.
     // Se usa la duracion efectiva: si alguien va lento al arrancar esta en el
@@ -444,12 +564,32 @@ export default class SimulationEngine {
     // efectiva es la real y el coste no cambia.
     const operationCost = (duracionEfectivaMs / 3600000) * baseRatePerHour;
 
+    // Prima dominical (art. 73) y de dia festivo (art. 74). Se aplican sobre el
+    // tiempo PAGADO de la tarea y se llevan en su propio cubo: sumarlas a la
+    // prima de horas extra haria imposible comprobar el reparto en el informe.
+    const diaDeInicio = new Date(time);
+    const esDomingo = diaDeInicio.getDay() === 0;
+    const esFestivo = this.legalCalendar.esDiaFestivo(diaDeInicio);
+    let dayPremiumPercent = 0;
+    let dayPremiumKind = null;
+    if (esFestivo && this.labor.holidayPremiumPercent !== 0) {
+      dayPremiumPercent = this.labor.holidayPremiumPercent;
+      dayPremiumKind = 'festivo';
+    } else if (esDomingo && this.labor.sundayPremiumPercent !== 0) {
+      dayPremiumPercent = this.labor.sundayPremiumPercent;
+      dayPremiumKind = 'dominical';
+    }
+    const dayPremium = (duracionEfectivaMs / 3600000) * baseRatePerHour * (dayPremiumPercent / 100);
+    if (dayPremiumKind === 'festivo') this.premiumStats.festivoMs += duracionEfectivaMs;
+    else if (dayPremiumKind === 'dominical') this.premiumStats.dominicalMs += duracionEfectivaMs;
+    this.premiumStats.imponible += dayPremium;
+
     // Overtime cost is the PREMIUM ONLY.
     // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
     // numero, la semana 1 de un año y la del siguiente compartian contador.
     const weekKey = this.calendar.getWeekKey(new Date(endTime));
     const currentWeeklyOvertime = this.weeklyStats.get(weekKey) || 0;
-    const overtimeRules = this.rootConfig.overtime;
+    const overtimeRules = this.labor;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
 
     const taskOvertimeDuration = overtime;
@@ -463,8 +603,6 @@ export default class SimulationEngine {
     this.overtimeBreakdown.excessMs += excessOvertime;
 
     this.weeklyStats.set(weekKey, currentWeeklyOvertime + taskOvertimeDuration);
-
-    const quantityRequired = (data.resources && data.resources.quantityRequired) || 1;
 
     const newTaskEvent = {
       type: 'TASK_COMPLETE',
@@ -480,26 +618,79 @@ export default class SimulationEngine {
       tripleOvertimePremium,
       quantityRequired,
       totalDuration: totalTaskDurationInMillis,
-      // Duracion de RELOJ con el arranque aplicado. Se guarda aparte de
-      // `totalDuration` porque el camino de espera por recursos vuelve a calcular
-      // el fin desde su propio inicio, y alli el arranque se reevalua.
+      // Duracion de RELOJ con el arranque aplicado, ya desde el inicio REAL (si
+      // la tarea espero por un recurso, esto se recalculo al liberarse).
       effectiveDuration: duracionEfectivaMs,
+      // Prima del dia (dominical o festivo). Va con su tipo para que el informe
+      // pueda separar las dos, que se pagan por articulos distintos.
+      dayPremium,
+      dayPremiumKind,
       // Tareas POR LOTE: al terminar hay que despertar a los tokens que esperaban
       // la barrera, y hay que saber de que lote era.
       esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
       lotNumber: taskEvent.lotNumber || null
     };
 
-    if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
-      const pool = this.resourcePools.get(data.resources.pool);
-      if (!pool.request(quantityRequired, newTaskEvent)) {
-        newTaskEvent.waitStart = time;
-      } else {
-        this.eventQueue.add(newTaskEvent);
-      }
-    } else {
-      this.eventQueue.add(newTaskEvent);
-    }
+    // El recurso ya esta pedido arriba (y si no habia hueco, esta tarea ni
+    // siquiera habria llegado hasta aqui): solo queda encolarla.
+    this.eventQueue.add(newTaskEvent);
+  }
+
+  /**
+   * Cumplimiento de los topes del art. 65 (max. 3 h al dia y 3 veces por semana).
+   *
+   * Es una salida DISTINTA del coste: excederse cuesta mas, pero ademas es
+   * ilegal, y la simulacion puede decirlo ANTES de que ocurra. El tope diario NO
+   * cambia lo que se paga (eso lo fijan los arts. 66 y 68, que son semanales):
+   * cambia lo que se puede afirmar de la corrida, que es justo el punto.
+   */
+  _calcularCumplimiento() {
+    const limiteDiarioMs = (this.labor.dailyOvertimeLimitHours || 0) * 3600000;
+    const maxDias = this.labor.maxOvertimeDaysPerWeek || 0;
+
+    const dias = Array.from(this.dailyStats.entries())
+      .map(([ clave, v ]) => ({ clave, extraMs: v.extraMs, trabajadoMs: v.trabajadoMs }))
+      .filter((d) => d.extraMs > 0)
+      .sort((a, b) => (a.clave < b.clave ? -1 : 1));
+
+    const diasSobreLimite = dias.filter((d) => d.extraMs > limiteDiarioMs && limiteDiarioMs > 0);
+
+    const semanas = Array.from(this.weeklyStats.entries()).map(([ clave, extraMs ]) => {
+      const conExtra = this.daysWithOvertime.get(clave) || new Set();
+      return {
+        clave,
+        extraMs,
+        diasConExtra: conExtra.size,
+        sobreLimiteSemanal: (this.labor.limitHours || 0) > 0 && extraMs > (this.labor.limitHours * 3600000),
+        sobreDiasConExtra: maxDias > 0 && conExtra.size > maxDias
+      };
+    }).sort((a, b) => (a.clave < b.clave ? -1 : 1));
+
+    const semanasSobreLimite = semanas.filter((s) => s.sobreLimiteSemanal);
+    const semanasSobreDias = semanas.filter((s) => s.sobreDiasConExtra);
+    const excesoTotal = semanasSobreLimite.reduce((acc, s) => acc + (s.extraMs - this.labor.limitHours * 3600000), 0);
+
+    return {
+      limiteSemanalHoras: this.labor.limitHours,
+      limiteDiarioHoras: this.labor.dailyOvertimeLimitHours,
+      maxDiasConExtraPorSemana: maxDias,
+      semanas: semanas.length,
+      semanasSobreLimite: semanasSobreLimite.length,
+      semanasSobreDias: semanasSobreDias.length,
+      excesoTotalHoras: excesoTotal / 3600000,
+      excesoMedioSemanasSobreLimite: semanasSobreLimite.length ? (excesoTotal / 3600000) / semanasSobreLimite.length : 0,
+      diasConExtra: dias.length,
+      diasSobreLimiteDiario: diasSobreLimite.length,
+      maxExtraDiaHoras: dias.length ? Math.max(...dias.map((d) => d.extraMs / 3600000)) : 0,
+      detalleDias: dias.map((d) => ({ dia: d.clave, extraHoras: d.extraMs / 3600000 })),
+      detalleSemanas: semanas.map((s) => ({
+        semana: s.clave,
+        extraHoras: s.extraMs / 3600000,
+        diasConExtra: s.diasConExtra,
+        sobreLimiteSemanal: s.sobreLimiteSemanal,
+        sobreDiasConExtra: s.sobreDiasConExtra
+      }))
+    };
   }
 
   _findRootConfig() {
@@ -531,7 +722,10 @@ export default class SimulationEngine {
     const originalCalendar = this.calendar;
     if (options.useOvertime && this.rootConfig.overtime) {
       const overtimeCalendarConfig = JSON.parse(JSON.stringify(rootConfig.calendar));
-      const weeklyOvertimeLimit = this.rootConfig.overtime.limitHours || 0;
+      // El cupo que reparte las horas extra entre los dias laborables es el de la
+      // version de las reglas que rige en esta corrida, no el del diagrama: si la
+      // ley cambio, el plan tiene que alargar la jornada con la ley de la fecha.
+      const weeklyOvertimeLimit = this.labor.limitHours || 0;
       const workdaysInWeek = overtimeCalendarConfig.workingDays.length;
       if (workdaysInWeek > 0) {
         const dailyOvertimeHours = weeklyOvertimeLimit / workdaysInWeek;
@@ -638,10 +832,11 @@ export default class SimulationEngine {
         results.totalOperationCost += event.operationCost;
         results.totalDoubleOvertimeCost += event.doubleOvertimePremium;
         results.totalTripleOvertimeCost += event.tripleOvertimePremium;
+        results.totalDayPremiumCost += (event.dayPremium || 0);
 
         const waitTimeCost = results.totalWaitTimeCost;
         // The total cost is the sum of its parts.
-        results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + waitTimeCost;
+        results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + (event.dayPremium || 0) + waitTimeCost;
 
         if (event.waitStart) {
           const standardCalendar = this.standardCalendar;
@@ -664,23 +859,32 @@ export default class SimulationEngine {
           pool.busyMinutes += ((event.effectiveDuration || event.totalDuration) / 60000) * event.quantityRequired;
 
           const newTasks = pool.release(event.quantityRequired);
-          newTasks.forEach(nextTask => {
-            const nextTaskResults = this.results.get(nextTask.element.id);
+          newTasks.forEach(marcador => {
+            const nextTaskResults = this.results.get(marcador.element.id);
             const standardCalendar = this.standardCalendar;
-            const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(nextTask.waitStart), new Date(this.clock));
+            const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(marcador.waitStart), new Date(this.clock));
             nextTaskResults.totalWaitTime += waitTime;
             const waitCostPerHour = this.rootConfig.cost.waitCostPerHour || 0;
             const currentWaitCost = (waitTime / 60) * waitCostPerHour;
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
 
-            // La tarea arranca AHORA: el arranque se reevalua desde este inicio,
-            // no desde el que tenia cuando se encolo.
-            const efectiva = this._msConArranque(nextTask.totalDuration, new Date(this.clock));
-            nextTask.effectiveDuration = efectiva;
-            nextTask.time = this.calendar.addWorkingTime(new Date(this.clock), efectiva / 60000).getTime();
-            delete nextTask.waitStart;
-            this.eventQueue.add(nextTask);
+            // La tarea arranca AHORA: se vuelve a programar desde el inicio real.
+            // Antes solo se corregian su duracion y su fin, pero el tiempo extra y
+            // las primas se quedaban calculados con la hora del INTENTO (y ya
+            // contados en la semana y en el dia), asi que una tarea que esperaba
+            // al recurso pagaba la extra de una franja en la que no trabajo.
+            this.scheduleTask({
+              type: 'TASK_START',
+              element: marcador.element,
+              time: this.clock,
+              instanceId: marcador.instanceId,
+              startTime: marcador.startTime,
+              esTareaDeLote: marcador.esTareaDeLote,
+              lotNumber: marcador.lotNumber,
+              // La unidad ya esta tomada: pedirla otra vez la contaria dos veces.
+              recursoTomado: true
+            });
           });
         }
 
@@ -713,6 +917,10 @@ export default class SimulationEngine {
     console.log("--- Simulation Finished ---");
 
     this._calcularUtilizacion();
+
+    // Cumplimiento legal: se calcula al cerrar la corrida, cuando ya se sabe
+    // todo el tiempo extra por dia y por semana.
+    this.compliance = this._calcularCumplimiento();
 
     this._logReport(options.useOvertime, runValue);
 
@@ -1113,7 +1321,18 @@ export default class SimulationEngine {
       festivos: (cal.holidays || []).length,
       tarifaBasePorHora: cfg.cost && cfg.cost.baseRatePerHour,
       costoEsperaPorHora: cfg.cost && cfg.cost.waitCostPerHour,
-      horasExtra: cfg.overtime
+      horasExtra: cfg.overtime,
+      // Reglas laborales RESUELTAS para la fecha de esta corrida. Se imprime la
+      // version aplicada porque es lo que hace auditable un informe dentro de
+      // tres años, cuando la ley ya haya cambiado.
+      reglasLaborales: describeLabor(this.labor),
+      versionDeLasReglas: this.labor.version || 'por defecto',
+      topeDeExtraAlDiaHoras: this.labor.dailyOvertimeLimitHours,
+      maxDiasConExtraPorSemana: this.labor.maxOvertimeDaysPerWeek,
+      // Si el horario declarado pasa de la jornada base del turno, ese tramo ya
+      // cuenta como extra. Se imprime el recorte para que el resultado no
+      // dependa de un numero que no se ve.
+      minutosDelDiaQueYaSonExtra: this.legalDayRecortadoMin || 0
     });
 
     const tareas = this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:Task'));
@@ -1170,6 +1389,7 @@ export default class SimulationEngine {
     const totalDoble = suma('totalDoubleOvertimeCost');
     const totalTriple = suma('totalTripleOvertimeCost');
     const totalEsperaCosto = suma('totalWaitTimeCost');
+    const totalPrimasDeDia = suma('totalDayPremiumCost');
 
     console.log('SALIDAS · totales', {
       instanciasCompletadas: this.completedInstances,
@@ -1177,21 +1397,51 @@ export default class SimulationEngine {
       de_eso_operacion: Number(totalOperacion.toFixed(2)),
       de_eso_prima_doble: Number(totalDoble.toFixed(2)),
       de_eso_prima_triple: Number(totalTriple.toFixed(2)),
+      de_eso_prima_dominical_y_festivos: Number(totalPrimasDeDia.toFixed(2)),
       de_eso_costo_espera: Number(totalEsperaCosto.toFixed(2)),
-      cuadre_operacion_mas_primas: Number((totalOperacion + totalDoble + totalTriple + totalEsperaCosto).toFixed(2)),
+      cuadre_operacion_mas_primas: Number(
+        (totalOperacion + totalDoble + totalTriple + totalPrimasDeDia + totalEsperaCosto).toFixed(2)
+      ),
       // El reparto doble/triple depende del CUPO SEMANAL. Estas tres cifras lo
       // hacen comprobable: si solo hay 1 semana con extra, el tramo doble no
       // puede pasar del limite; con N semanas, hasta N x limite.
       semanas_con_horas_extra: this.weeklyStats.size,
       horas_extra_en_tramo_doble_h: Number((this.overtimeBreakdown.normalMs / 3600000).toFixed(2)),
       horas_extra_en_tramo_triple_h: Number((this.overtimeBreakdown.excessMs / 3600000).toFixed(2)),
-      limite_horas_extra_por_semana: (this.rootConfig.overtime || {}).limitHours,
+      limite_horas_extra_por_semana: this.labor.limitHours,
+      horas_pagadas_con_prima_dominical: Number((this.premiumStats.dominicalMs / 3600000).toFixed(2)),
+      horas_pagadas_con_prima_de_festivo: Number((this.premiumStats.festivoMs / 3600000).toFixed(2)),
       costo_promedio_por_instancia: this.completedInstances > 0
         ? Number((totalCosto / this.completedInstances).toFixed(2))
         : 0,
       espera_total_min: Math.round(suma('totalWaitTime')),
       fallos_totales: suma('failureCount')
     });
+
+    // Cumplimiento de la LFT (art. 65). Es una salida DISTINTA del coste: pasarse
+    // cuesta mas, pero ademas es ilegal, y la simulacion puede decirlo ANTES de
+    // que ocurra. Los topes van impresos junto al resultado, porque un aviso sin
+    // su umbral es una cifra con autoridad falsa.
+    if (this.compliance) {
+      const c = this.compliance;
+      console.log('SALIDAS · cumplimiento legal', {
+        reglas: describeLabor(this.labor),
+        topes: `${this.labor.limitHours} h/semana · ${this.labor.dailyOvertimeLimitHours} h/día`
+          + ` · ${this.labor.maxOvertimeDaysPerWeek} días con extra por semana`,
+        semanas: c.semanas,
+        semanas_sobre_el_limite_semanal: c.semanasSobreLimite,
+        semanas_con_mas_dias_de_extra_de_los_permitidos: c.semanasSobreDias,
+        exceso_total_h: Number(c.excesoTotalHoras.toFixed(2)),
+        exceso_medio_por_semana_excedida_h: Number(c.excesoMedioSemanasSobreLimite.toFixed(2)),
+        dias_con_extra: c.diasConExtra,
+        dias_sobre_el_tope_diario: c.diasSobreLimiteDiario,
+        extra_maxima_en_un_dia_h: Number(c.maxExtraDiaHoras.toFixed(2)),
+        veredicto: (c.semanasSobreLimite || c.diasSobreLimiteDiario || c.semanasSobreDias)
+          ? 'NO CUMPLE: hay semanas o días por encima del tope legal'
+          : 'CUMPLE: ningún día ni semana supera los topes declarados'
+      });
+      if (c.detalleSemanas.length) console.table(c.detalleSemanas);
+    }
 
     // Lotes: el lote pasa a ser la unidad de analisis, no la pieza. Y ojo con el
     // tamano de muestra: 1.000 piezas en 50 lotes NO son 1.000 muestras del
