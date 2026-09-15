@@ -620,9 +620,32 @@ export default class DataTablePanel {
       return;
     }
 
-    changed.forEach(({ element, data }) => {
-      setSimulationData(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
-    });
+    // El modo Token Simulation deja el diagrama en SOLO LECTURA: su feature
+    // DisableModeling intercepta los metodos de modeling y lanza
+    // "model is read-only" (DisableModeling.js:51). Se captura aqui para
+    // explicar la causa en lugar de dejar un error criptico. Como el guardado
+    // es elemento a elemento, se informa tambien de cuantos quedaron escritos:
+    // un fallo a mitad deja el diagrama a medias.
+    let escritos = 0;
+    try {
+      changed.forEach(({ element, data }) => {
+        setSimulationData(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
+        escritos++;
+      });
+    } catch (err) {
+      const soloLectura = /read-only/i.test(String(err && err.message));
+
+      const texto = soloLectura
+        ? 'El diagrama está en solo lectura porque el modo Token Simulation está activo. '
+          + 'Desactívalo (menú «Toggle Token Simulation» o la tecla T) y vuelve a guardar.'
+          + (escritos ? ` Se guardaron ${escritos} de ${changed.length} elementos antes de fallar.` : '')
+        : `No se pudieron guardar los datos: ${err.message || err}`;
+
+      this._setStatus(texto, 'error');
+      this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+      this._render();
+      return;
+    }
 
     this._setStatus(`${changed.length} elemento(s) actualizado(s).`, 'ok');
     this._notifications.showNotification({

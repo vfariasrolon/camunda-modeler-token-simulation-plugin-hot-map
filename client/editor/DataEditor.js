@@ -475,9 +475,25 @@ export default class DataEditor {
 
     simProperty.value = simulationDataString;
 
-    this._modeling.updateProperties(this._selectedElement, {
-      extensionElements: extensionElements
-    });
+    // El modo Token Simulation deja el diagrama en SOLO LECTURA (su feature
+    // DisableModeling lanza "model is read-only"). Sin capturarlo, el usuario
+    // ve un error criptico de un plugin ajeno y no sabe que basta con
+    // desactivar el modo. Mismo tratamiento que en el editor por tabla.
+    try {
+      this._modeling.updateProperties(this._selectedElement, {
+        extensionElements: extensionElements
+      });
+    } catch (err) {
+      const soloLectura = /read-only/i.test(String(err && err.message));
+
+      const texto = soloLectura
+        ? 'No se guardó: el diagrama está en solo lectura porque el modo Token Simulation '
+          + 'está activo. Desactívalo (menú «Toggle Token Simulation» o la tecla T).'
+        : `No se pudieron guardar las propiedades: ${err.message || err}`;
+
+      this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+      return;
+    }
 
     this._notifications.showNotification({ text: 'Propiedades de simulación guardadas.', type: 'info', duration: 3000 });
     this.closeModal();

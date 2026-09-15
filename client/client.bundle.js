@@ -626,9 +626,25 @@ class DataEditor {
 
     simProperty.value = simulationDataString;
 
-    this._modeling.updateProperties(this._selectedElement, {
-      extensionElements: extensionElements
-    });
+    // El modo Token Simulation deja el diagrama en SOLO LECTURA (su feature
+    // DisableModeling lanza "model is read-only"). Sin capturarlo, el usuario
+    // ve un error criptico de un plugin ajeno y no sabe que basta con
+    // desactivar el modo. Mismo tratamiento que en el editor por tabla.
+    try {
+      this._modeling.updateProperties(this._selectedElement, {
+        extensionElements: extensionElements
+      });
+    } catch (err) {
+      const soloLectura = /read-only/i.test(String(err && err.message));
+
+      const texto = soloLectura
+        ? 'No se guardó: el diagrama está en solo lectura porque el modo Token Simulation '
+          + 'está activo. Desactívalo (menú «Toggle Token Simulation» o la tecla T).'
+        : `No se pudieron guardar las propiedades: ${err.message || err}`;
+
+      this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+      return;
+    }
 
     this._notifications.showNotification({ text: 'Propiedades de simulación guardadas.', type: 'info', duration: 3000 });
     this.closeModal();
@@ -2007,9 +2023,32 @@ class DataTablePanel {
       return;
     }
 
-    changed.forEach(({ element, data }) => {
-      (0,_util__WEBPACK_IMPORTED_MODULE_0__.setSimulationData)(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
-    });
+    // El modo Token Simulation deja el diagrama en SOLO LECTURA: su feature
+    // DisableModeling intercepta los metodos de modeling y lanza
+    // "model is read-only" (DisableModeling.js:51). Se captura aqui para
+    // explicar la causa en lugar de dejar un error criptico. Como el guardado
+    // es elemento a elemento, se informa tambien de cuantos quedaron escritos:
+    // un fallo a mitad deja el diagrama a medias.
+    let escritos = 0;
+    try {
+      changed.forEach(({ element, data }) => {
+        (0,_util__WEBPACK_IMPORTED_MODULE_0__.setSimulationData)(element, data, { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
+        escritos++;
+      });
+    } catch (err) {
+      const soloLectura = /read-only/i.test(String(err && err.message));
+
+      const texto = soloLectura
+        ? 'El diagrama está en solo lectura porque el modo Token Simulation está activo. '
+          + 'Desactívalo (menú «Toggle Token Simulation» o la tecla T) y vuelve a guardar.'
+          + (escritos ? ` Se guardaron ${escritos} de ${changed.length} elementos antes de fallar.` : '')
+        : `No se pudieron guardar los datos: ${err.message || err}`;
+
+      this._setStatus(texto, 'error');
+      this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+      this._render();
+      return;
+    }
 
     this._setStatus(`${changed.length} elemento(s) actualizado(s).`, 'ok');
     this._notifications.showNotification({
