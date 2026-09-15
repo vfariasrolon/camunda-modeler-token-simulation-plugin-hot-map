@@ -105,7 +105,7 @@ Módulos que existen y conviene conocer (no documentados hasta ahora):
 
 *   **`client/simulation/SimulationPalette.js`**: Registra las métricas de la paleta de análisis y sus controles (limpiar, radio, blur). **Es el punto de entrada para añadir una métrica nueva al mapa de calor.** El mapa de calor que ves en el diagrama se define aquí, aunque el renderizado ocurra en `SimulationController.js`.
 *   **`client/simpleheat-svg.js`**: Implementación del mapa de calor sobre SVG. Es el motor de dibujo de las manchas de calor.
-*   **`client/simulation/RandomDataGenerator.js`**: Generador de datos de simulación aleatorios. Registra la acción `generateRandomSimulationData` (útil para demos y pruebas). **Ojo:** escribe un campo `cost` en las tareas y usa `unit: 'minutes'` en plural, ambos inconsistentes con el motor; es código heredado.
+*   **`client/simulation/RandomDataGenerator.js`**: Generador de datos de simulación aleatorios. Registra la acción `generateRandomSimulationData` (útil para demos y pruebas). **Ojo:** escribe un campo `cost` en las tareas que ya no se usa (el costo se calcula desde `baseRatePerHour`); es código heredado.
 *   **`client/TimeTracker.js`**: Rastreador de tiempos alternativo basado en eventos `TRACE_EVENT` del token-simulation original. **No forma parte del motor nuevo**: es una vía paralela que sigue el flujo de tokens del plugin original.
 *   **`client/HideModelerElements.js`**: Oculta elementos del panel del modeler.
 *   **`client/simulation/index.js`**, **`client/editor/index.js`**, **`client/client.js`**: Registro de servicios de inyección de dependencias y punto de entrada del cliente.
@@ -188,10 +188,19 @@ La estructura del JSON varía según el tipo de elemento.
 }
 ```
 
-> **Unidades de `arrivalRate.unit`:** el motor acepta `"second"`, `"minute"` y `"hour"`;
-> el editor solo ofrece `"minute"` y `"hour"`. **Escribe el singular** (`"minute"`, no
-> `"minutes"`): el motor no reconoce el plural. El default del editor es `{ value: 60,
-> unit: "minute" }`.
+> ⚠️ **Unidades: hay DOS convenciones distintas. No las mezcles.**
+>
+> - **`arrivalRate.unit`** → singular: `"second"` o `"hour"`. *Cualquier otro valor*
+>   (incluido `"minute"`) se trata como **minutos**. El default del editor es
+>   `{ value: 60, unit: "minute" }`.
+> - **`processingTime.unit` y `reworkTime.unit`** (tareas) → **plural**:
+>   `"seconds"`, `"minutes"` o `"hours"`. *Cualquier otro valor*, incluido el singular
+>   `"minute"`, cae al fallback de `timeToMilliseconds` (`SimulationEngine.js:11-16`),
+>   que **devuelve el número tal cual, como milisegundos**.
+>
+> Ese fallback es un **error silencioso**: un valor de `10` con `unit: "minute"` se
+> interpreta como 10 ms en lugar de 10 minutos — un factor de 60.000 — y no aparece
+> ningún aviso en consola. Escribe siempre la unidad exacta que espera cada campo.
 
 **B. Para un `bpmn:Task` (o UserTask, ScriptTask, etc.):**
 ```json
@@ -248,7 +257,7 @@ Para una distribución **triangular** (`distribution: "triangular"`), `processin
     > **sigue iterando minuto a minuto**. Antes de dar esto por cerrado, mide: una simulación
     > con muchos casos y ventanas de calendario amplias todavía puede degradarse.
 *   **Fuente Única de Verdad para la Configuración**: Un bug de bucle infinito fue causado por tener la configuración dividida en dos lugares (el `runValue` en el Proceso y el resto en el Evento de Inicio). Centralizar toda la configuración en el Evento de Inicio Raíz solucionó el problema. Es un principio de diseño clave. **Consecuencia:** no existe fallback; sin evento raíz marcado, la simulación aborta con error.
-*   **Unidades de Medida**: Un error crítico que causaba resultados de miles de años fue pasar milisegundos a una función (`addWorkingTime`) que esperaba minutos. Se debe tener extremo cuidado con las unidades de medida, especialmente al interactuar entre diferentes módulos. **Añadido:** usa el singular en las unidades (`"minute"`, no `"minutes"`); el motor no reconoce el plural, y `RandomDataGenerator.js` todavía lo emite en plural.
+*   **Unidades de Medida**: Un error crítico que causaba resultados de miles de años fue pasar milisegundos a una función (`addWorkingTime`) que esperaba minutos. Se debe tener extremo cuidado con las unidades de medida, especialmente al interactuar entre diferentes módulos. **Añadido:** hay DOS convenciones y no son intercambiables: las tareas usan **plural** (`"minutes"`, `"hours"`, `"seconds"`) y `arrivalRate` usa **singular** (`"minute"`, `"hour"`, `"second"`). En una tarea, una unidad no reconocida **no da error**: se interpreta como milisegundos. Ver el aviso ampliado en la sección de estructura JSON.
 *   **Visión a Futuro del Usuario (Modo Planificación)**: El usuario ha expresado un gran interés en una futura funcionalidad de "Modo Planificación". Esto implicaría que el usuario proporciona una **fecha límite** y el sistema debe simular si es posible cumplirla, usando proactivamente las horas extras como un recurso para acelerar las tareas. Este sería el siguiente gran paso lógico en la evolución de esta herramienta.
     > ℹ️ **Estado:** no implementado. No hay ningún campo de fecha límite ni lógica de
     > planificación en el código (`startDate` es solo la fecha de arranque de la simulación,
