@@ -4,6 +4,14 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `DOCS`: **A6 (réplicas e intervalo de confianza) queda acordado en el diseño** como primer bloque
+  de la próxima tanda, con las decisiones ya fijadas para no volver a discutirlas: el modelo
+  determinista da **intervalo de ancho cero** (no se corre N veces ni se inventa incertidumbre), el
+  intervalo se calcula **sobre la diferencia de planes emparejados** (no sobre dos medias
+  independientes), **solo las medias llevan intervalo** —un total acumulado crece con n, su intervalo
+  no significa nada— y **20 réplicas** por defecto. El motivo de que sea el bloque más urgente: hoy
+  una corrida es una réplica, así que no se puede saber si una diferencia de 1,4 min es el cambio o
+  el azar.
 * `FIX`: **el informe mentía sobre sí mismo.** Decía «una sola réplica, **sin semilla fija** y sin
   intervalo de confianza» cuando la semilla existe desde A3, y las limitaciones seguían citando «sin
   lotes ni transporte» cuando los lotes también están hechos. Un documento que miente sobre sus

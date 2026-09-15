@@ -634,17 +634,70 @@ porque una tarea de 20 kg repetida 500 veces no es lo mismo que una sola vez.
 
 ---
 
-## 9. Bloques posteriores (acordados en concepto)
+## 9. A6 · Réplicas e intervalo de confianza
+
+> **Estado: ACORDADO en concepto, sin implementar.** Es el **primer bloque de la próxima tanda**,
+> por delante de cualquier otra capacidad. Se decide ahora para que no se pierda el por qué.
+
+### 9.1 Por qué es el bloque más urgente
+
+Hoy **una corrida es una réplica**. Eso significa que si el ciclo medio sale 43,2 min y, tras un
+cambio, sale 41,8 min, **no se puede saber si la diferencia es el cambio o el azar**. Es el problema
+que un docente de simulación enseña en la primera clase, y lo primero que un evaluador pregunta.
+
+Tener la **semilla** (A3) ya resolvió media pregunta —los dos planes de una corrida comparten azar—,
+pero no el ruido de **una sola réplica**. Es el último eslabón que separa «un número» de «una
+medición».
+
+### 9.2 Qué se construye
+
+1. **Lanzador de N réplicas.** Corre el escenario N veces, cada una con una **semilla distinta**
+   (derivadas de la declarada, para que el conjunto entero sea reproducible). Devuelve una muestra
+   por réplica, no un resultado agregado.
+2. **Intervalo de confianza** sobre la media, con **t de Student** (σ desconocida, que es el caso):
+   `media ± t(α/2, n−1) · s/√n`.
+3. **Cuántas réplicas hacen falta.** La fórmula `n = (z·s/E)²` responde «quiero el intervalo con
+   este ancho, ¿cuántas corridas?». Es lo que convierte «corre más veces» en un número.
+4. **El informe imprime el intervalo junto a cada media**, y con él el tamaño de muestra.
+
+### 9.3 Las tres decisiones que hay que fijar antes de tocar código
+
+| Decisión | Propuesta | Motivo |
+|---|---|---|
+| **¿Qué pasa si el modelo es determinista?** (duración fija, sin fallos) | **n = 1 y el intervalo se declara de ancho cero**, no se corre N veces ni se inventa incertidumbre | Con fijo no hay azar: correr N veces da el mismo número. Inventar un intervalo ahí rompería justo la validación a mano que se acaba de hacer |
+| **Réplicas por defecto** | **20** | Con n < 20 la t de Student es ancha y el intervalo sale poco útil; con más, el coste de cada corrida se nota. Es un valor editable |
+| **¿Se agregan los planes?** | Los dos planes se replican con la **misma** semilla de cada réplica (números comunes), y **el intervalo se calcula sobre la DIFERENCIA** | Es la lectura correcta para comparar: la diferencia emparejada tiene menos varianza que dos medias independientes |
+| **¿Qué métricas llevan intervalo?** | Las que son media de una muestra: ciclo, coste unitario, espera, producción diaria | Un **total** acumulado (coste total) no tiene intervalo: crece con n. Confundirlos sería el error clásico |
+
+### 9.4 Lo que NO es este bloque
+
+- **No** es un optimizador ni un barrido de escenarios. Solo repite y mide el error.
+- **No** sustituye la validación a mano. La complementa: el intervalo dice cuánta confianza merece
+  el número, no si el modelo es correcto.
+- **No** toca el motor. Trabaja por encima de él, así que ningún resultado existente cambia.
+
+### 9.5 Cómo se comprobará
+
+- **Que el intervalo cubre**: con un modelo cuya media se conoce analíticamente (una sola tarea
+  exponencial, donde la teoría de colas da el resultado), el intervalo tiene que contenerla.
+- **Que encoger con n**: el ancho del intervalo baja como `1/√n`, no de cualquier manera.
+- **Que el determinista da ancho cero**, y no un intervalo minúsculo falso.
+- **Que la misma semilla reproduce el conjunto entero** de réplicas.
+
+### 9.6 Bloques posteriores (acordados en concepto)
 
 No detallados al nivel de este documento, pero **decididos** para no perderlos:
 
-- **Personas** → **movido a §8.2** (implementado en concepto allí).
-- **Operatividad** → **movido a §8.5 y §8.6**.
-- **Balanceo (diagnóstico, sin solver)** → **movido a §8.6**.
-- **Ergonomía** → **movido a §8.1, §8.4 y §8.7**.
 - **Descansos individuales**: escalonado, ventana flexible y **descansos interrumpidos o no tomados**.
-- **Zonas y distancia**: si algún día se quiere el *por dónde*; con una distancia declarada por
-  tarea no hace falta.
+- **Zonas y distancia**: el *por dónde*; hoy la distancia es un dato declarado que multiplica a la
+  masa, no un recorrido.
+- **Aviso de carga máxima** comparando `cargaMaximaKg` con la masa **por levantamiento** (hoy el
+  motor acumula toneladas y kg·m, que son otra cosa).
+- **«Con trabajo asignable»** como cuarta categoría real de tiempo muerto: hoy se declara como no
+  calculada porque haría falta reconstruir qué cola había en cada instante.
+- **Rotación de puestos** y la matriz **carga física × cognitiva × valor añadido**.
+- **Periodo de calentamiento** excluido de las estadísticas (distinto de la curva de arranque, que
+  modela que la planta empieza lenta).
 
 ---
 
@@ -662,7 +715,7 @@ No detallados al nivel de este documento, pero **decididos** para no perderlos:
 
 ---
 
-## 10. Registro de decisiones
+## 11. Registro de decisiones
 
 Para que quede **por qué**, no solo **qué**.
 
@@ -693,3 +746,7 @@ Para que quede **por qué**, no solo **qué**.
 | Sin miembros, la piscina se comporta igual | Obligar a declararlos al activar la función | Ningún diagrama existente debe cambiar de resultado |
 | El reparto entre personas va en ronda | Aleatorio o siempre la primera | Dos personas equivalentes tienen que trabajar lo mismo |
 | Tarifa de persona con la de planta como respaldo | Exigir tarifa a todo miembro | Así el coste no se mueve si no rellenas tarifas por persona |
+| **El determinista da intervalo de ancho CERO** | Correr N veces igualmente | Con duración fija no hay azar: N corridas dan el mismo número. Inventar incertidumbre rompería la validación a mano |
+| **El intervalo se calcula sobre la DIFERENCIA de planes emparejados** | Dos medias independientes | La diferencia emparejada tiene menos varianza, así que demuestra antes lo que se quiere demostrar |
+| **Solo las MEDIAS llevan intervalo, no los totales** | Poner intervalo a todo | Un total acumulado crece con n: su intervalo no significa nada. Es el error clásico |
+| **20 réplicas por defecto** | 10 o 50 | Con n < 20 la t de Student es ancha y el intervalo sale poco útil; con más, el coste por corrida se nota |
