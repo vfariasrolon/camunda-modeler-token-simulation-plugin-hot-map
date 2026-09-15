@@ -238,19 +238,36 @@
 /* Chart Panel (panel de graficos) */
 .simulation-chart-panel {
   position: absolute;
-  bottom: 20px;
-  right: 20px;
-  /* Ocupa casi todo el ancho disponible sin desbordar en pantallas pequenas. */
-  width: min(1500px, calc(100vw - 60px));
-  max-height: calc(100vh - 60px);
+  bottom: 16px;
+  /* Centrado y con margen a los lados, igual que el panel de tabla.
+     `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana
+     (Camunda reserva la paleta y el panel de propiedades), asi que
+     `calc(100vw - 60px)` desbordaba el lienzo. */
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1560px, calc(100% - 48px));
+  max-height: calc(100% - 32px);
+  /* Sin border-box, el `width` seria el del CONTENIDO y el padding de 20px se
+     sumaria por fuera: el panel acababa midiendo 40px mas de lo previsto y los
+     margenes laterales se quedaban en 5px en vez de 24. */
+  box-sizing: border-box;
   display: none;
   flex-direction: column;
   background: #fff;
   border: 1px solid #ccc;
   border-radius: 8px;
-  padding: 14px 18px 18px;
+  padding: 16px 20px 20px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, .22);
   z-index: 100;
+}
+
+/* Altura DEFINIDA solo cuando se muestra un grafico.
+   Hace falta para que los hijos flex (`.content` -> `.canvas-wrap`) repartan el
+   alto disponible: sin una altura definida en el panel, `flex: 1` no tiene contra
+   que repartir y el grafico se queda en su minimo (200 px). Las vistas de tabla
+   no llevan esta clase, asi que siguen ajustandose a su contenido. */
+.simulation-chart-panel.chart-mode {
+  height: min(700px, calc(100% - 32px));
 }
 
 .simulation-chart-panel.open {
@@ -383,14 +400,47 @@
 .simulation-chart-panel .content {
   flex: 1;
   min-height: 0;
-  max-height: 72vh;
-  overflow-y: auto;
+  /* Columna flex: deja que el envoltorio del canvas (o la tabla) ocupen
+     EXACTAMENTE el hueco que sobra en el panel, sin desbordarlo. Antes el
+     canvas tenia una altura fija en vh y, con el panel ya limitado por su
+     max-height, se salia y obligaba a desplazarse para ver el grafico entero. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .simulation-chart-panel .html-content {
-  width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+}
+
+/* Envoltorio del canvas: ocupa el hueco disponible y nada mas. Chart.js, con
+   maintainAspectRatio:false, ajusta el canvas a su contenedor, asi que el
+   grafico se ve entero y con las mismas proporciones sea cual sea el panel. */
+.simulation-chart-panel .canvas-wrap {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 220px;
+}
+
+.simulation-chart-panel .canvas-wrap.hidden {
+  display: none;
+}
+
+/* El canvas ocupa exactamente su envoltorio.
+   Se posiciona en absoluto y no con height:100% porque el envoltorio es un item
+   flex de altura computada `auto`: un porcentaje contra `auto` no resuelve en
+   Chrome, y el canvas se quedaba con su altura de atributo (520), desbordando el
+   panel y recortando el grafico. Con `inset: 0` el canvas llena la caja real.
+   `!important` porque Chart.js fija width/height en linea al redimensionar. */
+.simulation-chart-panel .canvas-wrap canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
 }
 
 /* Modal generico (Resumen General / Comparativo de Planes).
@@ -415,8 +465,9 @@
 .generic-modal {
   display: flex;
   flex-direction: column;
-  width: min(1200px, 100%);
+  width: min(1400px, 100%);
   max-height: 100%;
+  box-sizing: border-box;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, .32);
@@ -509,6 +560,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    /* Margen de seguridad: sin el, el modal toca los bordes de la ventana en
+       pantallas bajas. */
+    padding: 24px;
+    box-sizing: border-box;
     z-index: 1002; /* Above chart panel */
 }
 
@@ -522,8 +577,12 @@
     padding: 20px;
     border-radius: 8px;
     box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-    width: 90%;
-    max-width: 600px;
+    width: min(760px, 100%);
+    /* Centrado por el flex del overlay; el alto se limita al hueco disponible
+       (menos el padding del overlay) para no tocar los bordes verticales. */
+    max-height: 100%;
+    overflow-y: auto;
+    box-sizing: border-box;
 }
 
 .schedule-modal-header {
@@ -601,6 +660,15 @@
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 15px;
   padding-top: 10px;
+}
+
+/* El resumen se pinta en DOS sitios: en el modal (que ya tiene su propio
+   titulo en la cabecera) y en linea dentro del panel de graficos. El <h2> por
+   defecto salia enorme y descompensado en ambos, asi que se limita. */
+.sim-summary-container h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: #1565c0;
 }
 
 .sim-summary-grid .sim-summary-item {

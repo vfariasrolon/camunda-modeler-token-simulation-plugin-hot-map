@@ -8,6 +8,18 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
   exportación/importación de CSV, datos de prueba y validación bloqueante. Sustituye al
   modal por elemento, que sobrescribía `distribution` a `fixed` y destruía una
   distribución triangular configurada.
+* `UI`: el panel de tabla se ensancha (hasta 1560 px) y se centra, con margen a los lados
+  para no tocar los bordes. Con 12 columnas la tabla ya entra sin desplazamiento
+  horizontal en pantallas normales; antes se quedaba en 1180 px.
+* `UI`: el panel de gráficos se centra y usa el mismo ancho y márgenes. Su `box-sizing`
+  era `content-box`, así que el relleno se sumaba por fuera y los márgenes laterales
+  quedaban en 5 px en lugar de 24.
+* `FIX`: el canvas de los gráficos llena su hueco exactamente (`maintainAspectRatio:false`).
+  Antes crecía en alto con el ancho del panel (relación 2:1 por defecto) y el gráfico
+  quedaba recortado y obligaba a desplazarse.
+* `FIX`: la opción «Resumen General» del desplegable no tenía ninguna rama que la
+  atendiera: dibujaba un gráfico vacío y es la primera opción, o sea lo primero que veía
+  el usuario al abrir el panel. Ahora pinta el resumen en línea.
 * `FEAT`: pestaña **Recursos** (`resourcePools`) y columnas **Recurso** / **Cant.** en
   Tareas. El campo `resources` del motor ya se puede escribir desde la interfaz.
 * `FEAT`: informe de validación en consola con entradas y salidas, desglose de horas extra

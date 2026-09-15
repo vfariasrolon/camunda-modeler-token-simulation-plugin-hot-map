@@ -1,13 +1,24 @@
 /* Panel de edicion de datos de simulacion por tabla.
    Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):
-   panel blanco, borde #ccc, radio 8px, anclado abajo a la derecha. */
+   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */
 
 .sim-data-table-panel {
   position: absolute;
-  bottom: 20px;
-  right: 20px;
-  width: min(1180px, calc(100vw - 60px));
-  max-height: calc(100vh - 60px);
+  bottom: 16px;
+  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de
+     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y
+     dejaba el panel pegado al borde. */
+  left: 50%;
+  transform: translateX(-50%);
+  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana
+     (Camunda reserva la paleta y el panel de propiedades), asi que
+     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor
+     real, y el margen de 48px garantiza que no toque los bordes. */
+  width: min(1560px, calc(100% - 48px));
+  max-height: calc(100% - 32px);
+  /* border-box para que `width` incluya borde y padding: asi el margen de 48px
+     es el margen real a cada lado y no se lo come el relleno. */
+  box-sizing: border-box;
   display: none;
   flex-direction: column;
   background: #fff;
@@ -28,7 +39,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 14px 20px;
   border-bottom: 1px solid #eee;
   background: #fafafa;
   border-radius: 8px 8px 0 0;
@@ -90,7 +101,7 @@
 .sim-data-table-panel .panel-tabs {
   display: flex;
   gap: 2px;
-  padding: 0 16px;
+  padding: 0 20px;
   border-bottom: 1px solid #eee;
   background: #fafafa;
 }
@@ -120,7 +131,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 14px 16px;
+  padding: 16px 20px;
 }
 
 .sim-data-table-panel .empty {
@@ -277,7 +288,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
+  padding: 14px 20px;
   border-top: 1px solid #eee;
   background: #fafafa;
   border-radius: 0 0 8px 8px;

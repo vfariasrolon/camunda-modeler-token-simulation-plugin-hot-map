@@ -57,7 +57,13 @@ export default class ChartPanel {
         </div>
         <div class="content">
           <div class="html-content"></div>
-          <canvas id="simulationChartCanvas"></canvas>
+          <!-- Envoltorio con ALTO DEFINIDO. Chart.js (con maintainAspectRatio:false)
+               ajusta el canvas al tamano de su contenedor; sin este alto el canvas
+               heredaba la relacion 2:1 por defecto y un panel ancho producia un
+               grafico desproporcionadamente alto que obligaba a desplazarse. -->
+          <div class="canvas-wrap">
+            <canvas id="simulationChartCanvas"></canvas>
+          </div>
         </div>
         <div class="help-content hidden">
           <h4>Ayuda de Gráficos y Tablas de Simulación</h4>
@@ -146,6 +152,7 @@ export default class ChartPanel {
     this.chartSelect = this._container.querySelector('select.chart-select');
     this.content = this._container.querySelector('.content');
     this.canvas = this._container.querySelector('#simulationChartCanvas');
+    this.canvasWrap = this._container.querySelector('.canvas-wrap');
     this.modalOverlay = this._container.querySelector('.generic-modal-overlay');
     this.modalClose = this._container.querySelector('.generic-modal .close-modal');
 
@@ -179,6 +186,11 @@ export default class ChartPanel {
     const htmlContent = this._container.querySelector('.html-content');
     htmlContent.innerHTML = html;
     domClasses(this.canvas).add('hidden');
+    // Se oculta tambien el envoltorio: si no, dejaria un hueco vacio debajo de
+    // la tabla. Y se sale del modo grafico, para que el panel vuelva a ajustar
+    // su alto al contenido.
+    domClasses(this.canvasWrap).add('hidden');
+    domClasses(this._container).remove('chart-mode');
     domClasses(htmlContent).remove('hidden');
   }
 
@@ -186,6 +198,10 @@ export default class ChartPanel {
     const htmlContent = this._container.querySelector('.html-content');
     htmlContent.innerHTML = ''; // Clear it
     domClasses(this.canvas).remove('hidden');
+    domClasses(this.canvasWrap).remove('hidden');
+    // Modo grafico: fija el alto del panel para que el canvas tenga contra que
+    // repartir el espacio (ver .chart-mode en simulation.css).
+    domClasses(this._container).add('chart-mode');
     domClasses(htmlContent).add('hidden');
   }
 

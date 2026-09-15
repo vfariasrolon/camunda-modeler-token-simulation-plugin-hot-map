@@ -749,6 +749,22 @@ export default class SimulationController {
   showChart() {
     const metric = this._chartPanel.getChartType();
 
+    // "Resumen General" del desplegable es una VISTA, no un grafico. No habia
+    // ninguna rama para ella, asi que caia al camino del canvas con una metrica
+    // sin datos y dibujaba un grafico VACIO. Y es la PRIMERA opcion del
+    // desplegable, o sea lo primero que ve el usuario al abrir el panel.
+    // Se pinta en linea (y no en el modal) para no abrir una ventana sola al
+    // mostrar el panel; el modal sigue disponible en el boton de la cabecera.
+    if (metric === 'overallSummary') {
+      if (!this.normalReport || !this.overtimeReport) {
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+        this._chartPanel.showHtmlContent('<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles.</p>');
+        return;
+      }
+      this._chartPanel.showHtmlContent(this.createOverallSummary(this.overtimeReport, this.normalReport));
+      return;
+    }
+
     // This metric does not require a simulation run
     if (metric === 'inputParams') {
       const data = this.getInputParametersData();
@@ -827,6 +843,10 @@ export default class SimulationController {
           ]
         },
         options: {
+          // El canvas se ajusta al envoltorio (.canvas-wrap), que tiene un alto
+          // definido: asi el grafico no se estira en alto al ensanchar el panel.
+          responsive: true,
+          maintainAspectRatio: false,
           scales: {
             y: {
               beginAtZero: true,
@@ -844,6 +864,10 @@ export default class SimulationController {
     if (metric === 'pareto' || metric === 'paretoTime' || metric === 'paretoCost') chartType = 'bar';
 
     const options = {
+        // El canvas se ajusta al envoltorio (.canvas-wrap), que tiene un alto
+        // definido: asi el grafico no se estira en alto al ensanchar el panel.
+        responsive: true,
+        maintainAspectRatio: false,
         scales: {
             y: {
                 type: 'linear',
