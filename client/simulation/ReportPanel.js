@@ -288,6 +288,8 @@ export default class ReportPanel {
       // veredicto tienen que leer el mismo número.
       labor: (overtime && overtime.labor) || null,
       laborDescripcion: (overtime && overtime.laborDescripcion) || null,
+      // La semilla de la corrida: el informe la imprime para que se pueda repetir.
+      semilla: (overtime && overtime.semilla) || null,
       cumplimiento: (overtime && overtime.compliance) || null,
       primasDeDia: suma(overtime, 'totalDayPremiumCost'),
       primasDia: (overtime && overtime.dayPremiums) || null,
@@ -358,6 +360,12 @@ export default class ReportPanel {
         <tr><th>Días laborables simulados</th><td class="num">${ent(ctx.dias)}</td>
             <th class="num">Media de piezas por día</th><td class="num">${num(porDia, 1)}</td></tr>
         <tr><th>Reparto de llegadas</th><td colspan="3">${esc(this._llegada(ctx))}</td></tr>
+        <tr><th>Semilla de la corrida</th><td colspan="3">${
+          ctx.semilla
+            ? `<code>${esc(String(ctx.semilla))}</code> — con esta semilla la corrida se <strong>reproduce
+              exactamente</strong>. Es lo que permite repetirla o auditarla dentro de meses.`
+            : 'no declarada'
+        }</td></tr>
         <tr><th>Reglas laborales</th><td colspan="3">${esc(ctx.laborDescripcion || '(sin reglas declaradas)')}</td></tr>
         ${ctx.cumplimiento ? `<tr><th>Cumplimiento de topes</th><td colspan="3">${
           (ctx.cumplimiento.semanasSobreLimite > 0 || ctx.cumplimiento.diasSobreLimiteDiario > 0 || ctx.cumplimiento.semanasSobreDias > 0)
@@ -418,10 +426,13 @@ export default class ReportPanel {
 
       <div class="aviso">
         <strong>Advertencia metodológica.</strong> Estos resultados salen de <strong>una sola
-        réplica</strong> del modelo, sin semilla fija y sin intervalo de confianza. El motor no repite
-        corridas ni reporta error estadístico, así que diferencias pequeñas entre escenarios pueden ser
-        ruido. Con distribución de duración <em>fija</em> y sin fallos el modelo es determinista y no hay
-        tal incertidumbre. Antes de decidir con una diferencia concreta, repita la corrida.
+        réplica</strong> del modelo y <strong>sin intervalo de confianza</strong>. El motor repite la corrida
+        exactamente si le das la misma semilla${ctx.semilla ? ` (<strong>${ctx.semilla}</strong>)` : ''}, pero
+        <strong>no lanza N réplicas ni agrega el error estadístico</strong>, así que diferencias pequeñas
+        entre escenarios pueden ser ruido. Con distribución de duración <em>fija</em> y sin fallos el modelo
+        es determinista y no hay tal incertidumbre. Antes de decidir con una diferencia concreta,
+        <strong>cambia la semilla y repite la corrida varias veces</strong>: si el rango se solapa, la
+        diferencia no está demostrada.
       </div>
     `;
   }
@@ -450,8 +461,12 @@ export default class ReportPanel {
         <strong>no</strong> representa chatarra ni pérdida de piezas.</li>
       </ul>
       <div class="aviso">
-        <strong>Limitaciones conocidas.</strong> Sin turnos múltiples, sin lotes ni transporte, sin averías, sin
-        prioridades en las colas, sin periodo de calentamiento excluido y sin réplicas ni intervalos de confianza.
+        <strong>Limitaciones conocidas.</strong> Sin turnos múltiples (un solo bloque de jornada por día),
+        sin averías de máquina, sin prioridades en las colas, y <strong>sin réplicas automáticas ni intervalo
+        de confianza</strong>: cada corrida es una réplica y el intervalo se calcula a mano repitiendo con
+        semillas distintas. Sin <em>periodo de calentamiento</em> excluido, el transitorio inicial entra en
+        los resultados. El motor <strong>sí</strong> modela lotes en serie, transporte declarado por tarea y
+        carga física; lo que no modela es el movimiento entre puestos.
       </div>
     `;
   }
@@ -1127,8 +1142,9 @@ export default class ReportPanel {
       <ul>${puntos.map((p) => `<li>${p}</li>`).join('')}</ul>
       <h3>Qué haría a continuación</h3>
       <ul>
-        <li>Repetir la corrida varias veces antes de dar por buena cualquier diferencia pequeña (una sola réplica
-        no tiene intervalo de confianza).</li>
+        <li><strong>Repetir la corrida cambiando la semilla</strong> antes de dar por buena cualquier
+        diferencia pequeña: esta es una sola réplica y no tiene intervalo de confianza. Con la
+        <em>misma</em> semilla se reproduce igual, así que para estimar el ruido hay que cambiarla.</li>
         <li>Validar el escenario con duración <em>fija</em> y sin fallos: así todo resultado se recalcula a mano.</li>
         <li>Probar el escenario alternativo que ataque el hallazgo principal y comparar coste por pieza, no coste total.</li>
       </ul>

@@ -159,10 +159,12 @@ export default class ChartPanel {
           <p>
             Con distribución <em>fija</em> y sin fallos el modelo es <strong>determinista</strong>
             y los resultados se pueden recalcular a mano: valide así primero. Con
-            distribuciones aleatorias, cada corrida es <strong>una sola réplica</strong>: el
-            plugin no usa semilla fija, ni réplicas, ni intervalos de confianza, así que una
-            diferencia entre escenarios puede ser ruido. Repita la corrida varias veces antes
-            de dar por buena una diferencia.
+            distribuciones aleatorias, cada corrida es <strong>una sola réplica</strong> y el
+            intervalo de confianza se calcula a mano: <strong>cambia la semilla y repite la
+            corrida varias veces</strong>. Con la misma semilla se reproduce exactamente (y eso
+            permite comparar dos planes sobre el mismo azar), así que para estimar el ruido hay
+            que cambiarla. Si los rangos de las corridas se solapan, la diferencia no está
+            demostrada.
           </p>
         </div>
         <div class="generic-modal-overlay hidden">

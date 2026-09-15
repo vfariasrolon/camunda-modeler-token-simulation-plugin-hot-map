@@ -353,6 +353,10 @@ export default class SimulationController {
         // motor APLICO tras resolver la vigencia por fecha. El informe tiene que
         // imprimir lo aplicado, que es lo que permite auditar la corrida.
         labor: this._simulationEngine.labor ? JSON.parse(JSON.stringify(this._simulationEngine.labor)) : null,
+        // La SEMILLA que se uso. Sin esto el informe no puede decir si una corrida
+        // es repetible, que es lo primero que pregunta quien va a auditar el
+        // documento: con la semilla se reproduce tal cual, sin ella es una foto.
+        semilla: this._simulationEngine.seed,
         laborDescripcion: this._simulationEngine.labor
             ? describeLabor(this._simulationEngine.labor)
             : null,

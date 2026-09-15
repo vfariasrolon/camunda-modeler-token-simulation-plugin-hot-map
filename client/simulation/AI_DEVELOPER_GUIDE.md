@@ -753,9 +753,16 @@ sospechar del motor cuando el error está en el test.
 
 `docs/GUIA_SIMULACION.md` es la guía extensa para el analista: teoría de colas, matemática de
 la triangular, cupo semanal, fórmula exacta de costos, método de validación y una sección
-explícita de lo que el plugin **no** hace (sin semilla, sin réplicas, sin intervalos de
+explícita de lo que el plugin **no** hace (sin réplicas automáticas, sin intervalos de
 confianza, sin periodo de calentamiento). Si cambias la semántica del motor, **actualiza ese
 documento**: es lo que lee quien va a decidir con los números.
+
+⚠️ **Y actualiza también los textos del informe y del panel de gráficos.** Ya pasó una vez: la
+semilla se añadió en A3 y el informe siguió diciendo durante varios bloques que «no usa semilla
+fija», y las limitaciones seguían citando «sin lotes» cuando los lotes llevaban desde A3. Un
+documento que miente sobre sí mismo es peor que uno incompleto: quien lo audita deja de fiarse de
+todo lo demás. Los sitios a revisar al tocar el motor son `ReportPanel.js` (advertencia
+metodológica, limitaciones y «qué haría a continuación») y `ChartPanel.js` (la ayuda).
 
 ---
 

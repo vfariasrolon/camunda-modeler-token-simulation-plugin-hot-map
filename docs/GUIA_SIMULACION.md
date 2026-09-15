@@ -939,13 +939,18 @@ Esto es lo más importante del documento para quien vaya a **decidir** con estos
    exactamente lo mismo y comparar planes es limpio. **Empieza siempre así.**
 
 2. **Con distribuciones aleatorias, una diferencia entre planes NO es
-   automáticamente real.** Parte de la diferencia es ruido de muestreo. Y como los dos
-   planes usan flujos aleatorios independientes, ese ruido **no se cancela**: se suma.
+   automáticamente real.** Parte de la diferencia es ruido de muestreo.
+
+   Lo que **sí** está resuelto: los dos planes de una misma corrida (normal y con horas extra)
+   comparten la **misma secuencia de azar**, así que la diferencia entre *esos dos planes* se debe
+   al plan y no a la suerte (§4.4). Lo que **no** está resuelto es el ruido de **una sola réplica**:
+   si cambias el modelo y vuelves a correr, no sabes cuánto del cambio es efecto y cuánto es azar.
 
 3. **Cómo sortearlo hoy** (sin tocar el código):
 
-   - Ejecuta cada plan **varias veces** y compara las distribuciones de resultados, no
-     un único número. Si los rangos se solapan, la diferencia no está demostrada.
+   - Ejecuta cada escenario **varias veces cambiando la semilla** y compara los rangos de
+     resultados, no un único número. Si los rangos se solapan, la diferencia no está demostrada.
+     Cambiar la semilla es imprescindible: con la misma, la corrida sale idéntica.
    - Fija la distribución a `fija` para la duración y deja la aleatoriedad solo donde
      te interese (p. ej. fallos al 0 %): aislarás el efecto que quieres medir.
    - Para decisiones de inversión, trata los resultados como **cotas orientativas**, no
@@ -970,9 +975,10 @@ Deliberadamente explícitas, para que no se confundan con funcionalidad ausente:
    correcto pero su coste crece con la duración simulada. En corridas de decenas de
    miles de minutos puede notarse.
 3. **Sin turnos múltiples**: un solo bloque de jornada por día.
-4. **Sin métricas de transporte ni de distancia**: se retiraron porque el motor no las
-   calculaba. Los **lotes** sí están modelados (§4.3); el *por dónde* y el *cuánto pesa*
-   llegar hasta ahí, no.
+4. **Sin métricas de transporte ni de movimiento entre puestos.** Los **lotes** sí están modelados
+   (§4.3) y la **carga física** también (masa cargada/arrastrada y distancia por tarea, §4.8), pero
+   el motor no modela *por dónde* se mueve ni el tiempo de ir de un puesto a otro: la distancia es un
+   dato declarado que multiplica a la masa, no un recorrido.
 5. **La espera no se penaliza si `waitCostPerHour = 0`**: las colas aparecerán en el
    tiempo, no en el coste.
 6. **Terminación**: si un caso no llega nunca a un elemento sin salida, no se cuenta

@@ -4,7 +4,17 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
-* `CHORE`: **los arneses de verificación se versionan** en `verificacion/` (10 ficheros, **352
+* `FIX`: **el informe mentía sobre sí mismo.** Decía «una sola réplica, **sin semilla fija** y sin
+  intervalo de confianza» cuando la semilla existe desde A3, y las limitaciones seguían citando «sin
+  lotes ni transporte» cuando los lotes también están hechos. Un documento que miente sobre sus
+  propias capacidades es peor que uno incompleto: quien lo audita deja de fiarse de todo lo demás.
+  Ahora el informe **imprime la semilla que se usó** en la portada, con la frase que la hace útil
+  («con esta semilla la corrida se reproduce exactamente»), y distingue lo que **sí** está resuelto
+  (los dos planes de una corrida comparten azar) de lo que **no** (el ruido de una sola réplica).
+* `FEAT`: **arnés de verificación que impide que vuelva a pasar** (`11-textos-sin-mentir.mjs`). Cada
+  afirmación de «no hace X» se comprueba contra el código: si implementas X y dejas el texto, el
+  arnés **falla y te obliga a actualizarlo**. Probado poniendo el texto falso a propósito: lo caza.
+* `CHORE`: **los arneses de verificación se versionan** en `verificacion/` (11 ficheros, **379
   comprobaciones**) con un comando único: `pnpm run verificar`. Estaban fuera del repositorio y se
   habrían perdido al reiniciar la máquina, que es justo lo contrario de lo que hace falta para
   validar durante semanas. Los arneses **no reimplementan nada**: copian el código del plugin y lo
