@@ -31,13 +31,5 @@ module.exports = function (electronApp, menuState) {
     action: function () {
       electronApp.emit('menu:action', 'resetTokenSimulation');
     }
-  }, {
-    role: 'separator'
-  }, {
-    label: 'Insertar Lógica de Simulación (Datos Aleatorios)',
-    enabled,
-    action: function () {
-      electronApp.emit('menu:action', 'generateRandomSimulationData');
-    }
   }];
 };

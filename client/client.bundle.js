@@ -1530,6 +1530,8 @@ const download = (filename, text) => {
 // ---------------------------------------------------------------------------
 
 const TableIcon = '<path d="M20 3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 4H4V5h16v2zm-10 4h3v3h-3v-3zm0 5h3v3h-3v-3zm-5-5h3v3H5v-3zm0 5h3v3H5v-3zm11-5h3v3h-3v-3zm0 5h3v3h-3v-3z"/>';
+// Estrella de cuatro puntas: "generar datos de prueba".
+const TestDataIcon = '<path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.2-1.4L12 2z"/>';
 const ExportIcon = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
 const ImportIcon = '<path d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/>';
 const CloseIcon = '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>';
@@ -1563,6 +1565,7 @@ class DataTablePanel {
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
           <div class="panel-actions">
+            <button class="btn-test" title="Datos de prueba" data-tip="Rellena la pestaña con datos de prueba, para revisarlos antes de guardar">${svg(TestDataIcon)}</button>
             <button class="btn-export" title="Exportar CSV" data-tip="Exportar la pestaña actual a CSV (para Excel)">${svg(ExportIcon)}</button>
             <button class="btn-import" title="Importar CSV" data-tip="Importar un CSV exportado, editado en Excel">${svg(ImportIcon)}</button>
             <button class="btn-close" title="Cerrar" data-tip="Cerrar la tabla" data-tip-pos="left">${svg(CloseIcon)}</button>
@@ -1590,6 +1593,7 @@ class DataTablePanel {
 
     min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
     min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
+    min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
     min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
     min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
     min_dom__WEBPACK_IMPORTED_MODULE_2__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
@@ -1904,6 +1908,80 @@ class DataTablePanel {
 
     writes.push({ element: info.element, data });
     return writes;
+  }
+
+  /**
+   * Rellena la pestaña activa con datos de prueba.
+   *
+   * IMPORTANTE: escribe en las CELDAS de la tabla, no en el diagrama. El boton
+   * del menu de la aplicacion escribia directamente en el BPMN, sobrescribiendo
+   * lo que hubiera sin posibilidad de revisarlo. Aqui los valores quedan a la
+   * vista, se pueden corregir a mano y solo se aplican al pulsar "Guardar todo".
+   * Ademas, como no se guarda nada, un clic accidental solo cuesta los cambios
+   * que hubiera sin guardar en la tabla.
+   *
+   * Los rangos son los mismos que usaba RandomDataGenerator, que ya estaban
+   * revisados: tiempo de proceso 5-45 min, fallo 1-30%, retrabajo 5-30 min.
+   */
+  generarDatosDePrueba() {
+    if (this._activeTab === 'global') {
+      this._setStatus('Los datos de prueba aplican a Tareas y Flujos. En Global define tu propio escenario.', 'info');
+      return;
+    }
+
+    const filas = Array.from(this._body.querySelectorAll('tbody tr'));
+    if (!filas.length) {
+      this._setStatus('No hay filas que rellenar en esta pestaña.', 'info');
+      return;
+    }
+
+    if (this._activeTab === 'tasks') {
+      filas.forEach((tr) => {
+        const poner = (campo, valor) => {
+          const el = tr.querySelector(`[data-field="${campo}"]`);
+          if (el) el.value = valor;
+        };
+
+        poner('processingTime.value', this._azar(5, 45));
+        poner('processingTime.unit', 'minutes');
+        poner('failureRate', (0.01 + Math.random() * 0.29).toFixed(2));
+        poner('reworkTime.value', this._azar(5, 30));
+        poner('reworkTime.unit', 'minutes');
+      });
+
+      this._setStatus(`${filas.length} tarea(s) rellenadas con datos de prueba. Revisa y pulsa «Guardar todo».`, 'ok');
+      return;
+    }
+
+    // Flujos: las probabilidades se reparten por COMPUERTA y suman 1. Generarlas
+    // sueltas seria peor que no generarlas: el motor, si la suma no es 1, manda
+    // toda la masa sobrante a la ULTIMA rama, asi que una salida configurada al
+    // 30% terminaria recibiendo el 70%.
+    const porCompuerta = new Map();
+    filas.forEach((tr) => {
+      const el = this._elementRegistry.get(tr.dataset.elId);
+      if (!el || !el.source) return;
+      const lista = porCompuerta.get(el.source.id) || [];
+      lista.push(tr);
+      porCompuerta.set(el.source.id, lista);
+    });
+
+    porCompuerta.forEach((lista) => {
+      let resto = 1;
+      lista.forEach((tr, i) => {
+        const ultima = i === lista.length - 1;
+        const p = ultima ? resto : Number((Math.random() * resto * 0.7).toFixed(2));
+        resto = Number((resto - p).toFixed(2));
+        const campo = tr.querySelector('[data-field="branchingProbability"]');
+        if (campo) campo.value = p;
+      });
+    });
+
+    this._setStatus(`${filas.length} flujo(s) rellenados; cada compuerta suma 1. Revisa y pulsa «Guardar todo».`, 'ok');
+  }
+
+  _azar(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
   save() {
