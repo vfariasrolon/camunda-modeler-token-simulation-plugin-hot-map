@@ -1038,6 +1038,55 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/'/g, '&#39;');
 
 // ---------------------------------------------------------------------------
+// Reparto de compuertas.
+//
+// El motor guarda `branchingProbability` como FRACCION (0-1), pero nadie piensa
+// en fracciones: se piensa en porcentajes. La interfaz muestra y edita en %, y
+// convierte al guardar.
+//
+// Se redondea a 2 decimales de porcentaje (0,01 %) y la ULTIMA salida de cada
+// compuerta se calcula por RESTA, no por redondeo. Sin eso la suma se queda en
+// 99,99 % y el motor, que acumula probabilidades, mandaria ese resto a la ultima
+// rama: un reparto "casi" correcto que descuadra en silencio.
+// ---------------------------------------------------------------------------
+const redondear2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * Holgura admitida al comprobar que el reparto suma 100 %.
+ *
+ * 0,5 puntos porcentuales. El reparto automatico cuadra al centesimo, pero un
+ * BPMN editado a mano o un CSV pueden traer polvo de redondeo (33,33 x 3 =
+ * 99,99). Se usa la MISMA tolerancia en el indicador y en la validacion para que
+ * el color no contradiga a lo que se puede guardar.
+ */
+const TOLERANCIA_REPARTO_PCT = 0.5;
+
+/**
+ * Dos salidas se consideran «iguales» si difieren menos que esto (puntos
+ * porcentuales).
+ *
+ * Existe por estetica y por coherencia: un reparto equitativo previo queda
+ * guardado como 33,33 / 33,34 por el redondeo. Al reajustar, un reparto
+ * ESTRICTAMENTE proporcional de esos dos valores da 39,99 / 40,01, que parece un
+ * error aunque sume 100. Con esta holgura se reparten a partes iguales y sale
+ * 40 / 40. Es lo bastante estrecha para no igualar un reparto de verdad distinto.
+ */
+const IGUALDAD_REPARTO_PCT = 0.05;
+
+/** Fraccion 0-1 -> texto de porcentaje ("0.2" -> "20", "0.3333" -> "33.33"). */
+const pctATexto = (p) => String(redondear2((Number(p) || 0) * 100));
+
+/**
+ * Identificador listo para un selector de atributo.
+ *
+ * Los ids de BPMN suelen ser seguros, pero un diagrama importado puede traer
+ * cualquiera. Sin escapar, un id con comilla romperia la consulta.
+ */
+const selectorSeguro = (id) => (typeof CSS !== 'undefined' && CSS.escape
+  ? CSS.escape(String(id))
+  : String(id).replace(/["\\]/g, '\\$&'));
+
+// ---------------------------------------------------------------------------
 // CSV
 // ---------------------------------------------------------------------------
 const csvEscape = (value) => {
@@ -1610,37 +1659,207 @@ class DataTablePanel {
       </tr>`;
   }
 
-  _renderFlows() {
-    const flows = this._getFlows();
+  /**
+   * Compuertas exclusivas con sus salidas, agrupadas.
+   *
+   * Agrupar es imprescindible porque el reparto se valida POR COMPUERTA: cada
+   * compuerta reparte su propio 100 %.
+   */
+  _gruposDeFlujos() {
+    const grupos = new Map();
+    this._getFlows().forEach((el) => {
+      const gw = el.source;
+      if (!gw) return;
+      if (!grupos.has(gw.id)) grupos.set(gw.id, { gateway: gw, flows: [] });
+      grupos.get(gw.id).flows.push(el);
+    });
+    return grupos;
+  }
 
-    if (!flows.length) {
+  /** Una compuerta de una sola salida siempre se toma: su reparto no se lee. */
+  _salidaUnica(gateway) {
+    return Boolean(gateway) && (gateway.outgoing || []).length <= 1;
+  }
+
+  _renderFlows() {
+    const grupos = this._gruposDeFlujos();
+
+    if (!grupos.size) {
       this._body.innerHTML = '<p class="empty">No hay flujos salientes de compuertas exclusivas.</p>';
       return;
     }
+
+    const filas = [];
+
+    grupos.forEach(({ gateway, flows }) => {
+      const unica = this._salidaUnica(gateway);
+
+      flows.forEach((el, i) => {
+        const primera = i === 0;
+        const guardado = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el) || {};
+        // Sin dato guardado se muestra el reparto que usaria el MOTOR
+        // (1 / numero de salidas). Asi lo que se ve es lo que va a pasar.
+        const p = typeof guardado.branchingProbability === 'number'
+          ? guardado.branchingProbability
+          : 1 / flows.length;
+
+        const destino = el.target ? this._label(el.target) : '(sin destino)';
+
+        filas.push(`
+          <tr data-el-id="${el.id}" data-gw="${esc(gateway.id)}"${primera ? ' class="grupo-inicio"' : ''}>
+            <td class="col-gw">${primera
+              ? `<span class="gw-nombre" title="${esc(this._label(gateway))}">${esc(this._label(gateway))}</span>`
+                + (unica
+                  ? '<span class="suma ok" title="Esta compuerta solo tiene una salida: siempre se toma.">única salida · 100 %</span>'
+                  : `<span class="suma" data-suma="${esc(gateway.id)}">—</span>`)
+              : '<span class="continuacion" title="Otra salida de la compuerta de arriba">↳</span>'}</td>
+            <td title="${esc(el.target ? this._label(el.target) : '')}">${esc(destino)}</td>
+            <td><span class="pct">
+              <input type="number" step="any" min="0" max="100" class="cell mini"
+                data-field="branchingProbability" value="${unica ? '100' : pctATexto(p)}"
+                ${unica ? 'disabled title="La compuerta tiene una sola salida: siempre se toma, su reparto es 100 %."' : ''}>
+              <span class="pct-signo">%</span>
+            </span></td>
+          </tr>`);
+      });
+    });
 
     this._body.innerHTML = `
       <table class="data-table">
         <thead>
           <tr>
-            <th>Compuerta</th>
+            <th class="col-gw">Compuerta</th>
             <th>Hacia</th>
-            <th>Probabilidad</th>
+            <th>Reparto</th>
           </tr>
         </thead>
-        <tbody>
-          ${flows.map((el) => {
-            const d = this._flowData(el);
-            return `
-              <tr data-el-id="${el.id}">
-                <td title="${esc(this._label(el.source))}">${esc(this._label(el.source))}</td>
-                <td title="${esc(el.target ? this._label(el.target) : '')}">${esc(el.target ? this._label(el.target) : '(sin destino)')}</td>
-                <td><input type="number" step="0.01" min="0" max="1" class="cell" data-field="branchingProbability" value="${d.branchingProbability}"></td>
-              </tr>`;
-          }).join('')}
-        </tbody>
+        <tbody>${filas.join('')}</tbody>
       </table>
-      <p class="hint">La probabilidad es por flujo saliente. Normalmente deben sumar 1 entre todas las salidas de la misma compuerta.</p>
+      <p class="hint">
+        El reparto se mide en <strong>%</strong> y debe <strong>sumar 100 en cada compuerta</strong>:
+        el motor elige <em>exactamente una</em> salida por caso, así que no existe un porcentaje que
+        «se pierda». Al cambiar una salida, <strong>el resto se ajusta solo</strong> para mantener el 100 %.
+      </p>
+      <p class="hint">
+        Solo se configuran las compuertas <strong>exclusivas</strong>. En las demás (inclusivas, por
+        evento) el motor toma siempre la primera salida, así que no hay reparto que ajustar.
+      </p>
     `;
+
+    this._bindReparto();
+  }
+
+  /** Conecta las casillas del reparto y pinta la suma inicial de cada compuerta. */
+  _bindReparto() {
+    this._body.querySelectorAll('[data-field="branchingProbability"]').forEach((input) => {
+      if (input.disabled) return;
+
+      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(input, 'input', () => {
+        this._equilibrar(input);
+        this._refrescarSumas();
+      });
+
+      // Al salir del campo se sanea el valor: vacio o ilegible -> 0, y fuera de
+      // rango -> al limite. Sin esto el campo podia quedarse en -10 y el
+      // indicador decia "100 %" (la suma los recortaba) mientras el guardado lo
+      // bloqueaba: indicador y validacion se contradecian.
+      min_dom__WEBPACK_IMPORTED_MODULE_3__.event.bind(input, 'change', () => {
+        const crudo = String(input.value).replace(',', '.');
+        const n = Number(crudo);
+        if (crudo.trim() === '' || Number.isNaN(n)) input.value = '0';
+        else if (n < 0) input.value = '0';
+        else if (n > 100) input.value = '100';
+        this._equilibrar(input);
+        this._refrescarSumas();
+      });
+    });
+
+    this._refrescarSumas();
+  }
+
+  /** Filas (salidas) de una compuerta, en el orden de la tabla. */
+  _filasDeCompuerta(gwId) {
+    return Array.from(this._body.querySelectorAll(`tr[data-gw="${selectorSeguro(gwId)}"]`));
+  }
+
+  _valorPct(fila) {
+    const campo = fila && fila.querySelector('[data-field="branchingProbability"]');
+    if (!campo) return 0;
+    const n = Number(String(campo.value).replace(',', '.'));
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  /**
+   * Reparte el 100 % entre las salidas de la compuerta del campo editado.
+   *
+   * Es lo que hace intuitivo el panel: se escribe el porcentaje de UNA salida y
+   * el resto se acomoda. La ULTIMA salida se calcula por RESTA para que la suma
+   * sea exactamente 100.
+   *
+   * Si las demas salidas estaban todas iguales (incluido el caso de estar todas
+   * a cero) se reparte a partes iguales. Eso ademas evita el feo 39,99 / 40,01:
+   * el reparto proporcional de 33,33 y 33,34 da ese redondeo, mientras que a
+   * partes iguales da 40 y 40.
+   */
+  _equilibrar(input) {
+    const tr = input.closest('tr');
+    if (!tr) return;
+
+    const otras = this._filasDeCompuerta(tr.dataset.gw).filter((fila) => fila !== tr);
+    if (!otras.length) return;
+
+    const crudo = Number(String(input.value).replace(',', '.'));
+    const propio = Number.isNaN(crudo) ? 0 : Math.min(100, Math.max(0, crudo));
+    const restante = redondear2(100 - propio);
+
+    const previos = otras.map((fila) => Math.max(0, this._valorPct(fila)));
+    const totalPrevio = previos.reduce((a, b) => a + b, 0);
+    const iguales = previos.every((v) => Math.abs(v - previos[0]) <= IGUALDAD_REPARTO_PCT);
+
+    let asignado = 0;
+
+    otras.forEach((fila, i) => {
+      const campo = fila.querySelector('[data-field="branchingProbability"]');
+      if (!campo) return;
+
+      let valor;
+      if (i === otras.length - 1) {
+        valor = redondear2(restante - asignado); // absorbe el redondeo
+      } else if (iguales) {
+        valor = redondear2(restante / otras.length);
+      } else {
+        valor = redondear2(restante * (previos[i] / totalPrevio));
+      }
+
+      if (valor < 0) valor = 0;
+      campo.value = String(valor);
+      asignado = redondear2(asignado + valor);
+    });
+  }
+
+  /**
+   * Actualiza el indicador de suma de cada compuerta.
+   *
+   * Solo informa: mantener el 100 % ya lo hace _equilibrar(). Sirve para que se
+   * vea de un vistazo cuando la suma no da 100 (p. ej. tras importar un CSV o
+   * abrir un BPMN editado a mano), y usa LA MISMA tolerancia que la validación
+   * para que el color no contradiga a lo que se puede guardar.
+   *
+   * La suma NO recorta los valores: un -10 tiene que hacer bajar el total y
+   * pintar el aviso en rojo, igual que lo rechazaria la validacion al guardar.
+   */
+  _refrescarSumas() {
+    this._body.querySelectorAll('[data-suma]').forEach((chip) => {
+      const filas = this._filasDeCompuerta(chip.dataset.suma);
+      const suma = redondear2(filas.reduce((acc, fila) => acc + this._valorPct(fila), 0));
+      const cuadra = Math.abs(suma - 100) <= TOLERANCIA_REPARTO_PCT;
+
+      chip.textContent = `${suma} %`;
+      chip.className = 'suma ' + (cuadra ? 'ok' : 'mal');
+      chip.title = cuadra
+        ? 'Las salidas de esta compuerta suman 100 %.'
+        : `Las salidas de esta compuerta suman ${suma} %: deben sumar 100 %.`;
+    });
   }
 
   _renderGlobal() {
@@ -1880,14 +2099,47 @@ class DataTablePanel {
     }
 
     if (this._activeTab === 'flows') {
+      // Se agrupa por compuerta: el reparto se valida POR COMPUERTA, no fila a
+      // fila, porque el motor elige exactamente una salida por caso. Validar
+      // solo el rango 0-100 permitia guardar un reparto que sumaba 150 % y el
+      // motor, que acumula, mandaba todo lo sobrante a la ultima rama.
+      const porCompuerta = new Map();
+
       this._body.querySelectorAll('tbody tr').forEach((tr) => {
         const el = this._elementRegistry.get(tr.dataset.elId);
-        if (!el) return;
-        const raw = tr.querySelector('[data-field="branchingProbability"]').value;
-        const p = this._num(raw, `${this._label(el.source)} → ${el.target ? this._label(el.target) : '?'}`, tr);
-        if (p < 0 || p > 1) throw new Error(`Probabilidad fuera de rango (0-1): «${raw}»`);
-        writes.push({ element: el, data: { ...this._flowData(el), branchingProbability: p } });
+        if (!el || !el.source) return;
+
+        // Compuerta de una sola salida: el motor siempre la toma y no lee su
+        // reparto, asi que ni se valida ni se escribe.
+        if (this._salidaUnica(el.source)) return;
+
+        const etiqueta = `${this._label(el.source)} → ${el.target ? this._label(el.target) : '?'}`;
+        const pct = this._num(this._valorPct(tr), `${etiqueta} · reparto (%)`);
+        if (pct < 0 || pct > 100) {
+          throw new Error(`${etiqueta}: el reparto debe estar entre 0 y 100 % (has puesto ${pct})`);
+        }
+
+        const grupo = porCompuerta.get(el.source.id) || { gateway: el.source, filas: [] };
+        grupo.filas.push({ el, pct });
+        porCompuerta.set(el.source.id, grupo);
       });
+
+      porCompuerta.forEach(({ gateway, filas }) => {
+        const total = redondear2(filas.reduce((acc, f) => acc + f.pct, 0));
+        if (Math.abs(total - 100) > TOLERANCIA_REPARTO_PCT) {
+          throw new Error(
+            `«${this._label(gateway)}»: el reparto de sus ${filas.length} salidas suma ${total} % `
+            + 'y debe sumar 100 %'
+          );
+        }
+        filas.forEach(({ el, pct }) => {
+          writes.push({
+            element: el,
+            data: { ...this._flowData(el), branchingProbability: Math.round(pct * 100) / 10000 }
+          });
+        });
+      });
+
       return writes;
     }
 
@@ -2019,10 +2271,11 @@ class DataTablePanel {
       return;
     }
 
-    // Flujos: las probabilidades se reparten por COMPUERTA y suman 1. Generarlas
-    // sueltas seria peor que no generarlas: el motor, si la suma no es 1, manda
-    // toda la masa sobrante a la ULTIMA rama, asi que una salida configurada al
-    // 30% terminaria recibiendo el 70%.
+    // Flujos: el reparto se reparte por COMPUERTA en porcentajes ENTEROS que
+    // suman 100 exactos. Generarlos sueltos seria peor que no generarlos: el
+    // motor acumula las probabilidades, asi que una suma distinta de 100 manda
+    // todo el sobrante a la ultima rama, y una salida configurada al 30 % puede
+    // acabar recibiendo el 70 %.
     const porCompuerta = new Map();
     filas.forEach((tr) => {
       const el = this._elementRegistry.get(tr.dataset.elId);
@@ -2032,18 +2285,43 @@ class DataTablePanel {
       porCompuerta.set(el.source.id, lista);
     });
 
+    let compuertas = 0;
+
     porCompuerta.forEach((lista) => {
-      let resto = 1;
-      lista.forEach((tr, i) => {
-        const ultima = i === lista.length - 1;
-        const p = ultima ? resto : Number((Math.random() * resto * 0.7).toFixed(2));
-        resto = Number((resto - p).toFixed(2));
-        const campo = tr.querySelector('[data-field="branchingProbability"]');
-        if (campo) campo.value = p;
+      // Solo las filas editables: una compuerta de una sola salida esta fija al
+      // 100 % y no participa en el reparto.
+      const campos = lista
+        .map((tr) => tr.querySelector('[data-field="branchingProbability"]'))
+        .filter((campo) => campo && !campo.disabled);
+      if (!campos.length) return;
+      compuertas++;
+
+      let resto = 100;
+      campos.forEach((campo, i) => {
+        const restantes = campos.length - 1 - i;
+        let p;
+
+        if (restantes === 0) {
+          p = resto; // el ultimo absorbe el resto: suma exacta
+        } else {
+          // Se reserva al menos 1 % para cada salida que queda, para no crear
+          // ramas muertas (al 0 % nunca se toman).
+          const tope = Math.max(1, resto - restantes);
+          p = Math.min(tope, Math.max(1, Math.round(Math.random() * tope * 0.7)));
+        }
+
+        resto -= p;
+        campo.value = String(p);
       });
     });
 
-    this._setStatus(`${filas.length} flujo(s) rellenados; cada compuerta suma 1. Revisa y pulsa «Guardar todo».`, 'ok');
+    this._refrescarSumas();
+
+    this._setStatus(
+      `${filas.length} flujo(s) rellenados en ${compuertas} compuerta(s); cada una suma 100 %. `
+      + 'Revisa y pulsa «Guardar todo».',
+      'ok'
+    );
   }
 
   _azar(min, max) {
@@ -2190,10 +2468,18 @@ class DataTablePanel {
     }
 
     if (this._activeTab === 'flows') {
-      const rows = [ [ 'id', 'compuerta', 'hacia', 'probabilidad' ] ];
+      // La columna se llama `probabilidad_pct` y va en % (0-100), no en fraccion:
+      // es lo que muestra y edita la tabla. Un CSV exportado antes de este cambio
+      // trae `probabilidad` en 0-1 y se sigue importando (ver _applyCsv).
+      const rows = [ [ 'id', 'compuerta', 'hacia', 'probabilidad_pct' ] ];
       this._getFlows().forEach((el) => {
         const d = this._flowData(el);
-        rows.push([ el.id, this._label(el.source), el.target ? this._label(el.target) : '', d.branchingProbability ]);
+        rows.push([
+          el.id,
+          this._label(el.source),
+          el.target ? this._label(el.target) : '',
+          this._salidaUnica(el.source) ? '100' : pctATexto(d.branchingProbability)
+        ]);
       });
       return rows;
     }
@@ -2353,15 +2639,66 @@ class DataTablePanel {
 
     if (this._activeTab === 'flows') {
       const iId = idx('id');
-      const iP = idx('probabilidad');
+
+      // Formato nuevo: `probabilidad_pct` en % (0-100). Formato heredado:
+      // `probabilidad` en fraccion (0-1). Se aceptan los dos para no romper un
+      // CSV exportado antes del cambio.
+      const iPct = header.indexOf('probabilidad_pct');
+      const iHeredado = header.indexOf('probabilidad');
+      if (iPct === -1 && iHeredado === -1) {
+        throw new Error('Falta la columna «probabilidad_pct» en el CSV');
+      }
+      const iValor = iPct !== -1 ? iPct : iHeredado;
+
+      // Igual que al guardar: se agrupa por compuerta para validar que cada una
+      // sume 100 %.
+      const porCompuerta = new Map();
+
       body.forEach((r, n) => {
         const line = n + 2;
         const el = this._elementRegistry.get(String(r[iId]).trim());
         if (!el) throw new Error(`Línea ${line}: no existe el elemento «${r[iId]}»`);
-        const p = this._num(r[iP], `Línea ${line}: probabilidad`);
-        if (p < 0 || p > 1) throw new Error(`Línea ${line}: la probabilidad debe estar entre 0 y 1`);
-        updates.push({ element: el, data: { ...this._flowData(el), branchingProbability: p } });
+        if (!el.source) throw new Error(`Línea ${line}: el flujo no tiene compuerta de origen`);
+
+        if (this._salidaUnica(el.source)) return; // su reparto no se lee
+
+        const bruto = this._num(r[iValor], `Línea ${line}: reparto`);
+
+        // El formato heredado se detecta por el NOMBRE de la columna, no por el
+        // valor: adivinar por magnitud convertiria un 1 % legitimo en 100 %.
+        let pct;
+        if (iPct === -1) {
+          if (bruto < 0 || bruto > 1) {
+            throw new Error(`Línea ${line}: «probabilidad» va en fracción (0-1) pero vale ${bruto}`);
+          }
+          pct = redondear2(bruto * 100);
+        } else {
+          if (bruto < 0 || bruto > 100) {
+            throw new Error(`Línea ${line}: el reparto debe estar entre 0 y 100 % (vale ${bruto})`);
+          }
+          pct = redondear2(bruto);
+        }
+
+        const grupo = porCompuerta.get(el.source.id) || { gateway: el.source, filas: [] };
+        grupo.filas.push({ el, pct });
+        porCompuerta.set(el.source.id, grupo);
       });
+
+      porCompuerta.forEach(({ gateway, filas }) => {
+        const total = redondear2(filas.reduce((acc, f) => acc + f.pct, 0));
+        if (Math.abs(total - 100) > TOLERANCIA_REPARTO_PCT) {
+          throw new Error(
+            `El reparto de las salidas de «${this._label(gateway)}» suma ${total} % y debe sumar 100 %`
+          );
+        }
+        filas.forEach(({ el, pct }) => {
+          updates.push({
+            element: el,
+            data: { ...this._flowData(el), branchingProbability: Math.round(pct * 100) / 10000 }
+          });
+        });
+      });
+
       return updates;
     }
 
@@ -15059,6 +15396,83 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   white-space: nowrap;
 }
 
+/* --- pestaña Flujos: reparto de compuertas --- */
+
+/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex
+   para que el nombre se recorte con puntos suspensivos si es largo pero el
+   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */
+.sim-data-table-panel .data-table td.col-gw,
+.sim-data-table-panel .data-table th.col-gw {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 230px;
+  max-width: 360px;
+}
+
+.sim-data-table-panel .col-gw .gw-nombre {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */
+.sim-data-table-panel .continuacion {
+  color: #9e9e9e;
+  padding-left: 8px;
+}
+
+/* Indicador de la suma por compuerta. */
+.sim-data-table-panel .suma {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: #eee;
+  color: #555;
+  white-space: nowrap;
+}
+
+.sim-data-table-panel .suma.ok {
+  background: #e6f4ea;
+  color: #0a7d32;
+}
+
+.sim-data-table-panel .suma.mal {
+  background: #fdecea;
+  color: #c62828;
+}
+
+/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */
+.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {
+  border-top: 2px solid #e0e0e0;
+}
+
+/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */
+.sim-data-table-panel .pct {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sim-data-table-panel .pct .cell.mini {
+  min-width: 64px;
+  text-align: right;
+}
+
+.sim-data-table-panel .pct-signo {
+  font-size: 12px;
+  color: #777;
+}
+
+.sim-data-table-panel .cell:disabled {
+  background: #f4f4f4;
+  color: #888;
+  cursor: not-allowed;
+}
+
 .sim-data-table-panel .data-table td.col-campo {
   width: 46%;
   color: #444;
@@ -15287,7 +15701,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   fill: currentColor;
   display: block;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 

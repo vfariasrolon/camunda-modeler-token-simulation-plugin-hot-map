@@ -4,6 +4,17 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: el reparto de las compuertas exclusivas se muestra y edita en **%** en vez de en
+  fracciones (0-1), con un indicador de la suma por compuerta. Al cambiar una salida, **el
+  resto se ajusta solo** para mantener el 100 %: a partes iguales si estaban iguales, y en
+  proporción a lo que tuvieran si no. La última salida se calcula por resta, así que la suma
+  es exacta (nada de 99,99 %).
+* `FEAT`: el guardado **bloquea** una compuerta cuyo reparto no sume 100 %. No es una
+  preferencia: el motor acumula las probabilidades, así que un reparto que no cuadre manda
+  todo el sobrante a la última rama (o deja ramas inalcanzables) sin ningún aviso.
+* `FEAT`: las compuertas de una sola salida aparecen fijas al 100 % y deshabilitadas: el
+  motor siempre las toma y no lee su probabilidad. Se explica también que solo las
+  compuertas exclusivas usan este reparto.
 * `FEAT`: edición de datos por tabla (pestañas Tareas, Flujos, Recursos y Global) con
   exportación/importación de CSV, datos de prueba y validación bloqueante. Sustituye al
   modal por elemento, que sobrescribía `distribution` a `fixed` y destruía una

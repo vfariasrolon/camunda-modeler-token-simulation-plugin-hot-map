@@ -330,6 +330,41 @@ es código heredado y se ignora.
 }
 ```
 
+⚠️ **El valor se guarda como FRACCIÓN (0-1), pero la interfaz muestra y edita en %.**
+
+La tabla de datos muestra `78` con un sufijo `%` y guarda `0.78`. Toda la conversión vive en
+`DataTablePanel.js`, con tres constantes declaradas juntas:
+
+| Constante | Para qué |
+|---|---|
+| `TOLERANCIA_REPARTO_PCT` (0,5) | Holgura al comprobar que el reparto suma 100 %. La usan **el indicador y la validación**, para que el color no contradiga a lo que se puede guardar. |
+| `IGUALDAD_REPARTO_PCT` (0,05) | Dos salidas se consideran «iguales» por debajo de esta diferencia, para que un reparto equitativo vuelva a salir redondo (40/40) y no 39,99/40,01. |
+| `redondear2` / `pctATexto` | Redondeo a 2 decimales de porcentaje y conversión fracción ↔ texto. |
+
+⚠️ **Invariante: las salidas de cada compuerta exclusiva deben sumar 100 %.** No es una
+preferencia de estilo: `findNextElements` **acumula** las probabilidades y elige la primera
+rama cuyo acumulado alcance el número aleatorio. Si la suma no llega a 1, el resto de los
+casos cae en la **última** rama (`if (!chosenFlow) chosenFlow = element.outgoing[...]`), y si
+la supera, **las últimas ramas nunca se eligen**. Por eso:
+
+- El editor **autoajusta**: al cambiar una salida, reparte el resto (a partes iguales si
+  estaban iguales; en proporción a lo que tuvieran si no). La última se calcula por resta
+  para que la suma sea exacta.
+- El guardado **bloquea** una compuerta cuya suma se aleje más de `TOLERANCIA_REPARTO_PCT`.
+- Una compuerta con **una sola salida** no se valida ni se escribe: el motor la toma siempre
+  porque su rama `else` no consulta la probabilidad. En la tabla aparece fija al 100 % y
+  deshabilitada.
+- Solo las compuertas **exclusivas** usan esta probabilidad. En inclusivas y por evento el
+  motor toma `element.outgoing[0]` sin mirar los datos.
+
+**CSV:** la columna es `probabilidad_pct` (0-100). Al **importar** también se acepta el
+nombre antiguo `probabilidad` (0-1) para no romper un CSV exportado antes del cambio; el
+formato se decide por el **nombre de la columna**, nunca por la magnitud del valor (adivinar
+convertiría un 1 % legítimo en 100 %).
+
+**Lo que NO hay que hacer:** normalizar en silencio al guardar. El autoajuste solo actúa
+mientras se edita; lo que venga de un CSV o de un BPMN a mano se valida, no se corrige solo.
+
 **D. Para el Proceso (`bpmn:Process`) o un Participante (`bpmn:Participant`):**
 ```json
 {

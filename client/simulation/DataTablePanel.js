@@ -91,6 +91,55 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/'/g, '&#39;');
 
 // ---------------------------------------------------------------------------
+// Reparto de compuertas.
+//
+// El motor guarda `branchingProbability` como FRACCION (0-1), pero nadie piensa
+// en fracciones: se piensa en porcentajes. La interfaz muestra y edita en %, y
+// convierte al guardar.
+//
+// Se redondea a 2 decimales de porcentaje (0,01 %) y la ULTIMA salida de cada
+// compuerta se calcula por RESTA, no por redondeo. Sin eso la suma se queda en
+// 99,99 % y el motor, que acumula probabilidades, mandaria ese resto a la ultima
+// rama: un reparto "casi" correcto que descuadra en silencio.
+// ---------------------------------------------------------------------------
+const redondear2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * Holgura admitida al comprobar que el reparto suma 100 %.
+ *
+ * 0,5 puntos porcentuales. El reparto automatico cuadra al centesimo, pero un
+ * BPMN editado a mano o un CSV pueden traer polvo de redondeo (33,33 x 3 =
+ * 99,99). Se usa la MISMA tolerancia en el indicador y en la validacion para que
+ * el color no contradiga a lo que se puede guardar.
+ */
+const TOLERANCIA_REPARTO_PCT = 0.5;
+
+/**
+ * Dos salidas se consideran «iguales» si difieren menos que esto (puntos
+ * porcentuales).
+ *
+ * Existe por estetica y por coherencia: un reparto equitativo previo queda
+ * guardado como 33,33 / 33,34 por el redondeo. Al reajustar, un reparto
+ * ESTRICTAMENTE proporcional de esos dos valores da 39,99 / 40,01, que parece un
+ * error aunque sume 100. Con esta holgura se reparten a partes iguales y sale
+ * 40 / 40. Es lo bastante estrecha para no igualar un reparto de verdad distinto.
+ */
+const IGUALDAD_REPARTO_PCT = 0.05;
+
+/** Fraccion 0-1 -> texto de porcentaje ("0.2" -> "20", "0.3333" -> "33.33"). */
+const pctATexto = (p) => String(redondear2((Number(p) || 0) * 100));
+
+/**
+ * Identificador listo para un selector de atributo.
+ *
+ * Los ids de BPMN suelen ser seguros, pero un diagrama importado puede traer
+ * cualquiera. Sin escapar, un id con comilla romperia la consulta.
+ */
+const selectorSeguro = (id) => (typeof CSS !== 'undefined' && CSS.escape
+  ? CSS.escape(String(id))
+  : String(id).replace(/["\\]/g, '\\$&'));
+
+// ---------------------------------------------------------------------------
 // CSV
 // ---------------------------------------------------------------------------
 const csvEscape = (value) => {
@@ -663,37 +712,207 @@ export default class DataTablePanel {
       </tr>`;
   }
 
-  _renderFlows() {
-    const flows = this._getFlows();
+  /**
+   * Compuertas exclusivas con sus salidas, agrupadas.
+   *
+   * Agrupar es imprescindible porque el reparto se valida POR COMPUERTA: cada
+   * compuerta reparte su propio 100 %.
+   */
+  _gruposDeFlujos() {
+    const grupos = new Map();
+    this._getFlows().forEach((el) => {
+      const gw = el.source;
+      if (!gw) return;
+      if (!grupos.has(gw.id)) grupos.set(gw.id, { gateway: gw, flows: [] });
+      grupos.get(gw.id).flows.push(el);
+    });
+    return grupos;
+  }
 
-    if (!flows.length) {
+  /** Una compuerta de una sola salida siempre se toma: su reparto no se lee. */
+  _salidaUnica(gateway) {
+    return Boolean(gateway) && (gateway.outgoing || []).length <= 1;
+  }
+
+  _renderFlows() {
+    const grupos = this._gruposDeFlujos();
+
+    if (!grupos.size) {
       this._body.innerHTML = '<p class="empty">No hay flujos salientes de compuertas exclusivas.</p>';
       return;
     }
+
+    const filas = [];
+
+    grupos.forEach(({ gateway, flows }) => {
+      const unica = this._salidaUnica(gateway);
+
+      flows.forEach((el, i) => {
+        const primera = i === 0;
+        const guardado = getSimulationData(el) || {};
+        // Sin dato guardado se muestra el reparto que usaria el MOTOR
+        // (1 / numero de salidas). Asi lo que se ve es lo que va a pasar.
+        const p = typeof guardado.branchingProbability === 'number'
+          ? guardado.branchingProbability
+          : 1 / flows.length;
+
+        const destino = el.target ? this._label(el.target) : '(sin destino)';
+
+        filas.push(`
+          <tr data-el-id="${el.id}" data-gw="${esc(gateway.id)}"${primera ? ' class="grupo-inicio"' : ''}>
+            <td class="col-gw">${primera
+              ? `<span class="gw-nombre" title="${esc(this._label(gateway))}">${esc(this._label(gateway))}</span>`
+                + (unica
+                  ? '<span class="suma ok" title="Esta compuerta solo tiene una salida: siempre se toma.">única salida · 100 %</span>'
+                  : `<span class="suma" data-suma="${esc(gateway.id)}">—</span>`)
+              : '<span class="continuacion" title="Otra salida de la compuerta de arriba">↳</span>'}</td>
+            <td title="${esc(el.target ? this._label(el.target) : '')}">${esc(destino)}</td>
+            <td><span class="pct">
+              <input type="number" step="any" min="0" max="100" class="cell mini"
+                data-field="branchingProbability" value="${unica ? '100' : pctATexto(p)}"
+                ${unica ? 'disabled title="La compuerta tiene una sola salida: siempre se toma, su reparto es 100 %."' : ''}>
+              <span class="pct-signo">%</span>
+            </span></td>
+          </tr>`);
+      });
+    });
 
     this._body.innerHTML = `
       <table class="data-table">
         <thead>
           <tr>
-            <th>Compuerta</th>
+            <th class="col-gw">Compuerta</th>
             <th>Hacia</th>
-            <th>Probabilidad</th>
+            <th>Reparto</th>
           </tr>
         </thead>
-        <tbody>
-          ${flows.map((el) => {
-            const d = this._flowData(el);
-            return `
-              <tr data-el-id="${el.id}">
-                <td title="${esc(this._label(el.source))}">${esc(this._label(el.source))}</td>
-                <td title="${esc(el.target ? this._label(el.target) : '')}">${esc(el.target ? this._label(el.target) : '(sin destino)')}</td>
-                <td><input type="number" step="0.01" min="0" max="1" class="cell" data-field="branchingProbability" value="${d.branchingProbability}"></td>
-              </tr>`;
-          }).join('')}
-        </tbody>
+        <tbody>${filas.join('')}</tbody>
       </table>
-      <p class="hint">La probabilidad es por flujo saliente. Normalmente deben sumar 1 entre todas las salidas de la misma compuerta.</p>
+      <p class="hint">
+        El reparto se mide en <strong>%</strong> y debe <strong>sumar 100 en cada compuerta</strong>:
+        el motor elige <em>exactamente una</em> salida por caso, así que no existe un porcentaje que
+        «se pierda». Al cambiar una salida, <strong>el resto se ajusta solo</strong> para mantener el 100 %.
+      </p>
+      <p class="hint">
+        Solo se configuran las compuertas <strong>exclusivas</strong>. En las demás (inclusivas, por
+        evento) el motor toma siempre la primera salida, así que no hay reparto que ajustar.
+      </p>
     `;
+
+    this._bindReparto();
+  }
+
+  /** Conecta las casillas del reparto y pinta la suma inicial de cada compuerta. */
+  _bindReparto() {
+    this._body.querySelectorAll('[data-field="branchingProbability"]').forEach((input) => {
+      if (input.disabled) return;
+
+      domEvent.bind(input, 'input', () => {
+        this._equilibrar(input);
+        this._refrescarSumas();
+      });
+
+      // Al salir del campo se sanea el valor: vacio o ilegible -> 0, y fuera de
+      // rango -> al limite. Sin esto el campo podia quedarse en -10 y el
+      // indicador decia "100 %" (la suma los recortaba) mientras el guardado lo
+      // bloqueaba: indicador y validacion se contradecian.
+      domEvent.bind(input, 'change', () => {
+        const crudo = String(input.value).replace(',', '.');
+        const n = Number(crudo);
+        if (crudo.trim() === '' || Number.isNaN(n)) input.value = '0';
+        else if (n < 0) input.value = '0';
+        else if (n > 100) input.value = '100';
+        this._equilibrar(input);
+        this._refrescarSumas();
+      });
+    });
+
+    this._refrescarSumas();
+  }
+
+  /** Filas (salidas) de una compuerta, en el orden de la tabla. */
+  _filasDeCompuerta(gwId) {
+    return Array.from(this._body.querySelectorAll(`tr[data-gw="${selectorSeguro(gwId)}"]`));
+  }
+
+  _valorPct(fila) {
+    const campo = fila && fila.querySelector('[data-field="branchingProbability"]');
+    if (!campo) return 0;
+    const n = Number(String(campo.value).replace(',', '.'));
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  /**
+   * Reparte el 100 % entre las salidas de la compuerta del campo editado.
+   *
+   * Es lo que hace intuitivo el panel: se escribe el porcentaje de UNA salida y
+   * el resto se acomoda. La ULTIMA salida se calcula por RESTA para que la suma
+   * sea exactamente 100.
+   *
+   * Si las demas salidas estaban todas iguales (incluido el caso de estar todas
+   * a cero) se reparte a partes iguales. Eso ademas evita el feo 39,99 / 40,01:
+   * el reparto proporcional de 33,33 y 33,34 da ese redondeo, mientras que a
+   * partes iguales da 40 y 40.
+   */
+  _equilibrar(input) {
+    const tr = input.closest('tr');
+    if (!tr) return;
+
+    const otras = this._filasDeCompuerta(tr.dataset.gw).filter((fila) => fila !== tr);
+    if (!otras.length) return;
+
+    const crudo = Number(String(input.value).replace(',', '.'));
+    const propio = Number.isNaN(crudo) ? 0 : Math.min(100, Math.max(0, crudo));
+    const restante = redondear2(100 - propio);
+
+    const previos = otras.map((fila) => Math.max(0, this._valorPct(fila)));
+    const totalPrevio = previos.reduce((a, b) => a + b, 0);
+    const iguales = previos.every((v) => Math.abs(v - previos[0]) <= IGUALDAD_REPARTO_PCT);
+
+    let asignado = 0;
+
+    otras.forEach((fila, i) => {
+      const campo = fila.querySelector('[data-field="branchingProbability"]');
+      if (!campo) return;
+
+      let valor;
+      if (i === otras.length - 1) {
+        valor = redondear2(restante - asignado); // absorbe el redondeo
+      } else if (iguales) {
+        valor = redondear2(restante / otras.length);
+      } else {
+        valor = redondear2(restante * (previos[i] / totalPrevio));
+      }
+
+      if (valor < 0) valor = 0;
+      campo.value = String(valor);
+      asignado = redondear2(asignado + valor);
+    });
+  }
+
+  /**
+   * Actualiza el indicador de suma de cada compuerta.
+   *
+   * Solo informa: mantener el 100 % ya lo hace _equilibrar(). Sirve para que se
+   * vea de un vistazo cuando la suma no da 100 (p. ej. tras importar un CSV o
+   * abrir un BPMN editado a mano), y usa LA MISMA tolerancia que la validación
+   * para que el color no contradiga a lo que se puede guardar.
+   *
+   * La suma NO recorta los valores: un -10 tiene que hacer bajar el total y
+   * pintar el aviso en rojo, igual que lo rechazaria la validacion al guardar.
+   */
+  _refrescarSumas() {
+    this._body.querySelectorAll('[data-suma]').forEach((chip) => {
+      const filas = this._filasDeCompuerta(chip.dataset.suma);
+      const suma = redondear2(filas.reduce((acc, fila) => acc + this._valorPct(fila), 0));
+      const cuadra = Math.abs(suma - 100) <= TOLERANCIA_REPARTO_PCT;
+
+      chip.textContent = `${suma} %`;
+      chip.className = 'suma ' + (cuadra ? 'ok' : 'mal');
+      chip.title = cuadra
+        ? 'Las salidas de esta compuerta suman 100 %.'
+        : `Las salidas de esta compuerta suman ${suma} %: deben sumar 100 %.`;
+    });
   }
 
   _renderGlobal() {
@@ -933,14 +1152,47 @@ export default class DataTablePanel {
     }
 
     if (this._activeTab === 'flows') {
+      // Se agrupa por compuerta: el reparto se valida POR COMPUERTA, no fila a
+      // fila, porque el motor elige exactamente una salida por caso. Validar
+      // solo el rango 0-100 permitia guardar un reparto que sumaba 150 % y el
+      // motor, que acumula, mandaba todo lo sobrante a la ultima rama.
+      const porCompuerta = new Map();
+
       this._body.querySelectorAll('tbody tr').forEach((tr) => {
         const el = this._elementRegistry.get(tr.dataset.elId);
-        if (!el) return;
-        const raw = tr.querySelector('[data-field="branchingProbability"]').value;
-        const p = this._num(raw, `${this._label(el.source)} → ${el.target ? this._label(el.target) : '?'}`, tr);
-        if (p < 0 || p > 1) throw new Error(`Probabilidad fuera de rango (0-1): «${raw}»`);
-        writes.push({ element: el, data: { ...this._flowData(el), branchingProbability: p } });
+        if (!el || !el.source) return;
+
+        // Compuerta de una sola salida: el motor siempre la toma y no lee su
+        // reparto, asi que ni se valida ni se escribe.
+        if (this._salidaUnica(el.source)) return;
+
+        const etiqueta = `${this._label(el.source)} → ${el.target ? this._label(el.target) : '?'}`;
+        const pct = this._num(this._valorPct(tr), `${etiqueta} · reparto (%)`);
+        if (pct < 0 || pct > 100) {
+          throw new Error(`${etiqueta}: el reparto debe estar entre 0 y 100 % (has puesto ${pct})`);
+        }
+
+        const grupo = porCompuerta.get(el.source.id) || { gateway: el.source, filas: [] };
+        grupo.filas.push({ el, pct });
+        porCompuerta.set(el.source.id, grupo);
       });
+
+      porCompuerta.forEach(({ gateway, filas }) => {
+        const total = redondear2(filas.reduce((acc, f) => acc + f.pct, 0));
+        if (Math.abs(total - 100) > TOLERANCIA_REPARTO_PCT) {
+          throw new Error(
+            `«${this._label(gateway)}»: el reparto de sus ${filas.length} salidas suma ${total} % `
+            + 'y debe sumar 100 %'
+          );
+        }
+        filas.forEach(({ el, pct }) => {
+          writes.push({
+            element: el,
+            data: { ...this._flowData(el), branchingProbability: Math.round(pct * 100) / 10000 }
+          });
+        });
+      });
+
       return writes;
     }
 
@@ -1072,10 +1324,11 @@ export default class DataTablePanel {
       return;
     }
 
-    // Flujos: las probabilidades se reparten por COMPUERTA y suman 1. Generarlas
-    // sueltas seria peor que no generarlas: el motor, si la suma no es 1, manda
-    // toda la masa sobrante a la ULTIMA rama, asi que una salida configurada al
-    // 30% terminaria recibiendo el 70%.
+    // Flujos: el reparto se reparte por COMPUERTA en porcentajes ENTEROS que
+    // suman 100 exactos. Generarlos sueltos seria peor que no generarlos: el
+    // motor acumula las probabilidades, asi que una suma distinta de 100 manda
+    // todo el sobrante a la ultima rama, y una salida configurada al 30 % puede
+    // acabar recibiendo el 70 %.
     const porCompuerta = new Map();
     filas.forEach((tr) => {
       const el = this._elementRegistry.get(tr.dataset.elId);
@@ -1085,18 +1338,43 @@ export default class DataTablePanel {
       porCompuerta.set(el.source.id, lista);
     });
 
+    let compuertas = 0;
+
     porCompuerta.forEach((lista) => {
-      let resto = 1;
-      lista.forEach((tr, i) => {
-        const ultima = i === lista.length - 1;
-        const p = ultima ? resto : Number((Math.random() * resto * 0.7).toFixed(2));
-        resto = Number((resto - p).toFixed(2));
-        const campo = tr.querySelector('[data-field="branchingProbability"]');
-        if (campo) campo.value = p;
+      // Solo las filas editables: una compuerta de una sola salida esta fija al
+      // 100 % y no participa en el reparto.
+      const campos = lista
+        .map((tr) => tr.querySelector('[data-field="branchingProbability"]'))
+        .filter((campo) => campo && !campo.disabled);
+      if (!campos.length) return;
+      compuertas++;
+
+      let resto = 100;
+      campos.forEach((campo, i) => {
+        const restantes = campos.length - 1 - i;
+        let p;
+
+        if (restantes === 0) {
+          p = resto; // el ultimo absorbe el resto: suma exacta
+        } else {
+          // Se reserva al menos 1 % para cada salida que queda, para no crear
+          // ramas muertas (al 0 % nunca se toman).
+          const tope = Math.max(1, resto - restantes);
+          p = Math.min(tope, Math.max(1, Math.round(Math.random() * tope * 0.7)));
+        }
+
+        resto -= p;
+        campo.value = String(p);
       });
     });
 
-    this._setStatus(`${filas.length} flujo(s) rellenados; cada compuerta suma 1. Revisa y pulsa «Guardar todo».`, 'ok');
+    this._refrescarSumas();
+
+    this._setStatus(
+      `${filas.length} flujo(s) rellenados en ${compuertas} compuerta(s); cada una suma 100 %. `
+      + 'Revisa y pulsa «Guardar todo».',
+      'ok'
+    );
   }
 
   _azar(min, max) {
@@ -1243,10 +1521,18 @@ export default class DataTablePanel {
     }
 
     if (this._activeTab === 'flows') {
-      const rows = [ [ 'id', 'compuerta', 'hacia', 'probabilidad' ] ];
+      // La columna se llama `probabilidad_pct` y va en % (0-100), no en fraccion:
+      // es lo que muestra y edita la tabla. Un CSV exportado antes de este cambio
+      // trae `probabilidad` en 0-1 y se sigue importando (ver _applyCsv).
+      const rows = [ [ 'id', 'compuerta', 'hacia', 'probabilidad_pct' ] ];
       this._getFlows().forEach((el) => {
         const d = this._flowData(el);
-        rows.push([ el.id, this._label(el.source), el.target ? this._label(el.target) : '', d.branchingProbability ]);
+        rows.push([
+          el.id,
+          this._label(el.source),
+          el.target ? this._label(el.target) : '',
+          this._salidaUnica(el.source) ? '100' : pctATexto(d.branchingProbability)
+        ]);
       });
       return rows;
     }
@@ -1406,15 +1692,66 @@ export default class DataTablePanel {
 
     if (this._activeTab === 'flows') {
       const iId = idx('id');
-      const iP = idx('probabilidad');
+
+      // Formato nuevo: `probabilidad_pct` en % (0-100). Formato heredado:
+      // `probabilidad` en fraccion (0-1). Se aceptan los dos para no romper un
+      // CSV exportado antes del cambio.
+      const iPct = header.indexOf('probabilidad_pct');
+      const iHeredado = header.indexOf('probabilidad');
+      if (iPct === -1 && iHeredado === -1) {
+        throw new Error('Falta la columna «probabilidad_pct» en el CSV');
+      }
+      const iValor = iPct !== -1 ? iPct : iHeredado;
+
+      // Igual que al guardar: se agrupa por compuerta para validar que cada una
+      // sume 100 %.
+      const porCompuerta = new Map();
+
       body.forEach((r, n) => {
         const line = n + 2;
         const el = this._elementRegistry.get(String(r[iId]).trim());
         if (!el) throw new Error(`Línea ${line}: no existe el elemento «${r[iId]}»`);
-        const p = this._num(r[iP], `Línea ${line}: probabilidad`);
-        if (p < 0 || p > 1) throw new Error(`Línea ${line}: la probabilidad debe estar entre 0 y 1`);
-        updates.push({ element: el, data: { ...this._flowData(el), branchingProbability: p } });
+        if (!el.source) throw new Error(`Línea ${line}: el flujo no tiene compuerta de origen`);
+
+        if (this._salidaUnica(el.source)) return; // su reparto no se lee
+
+        const bruto = this._num(r[iValor], `Línea ${line}: reparto`);
+
+        // El formato heredado se detecta por el NOMBRE de la columna, no por el
+        // valor: adivinar por magnitud convertiria un 1 % legitimo en 100 %.
+        let pct;
+        if (iPct === -1) {
+          if (bruto < 0 || bruto > 1) {
+            throw new Error(`Línea ${line}: «probabilidad» va en fracción (0-1) pero vale ${bruto}`);
+          }
+          pct = redondear2(bruto * 100);
+        } else {
+          if (bruto < 0 || bruto > 100) {
+            throw new Error(`Línea ${line}: el reparto debe estar entre 0 y 100 % (vale ${bruto})`);
+          }
+          pct = redondear2(bruto);
+        }
+
+        const grupo = porCompuerta.get(el.source.id) || { gateway: el.source, filas: [] };
+        grupo.filas.push({ el, pct });
+        porCompuerta.set(el.source.id, grupo);
       });
+
+      porCompuerta.forEach(({ gateway, filas }) => {
+        const total = redondear2(filas.reduce((acc, f) => acc + f.pct, 0));
+        if (Math.abs(total - 100) > TOLERANCIA_REPARTO_PCT) {
+          throw new Error(
+            `El reparto de las salidas de «${this._label(gateway)}» suma ${total} % y debe sumar 100 %`
+          );
+        }
+        filas.forEach(({ el, pct }) => {
+          updates.push({
+            element: el,
+            data: { ...this._flowData(el), branchingProbability: Math.round(pct * 100) / 10000 }
+          });
+        });
+      });
+
       return updates;
     }
 

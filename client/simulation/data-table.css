@@ -195,6 +195,83 @@
   white-space: nowrap;
 }
 
+/* --- pestaña Flujos: reparto de compuertas --- */
+
+/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex
+   para que el nombre se recorte con puntos suspensivos si es largo pero el
+   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */
+.sim-data-table-panel .data-table td.col-gw,
+.sim-data-table-panel .data-table th.col-gw {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 230px;
+  max-width: 360px;
+}
+
+.sim-data-table-panel .col-gw .gw-nombre {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */
+.sim-data-table-panel .continuacion {
+  color: #9e9e9e;
+  padding-left: 8px;
+}
+
+/* Indicador de la suma por compuerta. */
+.sim-data-table-panel .suma {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: #eee;
+  color: #555;
+  white-space: nowrap;
+}
+
+.sim-data-table-panel .suma.ok {
+  background: #e6f4ea;
+  color: #0a7d32;
+}
+
+.sim-data-table-panel .suma.mal {
+  background: #fdecea;
+  color: #c62828;
+}
+
+/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */
+.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {
+  border-top: 2px solid #e0e0e0;
+}
+
+/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */
+.sim-data-table-panel .pct {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sim-data-table-panel .pct .cell.mini {
+  min-width: 64px;
+  text-align: right;
+}
+
+.sim-data-table-panel .pct-signo {
+  font-size: 12px;
+  color: #777;
+}
+
+.sim-data-table-panel .cell:disabled {
+  background: #f4f4f4;
+  color: #888;
+  cursor: not-allowed;
+}
+
 .sim-data-table-panel .data-table td.col-campo {
   width: 46%;
   color: #444;
