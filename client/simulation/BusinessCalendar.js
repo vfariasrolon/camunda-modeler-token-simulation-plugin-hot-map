@@ -272,6 +272,93 @@ export default class BusinessCalendar {
   }
 
   /**
+   * El INVERSO de `addWorkingTime`: que instante, retrocediendo, deja por delante
+   * exactamente esa cantidad de tiempo LABORABLE.
+   *
+   * Para que hace falta: para saber CUANDO empezo una tarea conociendo cuando
+   * termino y lo que duro. Restar los milisegundos de reloj seria incorrecto en
+   * cuanto haya un descanso en medio, porque ese rato no se trabajo y la resta
+   * dejaria el inicio mas tarde de lo que fue.
+   *
+   * Si el fin cae FUERA de la jornada (en un descanso o de noche), retrocede
+   * hasta el ultimo instante trabajado, que es de donde puede venir el trabajo.
+   */
+  subtractWorkingTime(endDate, durationInMinutes) {
+    if (!(durationInMinutes > 0)) return new Date(endDate.getTime());
+
+    // Se define como el INVERSO EXACTO de addWorkingTime, y se resuelve por
+    // BISECCION sobre el instante de inicio. La razon de no hacerlo restando
+    // tramos a mano: "restar N minutos laborables" es ambiguo en las fronteras
+    // (un descanso, el fin de jornada) y cada convencion daba un resultado
+    // distinto. Con la biseccion el resultado es, POR CONSTRUCCION, el mismo
+    // instante con el que addWorkingTime reprodujo el fin; que es justo la
+    // propiedad que se necesita.
+    //
+    // La biseccion es monótona: si el inicio es mas tarde, el fin tambien. Asi que
+    // se busca el MAYOR instante cuyo fin no pase del objetivo.
+    let bajo = new Date(endDate.getTime());
+    let alto = new Date(endDate.getTime());
+
+    // Se ensancha `bajo` hacia atras hasta pasarse, acotado por dias de busqueda.
+    const pasoMs = 60 * 60 * 1000;
+    for (let i = 0; i < LIMITE_DIAS_BUSQUEDA * 24; i++) {
+      bajo = new Date(bajo.getTime() - pasoMs);
+      if (this.addWorkingTime(bajo, durationInMinutes).getTime() <= endDate.getTime()) break;
+    }
+
+    // Biseccion al minuto entre `bajo` (fin <= objetivo) y `alto` (fin > objetivo).
+    for (let i = 0; i < 64 && (alto.getTime() - bajo.getTime()) > 60000; i++) {
+      const medio = new Date(Math.floor((bajo.getTime() + alto.getTime()) / 2));
+      if (this.addWorkingTime(medio, durationInMinutes).getTime() <= endDate.getTime()) bajo = medio;
+      else alto = medio;
+    }
+
+    return bajo;
+  }
+
+  /**
+   * El ultimo instante TRABAJADO en esa fecha o antes.
+   *
+   * Si la fecha cae en un descanso, de noche o en fin de semana, devuelve el
+   * final del ultimo tramo. Es el punto de partida correcto para retroceder
+   * tiempo laborable: el trabajo que termino a esa hora vino de ahi.
+   */
+  _ultimoInstanteTrabajado(date) {
+    if (this.isWorkingTime(date)) return new Date(date.getTime());
+    return this._finDeTramoAnterior(date);
+  }
+
+  /** Instante final del ultimo tramo que termina ANTES de esa fecha. */
+  _finDeTramoAnterior(date) {
+    const cursor = new Date(date.getTime());
+    const minutoActual = cursor.getHours() * 60 + cursor.getMinutes();
+
+    let dias = 0;
+    while (dias < LIMITE_DIAS_BUSQUEDA) {
+      const tramos = this.tramosDelDia(cursor);
+      // De atras hacia delante: el primero que termine antes del instante de
+      // partida. En los dias anteriores CUALQUIER tramo vale, porque entero
+      // queda por detras; solo el dia de partida tiene el corte por minuto.
+      for (let i = tramos.length - 1; i >= 0; i--) {
+        if (dias > 0 || tramos[i].fin < minutoActual) {
+          const destino = new Date(cursor.getTime());
+          destino.setHours(Math.floor(tramos[i].fin / 60), tramos[i].fin % 60, 0, 0);
+          return destino;
+        }
+      }
+      // Al dia anterior, a SU ultimo minuto. El `setHours` tiene que ir despues
+      // del `setDate`: al reves, el cambio de hora se aplicaba sobre el dia
+      // nuevo y el cursor se quedaba a caballo de los dos (y el bucle gastaba el
+      // limite de dias buscando, que es de donde salian fechas de 2018).
+      cursor.setDate(cursor.getDate() - 1);
+      cursor.setHours(23, 59, 0, 0);
+      dias++;
+    }
+
+    return null;
+  }
+
+  /**
    * Minutos de TRABAJO entre dos instantes. Cuenta minuto a minuto, y con
    * descansos un minuto de descanso NO cuenta.
    *

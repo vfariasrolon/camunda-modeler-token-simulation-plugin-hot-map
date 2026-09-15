@@ -378,6 +378,16 @@ export default class SimulationController {
             ? { ...this._simulationEngine.operatividad }
             : null,
 
+        // Mapa de calor del dia: `AAAA-MM-DD|HH` -> minutos-recurso. Se aplana a
+        // array para que el informe y los graficos no dependan del Map.
+        heatmapDia: this._simulationEngine.heatmapDia
+            ? Array.from(this._simulationEngine.heatmapDia.entries()).map(([ clave, minutos ]) => ({
+                dia: clave.split('|')[0],
+                hora: Number(clave.split('|')[1]),
+                minutos
+            }))
+            : [],
+
         // Piscinas declaradas en el proceso, tal como las leyo el motor. Los
         // miembros van con ellas: el informe los necesita para saber a quien
         // atribuir el tiempo y la carga.
@@ -1115,6 +1125,121 @@ export default class SimulationController {
       };
     }
 
+    // Mapa de calor del dia: hora x ocupacion. NO usa Chart.js: es una rejilla
+    // de celdas, y dibujarla con una libreria de graficos seria pelear contra
+    // ella. Se compone como HTML, que ademas se imprime bien.
+    if (metric === 'heatmapDia') {
+      const celdas = (this.overtimeReport && this.overtimeReport.heatmapDia) || [];
+      if (!celdas.length) {
+        this._chartPanel.showHtmlContent(`
+          <div style="padding:18px; line-height:1.6;">
+            <h4 style="margin:0 0 8px;">Sin actividad que dibujar</h4>
+            <p>La corrida no registró ninguna tarea completada con duración, así que no hay ocupación por hora.</p>
+          </div>
+        `);
+        return null;
+      }
+
+      const dias = [ ...new Set(celdas.map((c) => c.dia)) ].sort();
+      const porClave = new Map(celdas.map((c) => [`${c.dia}|${c.hora}`, c.minutos]));
+      const max = Math.max(...celdas.map((c) => c.minutos));
+
+      // Escala de color en 4 tramos. El CORTE se imprime en la leyenda: una
+      // banda sin su umbral es una cifra con autoridad falsa.
+      const color = (v) => {
+        if (!v) return '#f4f6f8';
+        const r = v / max;
+        if (r < 0.25) return '#c8e6c9';
+        if (r < 0.5) return '#81c784';
+        if (r < 0.75) return '#43a047';
+        return '#1b5e20';
+      };
+
+      const cabecera = Array.from({ length: 24 }, (_, h) => `<th>${h}</th>`).join('');
+      const filas = dias.map((dia) => {
+        const celdasDia = Array.from({ length: 24 }, (_, h) => {
+          const v = porClave.get(`${dia}|${h}`) || 0;
+          return `<td style="background:${color(v)}" title="${dia} ${h}:00 · ${v ? v.toFixed(0) : 0} min-recurso"></td>`;
+        }).join('');
+        return `<tr><th class="dia">${dia}</th>${celdasDia}</tr>`;
+      }).join('');
+
+      const textoGlobal = `Ocupación por hora del día, en minutos-recurso (una tarea de 2 unidades durante 30 min son 60).
+El corte de color va de 0 a ${max.toFixed(0)} min-recurso, que es la hora más cargada de la corrida: verde claro
+es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda para ver el valor.`;
+
+      // El grafico se compone con su propia ayuda para que se pueda interpretar
+      // sin salir del panel. El contenedor lo pinta el panel de graficos.
+      this._chartPanel.showHtmlContent(`
+        <div class="heatmap-dia">
+          <style>
+            .heatmap-dia table { border-collapse: collapse; margin: 0 auto; }
+            .heatmap-dia th { font-size: 11px; color: #666; font-weight: 500; padding: 2px; text-align: center; }
+            .heatmap-dia th.dia { text-align: right; padding-right: 8px; white-space: nowrap; color: #333; font-weight: 600; }
+            .heatmap-dia td { width: 30px; height: 20px; border: 1px solid #fff; }
+            .heatmap-dia .leyenda { display: flex; gap: 6px; align-items: center; justify-content: center; margin-top: 12px; font-size: 12px; color: #555; }
+            .heatmap-dia .leyenda i { display: inline-block; width: 18px; height: 12px; border: 1px solid #ddd; }
+            .heatmap-dia p { font-size: 12px; color: #555; line-height: 1.5; max-width: 820px; margin: 12px auto 0; }
+          </style>
+          <p style="text-align:center; font-weight:600; margin: 0 0 10px;">Ocupación por hora × día</p>
+          <table>
+            <thead><tr><th></th>${cabecera}</tr></thead>
+            <tbody>${filas}</tbody>
+          </table>
+          <div class="leyenda">
+            <span>0</span>
+            <i style="background:#c8e6c9"></i><i style="background:#81c784"></i>
+            <i style="background:#43a047"></i><i style="background:#1b5e20"></i>
+            <span>${max.toFixed(0)} min-recurso</span>
+          </div>
+          <p>${textoGlobal}</p>
+        </div>
+      `);
+      return null;
+    }
+
+    // Perfil de la jornada: cuanto se ocupo CADA DIA. Es el diente de sierra que
+    // pide el diseno —produccion durante el lote, ociosidad hasta el siguiente—,
+    // y con lotes el escalon se ve directamente.
+    if (metric === 'perfilJornada') {
+      const dias = this._produccionDiaria(this.overtimeReport);
+      if (!dias.length) {
+        this._chartPanel.showHtmlContent(`
+          <div style="padding:18px; line-height:1.6;">
+            <h4 style="margin:0 0 8px;">Sin días que dibujar</h4>
+            <p>La corrida no produjo ningún día completo.</p>
+          </div>
+        `);
+        return null;
+      }
+
+      return {
+        type: 'bar',
+        data: {
+          labels: dias.map((d) => d.dia),
+          datasets: [{
+            label: 'Piezas completadas',
+            data: dias.map((d) => d.piezas),
+            backgroundColor: 'rgba(21, 101, 192, 0.7)'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom' },
+            title: {
+              display: true,
+              text: 'Perfil de la jornada: piezas por día (barras, no curva: un día es un valor)'
+            }
+          },
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: 'Piezas' } }
+          }
+        }
+      };
+    }
+
     const chartData = this.getChartData(metric);
 
     let chartType = 'bar';
@@ -1716,6 +1841,11 @@ export default class SimulationController {
     // Run chart: la produccion diaria en LINEA, con la media de referencia. La
     // barra compara dias entre si; la linea deja ver el arranque (transitorio) y
     // si el ritmo se estabiliza, que es lo que se quiere saber.
+    //
+    // SIN SUAVIZADO: la produccion de un dia es un valor POR DIA, no una curva
+    // continua. El suavizado dibuja subidas y bajadas graduales que no existieron
+    // (un dia se produjo 5 y el siguiente 8: no hubo un 6,5 a media tarde), y eso
+    // oculta justo lo que se mira: si un dia concreto se descolgo.
     if (metric === 'dailyRun') {
       const dias = this._produccionDiaria(this.normalReport);
       const media = dias.length ? dias.reduce((a, d) => a + d.piezas, 0) / dias.length : 0;
@@ -1731,7 +1861,7 @@ export default class SimulationController {
             backgroundColor: 'rgba(21, 101, 192, .15)',
             borderWidth: 2,
             pointRadius: 3,
-            tension: .25,
+            tension: 0,
             fill: true
           },
           {
@@ -1750,6 +1880,12 @@ export default class SimulationController {
 
     // Curva S: el avance acumulado. Responde "cuando lleve el 50 %/90 % del
     // trabajo", que es la pregunta de planificacion, no "cuanto hice el martes".
+    //
+    // ESCALONES, y no es un detalle estetico: la produccion acumulada sube a
+    // saltos (el alto del escalon es lo que entro ese dia) y se queda PLANA entre
+    // ellos. Dibujarla suavizada inventa un avance continuo que no ocurre, y con
+    // lotes el escalon es literalmente el tamano del lote. El tramo plano es el
+    // dato mas util del grafico —el hueco entre lotes— y el suavizado lo borra.
     if (metric === 'cumulative') {
       const dias = this._produccionDiaria(this.normalReport);
       let acumulado = 0;
@@ -1766,7 +1902,11 @@ export default class SimulationController {
           backgroundColor: 'rgba(46, 125, 50, .15)',
           borderWidth: 2,
           pointRadius: 0,
-          tension: .2,
+          // `stepped: 'before'` mantiene el valor anterior HASTA que entra el
+          // nuevo, que es como se lee una acumulacion: primero se produce, luego
+          // el contador sube.
+          stepped: 'before',
+          tension: 0,
           fill: true,
           // El % viaja con el dato para que el tooltip no repita la division.
           porcentajes: total > 0 ? datos.map((v) => (v / total) * 100) : []

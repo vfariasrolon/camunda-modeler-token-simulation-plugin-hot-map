@@ -271,6 +271,25 @@ dice tal cual, para que no se lea como un dato medido.
 Con esto, el informe puede decir **quién tiene holgura** y **por qué** está parado cada uno — que es
 justo lo que hace falta para decidir a quién mover, sin que el programa lo decida solo.
 
+### 11.4 Gráficos honestos: por qué no hay curvas suaves
+
+Las líneas del panel **no llevan suavizado**, y no es una preferencia estética. El suavizado dibuja
+subidas y bajadas **graduales que no existieron**: si un día se produjeron 5 piezas y el siguiente 8,
+no hubo un 6,5 a media tarde. Y lo que se mira en esos gráficos es justo si un día concreto se
+descolgó, cosa que una curva suave tapa.
+
+- **Producción acumulada en escalones.** La acumulación sube a saltos y se queda **plana** entre
+  ellos. Con lotes, el alto del escalón es el tamaño del lote y el tramo plano es el parón entre
+  lotes: **es el dato más útil del gráfico**, y el suavizado lo borraba.
+- **Ocupación por hora × día.** Una rejilla donde el color dice cuánto se ocupó cada hora: se ven los
+  picos de lote, los valles del descanso y las horas muertas de un vistazo. El **corte de color va
+  impreso en la leyenda**, porque una banda sin su umbral es una cifra con autoridad falsa.
+  - Guarda **minutos-recurso** (duración × unidades), no minutos: una tarea que ocupa 2 unidades
+    durante 30 min ocupa el doble que una de 1 unidad durante 30 min.
+  - La escala es **por día**: cada fila se compara con su propia hora más cargada, así que dice
+    *cuándo* se trabajó, no *qué día fue más intenso*.
+- **Perfil de la jornada.** Piezas por día en barras: un día es un valor, no una curva.
+
 ### Pestaña **Global**
 
 Configuración del evento de inicio marcado como **raíz**. Sin raíz la simulación no

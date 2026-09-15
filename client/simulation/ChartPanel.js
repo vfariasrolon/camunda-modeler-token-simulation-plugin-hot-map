@@ -60,6 +60,10 @@ export default class ChartPanel {
               <option value="operatividadPersona">Jornada por Persona (activo y tiempo muerto)</option>
               <option value="cargaPersona">Carga Física por Persona (series separadas)</option>
             </optgroup>
+            <optgroup label="Día y ritmo">
+              <option value="heatmapDia">Ocupación por Hora × Día (mapa de calor)</option>
+              <option value="perfilJornada">Perfil de la Jornada (piezas por día)</option>
+            </optgroup>
             <optgroup label="Calidad y flujos">
               <option value="pareto">Pareto (Fallos)</option>
               <option value="paretoTime">Pareto (Tiempos)</option>
@@ -115,6 +119,9 @@ export default class ChartPanel {
             <li><strong>Carga Física por Persona:</strong> masa <em>cargada</em> y <em>arrastrada</em> en
               <strong>columnas separadas</strong>. No se apilan a propósito: no son la misma magnitud y
               sumarlas daría un número sin significado.</li>
+            <li><strong>Ocupación por Hora × Día:</strong> rejilla donde el color dice cuánto se ocupó cada
+              hora. Se ven los picos de lote, los valles del descanso y las horas muertas de un vistazo. El
+              <strong>corte de color va impreso</strong> en la leyenda.</li>
           </ul>
 
           <h5>Tres cosas que conviene tener claras</h5>

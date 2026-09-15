@@ -4,6 +4,33 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FIX`: **fuera el suavizado de las líneas.** Las líneas venían con `tension` puesta y eso **miente**:
+  el suavizado dibuja subidas y bajadas graduales que no existieron (un día se produjeron 5 y el
+  siguiente 8: no hubo un 6,5 a media tarde) y oculta justo lo que se mira, que es si un día
+  concreto se descolgó.
+* `FEAT`: **la producción acumulada se dibuja en ESCALONES** (`stepped: 'before'`). No es estética:
+  la acumulación sube a saltos y se queda **plana** entre ellos. Con lotes el alto del escalón es el
+  tamaño del lote y el tramo plano es el hueco entre lotes, que es el dato más útil del gráfico — y
+  el suavizado lo borraba.
+* `FEAT`: **mapa de calor del día: hora × ocupación**. Rejilla donde el color dice cuánto se ocupó
+  cada hora, así que se ven los picos de lote, los valles del descanso y las horas muertas de un
+  vistazo. El **corte de color va impreso en la leyenda**: una banda sin su umbral es una cifra con
+  autoridad falsa. Guarda **minutos-recurso** (duración × unidades), no minutos sueltos: una tarea
+  que ocupa 2 unidades durante 30 min ocupa el doble que una de 1 unidad.
+* `FEAT`: **perfil de la jornada** (piezas por día en barras) y el bloque de perfil en el informe de
+  consola, que imprime el mapa del día como rejilla de texto para poder leerlo sin salir de la
+  consola.
+* `FEAT`: `BusinessCalendar.subtractWorkingTime()`, el **inverso de `addWorkingTime`**. Hace falta
+  para saber **cuándo empezó** una tarea conociendo cuándo terminó y lo que duró: restar los
+  milisegundos de reloj es incorrecto en cuanto hay un descanso en medio, porque ese rato no se
+  trabajó. Se resuelve por **bisección** sobre el instante de inicio, que garantiza la ida y vuelta
+  exacta sin depender de convenciones en las fronteras.
+* `FIX`: **el mapa del día apilaba todas las tareas de un caso en la misma hora.** Se usaba
+  `event.startTime`, que es cuándo arrancó la **instancia**, no esta tarea. Ahora se retrocede desde
+  el fin con `subtractWorkingTime`, que además salta los descansos correctamente.
+* `FIX`: **un cursor de fecha mal avanzado en `_finDeTramoAnterior`** daba fechas de 2018: el
+  `setHours` se aplicaba sobre el día nuevo en vez del viejo, y el bucle gastaba el límite de días
+  buscando. Lo cazó el arnés del inverso, que comprueba que `add(sub(t, d), d) === t`.
 * `FEAT`: **operatividad por persona**: activo y las tres ociosidades que el motor puede medir de
   verdad (**sin trabajo**, **esperando firma**, **bloqueado por habilidad**). Las cuatro cifras
   **suman la jornada disponible** de cada persona, así que no queda un resto sin explicar, y el

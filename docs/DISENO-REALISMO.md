@@ -429,6 +429,44 @@ no una nómina. **No** se calculan IMSS, ISR, aguinaldo, prima vacacional ni fin
 Las líneas actuales están **suavizadas a propósito**, y eso hace que mientan: la producción
 acumulada es intrínsecamente **un escalón**, no una curva.
 
+> **Estado: IMPLEMENTADO.** Verificado con **15 comprobaciones** sobre el motor real (el mapa del
+> día) y **16** sobre el calendario (el inverso de `addWorkingTime`).
+>
+> **Lo que se cambió:**
+>
+> | Cambio | Qué se hizo |
+> |---|---|
+> | **Quitar el suavizado** | `tension: 0` en el run chart y `stepped: 'before'` en la acumulada |
+> | **Producción acumulada en escalones** | El escalón es lo que entró y el tramo plano es el hueco. Con lotes, el escalón es el tamaño del lote y el plano es el parón: **es el dato más útil y el suavizado lo borraba** |
+> | **Ocupación por hora × día** | Rejilla nueva, con el **corte de color impreso** en la leyenda |
+> | **Perfil de la jornada** | Piezas por día en barras (un día es un valor, no una curva) |
+>
+> **Dos decisiones de implementación que conviene recordar:**
+>
+> 1. **El mapa guarda minutos-RECURSO, no minutos.** Una tarea que ocupa 2 unidades durante 30 min
+>    ocupa el doble que una de 1 unidad durante 30 min; contar minutos a secas lo escondería.
+> 2. **`subtractWorkingTime` se resuelve por bisección, no restando tramos.** «Restar N minutos
+>    laborables» es ambiguo en las fronteras (un descanso, el fin de jornada) y cada convención daba
+>    un resultado distinto. Con la bisección el resultado es, **por construcción**, el mismo instante
+>    con el que `addWorkingTime` reprodujo el fin — que es justo la propiedad que se necesita.
+>
+> **Tres defectos reales que encontró la verificación** (los tres corregidos):
+>
+> - **El mapa apilaba todas las tareas de un caso en la misma hora.** Se usaba `event.startTime`, que
+>   es cuándo arrancó la **instancia**, no esta tarea.
+> - **Restar milisegundos de reloj no sirve** para hallar el inicio: con un descanso en medio, el
+>   trabajo no fue continuo y la resta deja el inicio más tarde de lo que fue.
+> - **Un cursor de fecha mal avanzado** (`setHours` sobre el día nuevo en vez del viejo) hacía que el
+>   bucle gastara el límite de días buscando y devolviera **fechas de 2018**. Lo cazó la comprobación
+>   de ida y vuelta `add(sub(t, d), d) === t`.
+>
+> **Pendiente de refinar (documentado, no olvidado):**
+>
+> - **El mapa imputa la tarea completa a su hora de arranque**, no la reparte minuto a minuto. Es una
+>   regla única y escrita: lo que se quiere ver es *cuándo arrancó* cada cosa, no un promedio.
+> - **La rejilla se escala por día** (cada fila contra su propia hora más cargada), así que no
+>   compara la intensidad de un día contra otro. Para eso está el perfil de la jornada.
+
 | Cambio | Por qué |
 |---|---|
 | **Quitar el suavizado** de las líneas y usar **trazo de escalón** | La acumulación es escalonada; dibujarla suave oculta cuándo entró el trabajo |

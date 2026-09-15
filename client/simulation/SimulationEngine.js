@@ -359,6 +359,12 @@ export default class SimulationEngine {
       tareasBloqueadas: 0
     };
 
+    // Mapa de calor del dia: hora x ocupacion. Se guarda como minutos-recurso
+    // ocupados por (dia, hora) en el calendario de la PLANTA, que es contra el que
+    // se grafica. Es lo que permite dibujar el diente de sierra de los lotes y
+    // los valles del descanso sin volver a simular.
+    this.heatmapDia = new Map();
+
     // Muestras por caso. Los totales por elemento dan medias, pero una media
     // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
     this.instanceCycleTimes = [];
@@ -871,6 +877,24 @@ export default class SimulationEngine {
     return inc;
   }
 
+  /**
+   * Anota una tarea terminada en la rejilla `hora x ocupacion` del dia.
+   *
+   * Se guarda `minutos-recurso` (duracion x unidades) y NO minutos sueltos: una
+   * tarea que ocupa 2 unidades durante 30 min ocupa el doble que una de 1 unidad
+   * durante 30 min, y contar minutos a secas lo escondería.
+   *
+   * La clave es `AAAA-MM-DD|HH`, con la hora LOCAL: el dia y la hora son los de
+   * la planta, y usar UTC desplazaria la rejilla entera.
+   */
+  _anotarEnMapaDelDia(startMs, duracionMs, unidades) {
+    if (!(duracionMs > 0)) return;
+    const d = new Date(Number(startMs) || 0);
+    const clave = `${this._claveDeFecha(d)}|${String(d.getHours()).padStart(2, '0')}`;
+    const minutosRecurso = (duracionMs / 60000) * Math.max(1, Number(unidades) || 1);
+    this.heatmapDia.set(clave, (this.heatmapDia.get(clave) || 0) + minutosRecurso);
+  }
+
   _findRootConfig() {
     const startEvents = this._elementRegistry.filter(el => !isLabel(el) && is(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => getSimulationData(el)?.isRoot);
@@ -1015,6 +1039,21 @@ export default class SimulationEngine {
         const waitTimeCost = results.totalWaitTimeCost;
         // The total cost is the sum of its parts.
         results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + (event.dayPremium || 0) + waitTimeCost;
+
+        // Mapa de calor del dia: se imputa la tarea COMPLETA a la hora en que
+        // empezo DE VERDAD. Dos trampas que costaron un fallo cada una:
+        //
+        //   1. `event.startTime` es cuando arranco la INSTANCIA, no esta tarea:
+        //      usarlo apilaba todas las tareas de un caso en la misma hora.
+        //   2. Restar los milisegundos de reloj tampoco vale: si en medio hubo un
+        //      descanso, ese rato NO se trabajo, asi que la hora de arranque no
+        //      esta a `duracion` de distancia del fin. Hay que retroceder tiempo
+        //      LABORABLE, que es lo que sabe hacer el calendario.
+        const duracionReloj = event.effectiveDuration || event.totalDuration || 0;
+        const inicioDeLaTareaMs = this.standardCalendar.subtractWorkingTime(
+          new Date(event.time), duracionReloj / 60000
+        ).getTime();
+        this._anotarEnMapaDelDia(inicioDeLaTareaMs, duracionReloj, event.quantityRequired);
 
         if (event.waitStart) {
           const standardCalendar = this.standardCalendar;
@@ -1755,6 +1794,43 @@ export default class SimulationEngine {
       })));
       console.log('  (las cuatro cifras suman la jornada disponible de cada persona;'
         + ' «con trabajo asignable» no se calcula: haría falta saber qué cola había en cada instante)');
+    }
+
+    // Mapa de calor del dia: hora x ocupacion. Se imprime como rejilla de texto
+    // porque es informacion ESPACIAL (que hora del dia esta cargada) y una tabla
+    // de numeros no deja verlo.
+    if (this.heatmapDia.size) {
+      const porDia = new Map();
+      this.heatmapDia.forEach((minutosRecurso, clave) => {
+        const [ dia, hora ] = clave.split('|');
+        if (!porDia.has(dia)) porDia.set(dia, {});
+        porDia.get(dia)[Number(hora)] = minutosRecurso;
+      });
+
+      const diasOrdenados = Array.from(porDia.keys()).sort();
+      const ocupacionTotal = Array.from(this.heatmapDia.values()).reduce((a, b) => a + b, 0);
+
+      console.log('SALIDAS · mapa del día (hora × ocupación, minutos-recurso por hora)', {
+        dias: diasOrdenados.length,
+        horas_con_actividad: new Set(Array.from(this.heatmapDia.keys()).map((k) => k.split('|')[1])).size,
+        minutos_recurso_totales: Math.round(ocupacionTotal)
+      });
+      console.log('  (la rejilla: una fila por día y una columna por hora;'
+        + ' «·» sin actividad, «░▒█» poca/media/mucha ocupación dentro de ese día)');
+
+      // Rejilla de texto: una fila por dia y una columna por hora. Dentro de cada
+      // dia la escala es RELATIVA a su hora mas cargada, porque lo que se compara
+      // es la forma de la jornada, no un dia contra otro.
+      for (const dia of diasOrdenados) {
+        const celdas = porDia.get(dia);
+        const max = Math.max(...Object.values(celdas));
+        const linea = [];
+        for (let h = 0; h < 24; h++) {
+          const v = celdas[h] || 0;
+          linea.push(v === 0 ? '·' : v < max * 0.34 ? '░' : v < max * 0.67 ? '▒' : '█');
+        }
+        console.log(`  ${dia}  ${linea.join('')}`);
+      }
     }
 
     // Carga fisica: DOS series que NUNCA se suman. Se imprimen en columnas
