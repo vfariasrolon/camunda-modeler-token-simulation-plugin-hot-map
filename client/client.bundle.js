@@ -1136,15 +1136,30 @@ const TAB_ACTIVE_CLS = 'active';
 // ---------------------------------------------------------------------------
 const TASK_UNITS = ['minutes', 'hours', 'seconds'];
 const RATE_UNITS = ['minute', 'hour', 'second'];
+const LOT_SIZE_MODES = ['fixed', 'triangular', 'empirical'];
+const TASK_FREQUENCIES = ['token', 'lot'];
 
 // Nombres de los dias para las casillas de "dias laborables". El indice es el
 // valor que espera el motor: 0 = domingo.
 const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
 
+// Cada cuanto se ejecuta una tarea y, si es por lote, quien tiene que firmarla.
+// `token` = una vez por token (el comportamiento de siempre); `lot` = una sola
+// vez por lote, la primera vez que el flujo pasa por ahi.
+const BARRIER_DEFAULTS = () => ({
+  availableProbability: 0.7,
+  waitMin: 10,
+  waitMode: 20,
+  waitMax: 60,
+  toleranceMinutes: 15
+});
+
 const TASK_DEFAULTS = () => ({
   processingTime: { distribution: 'fixed', value: 10, unit: 'minutes' },
   failureRate: 0,
-  reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' }
+  reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' },
+  frequency: 'token',
+  barrier: BARRIER_DEFAULTS()
 });
 
 const FLOW_DEFAULTS = () => ({ branchingProbability: 0.5 });
@@ -1177,7 +1192,21 @@ const GLOBAL_FIELDS = [
   { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1 },
   { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1 },
   { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ] },
-  { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] }
+  { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] },
+
+  // --- lotes ----------------------------------------------------------------
+  // En modo lote las instancias llegan en GRUPOS y los grupos van en serie (uno
+  // detras de otro): no hay dos lotes a la vez.
+  { key: 'lots.enabled', label: 'Llegadas por LOTES (en serie)', kind: 'checkbox', path: [ 'lots', 'enabled' ] },
+  { key: 'lots.sizeMode', label: 'Tamaño de lote: modo', kind: 'select', options: LOT_SIZE_MODES, path: [ 'lots', 'sizeMode' ] },
+  { key: 'lots.size', label: 'Tamaño de lote: fijo', kind: 'number', path: [ 'lots', 'size' ], min: 1 },
+  { key: 'lots.min', label: 'Tamaño de lote: mínimo (triangular)', kind: 'number', path: [ 'lots', 'min' ], min: 1 },
+  { key: 'lots.mode', label: 'Tamaño de lote: moda (triangular)', kind: 'number', path: [ 'lots', 'mode' ], min: 1 },
+  { key: 'lots.max', label: 'Tamaño de lote: máximo (triangular)', kind: 'number', path: [ 'lots', 'max' ], min: 1 },
+  { key: 'lots.stopMinutes', label: 'Parón de cambio entre lotes (min)', kind: 'number', path: [ 'lots', 'stopMinutes' ], min: 0 },
+
+  // --- semilla --------------------------------------------------------------
+  { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true }
 ];
 
 const DEFAULT_GLOBAL = () => ({
@@ -1200,6 +1229,19 @@ const DEFAULT_GLOBAL = () => ({
   // La curva de arranque SI trae valores por defecto: se declara, no se mide, y
   // un valor de partida razonable es mejor que ninguno. Todo ajustable.
   warmup: { ..._WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.WARMUP_DEFAULTS },
+  // Los lotes vienen DESACTIVADOS: activarlos cambia el modelo de llegadas por
+  // completo, y eso no debe pasar sin que nadie lo pida.
+  lots: {
+    enabled: false,
+    sizeMode: 'fixed',
+    size: 20,
+    min: 10,
+    mode: 20,
+    max: 30,
+    stopMinutes: 0,
+    table: []
+  },
+  seed: '',
   cost: { baseRatePerHour: 50, waitCostPerHour: 0 },
   overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 }
 });
@@ -1629,7 +1671,8 @@ class DataTablePanel {
       ...d,
       ...raw,
       processingTime: { ...d.processingTime, ...(raw.processingTime || {}) },
-      reworkTime: { ...d.reworkTime, ...(raw.reworkTime || {}) }
+      reworkTime: { ...d.reworkTime, ...(raw.reworkTime || {}) },
+      barrier: { ...d.barrier, ...(raw.barrier || {}) }
     };
   }
 
@@ -1706,6 +1749,8 @@ class DataTablePanel {
             <th>Unidad</th>
             <th>Recurso</th>
             <th>Cant.</th>
+            <th>Frecuencia</th>
+            <th colspan="5" class="col-barrera">Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia</th>
           </tr>
         </thead>
         <tbody>
@@ -1733,6 +1778,17 @@ class DataTablePanel {
               `<option value="${esc(n)}" ${actual === n ? 'selected' : ''}>${n === '' ? '(ninguno)' : esc(n)}</option>`
             ).join('');
 
+            // Frecuencia y barrera. La barrera SOLO tiene sentido con «por
+            // lote» (es lo que hace esperar al lote entero), asi que con «por
+            // token» sus casillas se deshabilitan y se dice por que: dejarlas
+            // editables guardaria un valor que el motor ignoraria.
+            const esLote = (d.frequency || 'token') === 'lot';
+            const b = d.barrier;
+            const celdaBarrera = (campo, valor, marcador, atributos) =>
+              `<td><input type="number" ${atributos} class="cell mini"`
+              + ` data-field="barrier.${campo}" value="${valor == null ? '' : valor}"`
+              + ` placeholder="${marcador}"${esLote ? '' : ' disabled title="Solo para tareas «por lote»"'}></td>`;
+
             return `
               <tr data-el-id="${el.id}">
                 <td class="col-name" title="${esc(this._label(el))}">${esc(this._label(el))}</td>
@@ -1753,6 +1809,15 @@ class DataTablePanel {
                   value="${(d.resources && d.resources.quantityRequired) || 1}"
                   ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
                 </td>
+                <td class="col-freq"><select class="cell" data-field="frequency">
+                  <option value="token" ${esLote ? '' : 'selected'}>por token</option>
+                  <option value="lot" ${esLote ? 'selected' : ''}>por lote</option>
+                </select></td>
+                ${celdaBarrera('availableProbability', b.availableProbability, 'disp.', 'step="0.01" min="0" max="1"')}
+                ${celdaBarrera('waitMin', b.waitMin, 'mín', 'step="any" min="0"')}
+                ${celdaBarrera('waitMode', b.waitMode, 'moda', 'step="any" min="0"')}
+                ${celdaBarrera('waitMax', b.waitMax, 'máx', 'step="any" min="0"')}
+                ${celdaBarrera('toleranceMinutes', b.toleranceMinutes, 'tol.', 'step="any" min="0"')}
               </tr>`;
           }).join('')}
         </tbody>
@@ -1770,7 +1835,49 @@ class DataTablePanel {
         Las piscinas se definen en la pestaña <strong>Recursos</strong>; sin ninguna dada de alta, esta columna
         no tiene nada que ofrecer.
       </p>
+      <p class="hint">
+        <strong>Frecuencia</strong>: <em>por token</em> es lo de siempre (una vez por caso);
+        <em>por lote</em> se ejecuta <strong>una sola vez por lote</strong>, la primera vez que el flujo pasa
+        por aquí. Es el «hay que rellenar el documento» de cada lote: el resto de tokens del lote
+        <em>esperan</em> a que se haga.
+      </p>
+      <p class="hint">
+        <strong>Barrera</strong> (tareas «por lote»): quien firma no está dedicado a esta área, así que no se
+        modela como una persona —se modela por su efecto—. <strong>disp.</strong> es la probabilidad de que
+        atiendan a la primera; si no atienden, el lote espera una cantidad con forma
+        <strong>mín / moda / máx</strong>. La <strong>tol.</strong> es cuánta espera cuenta como parón
+        reportable: sin umbral, cada espera de tres minutos ensucia el informe y al final nadie lo lee.
+        Con <strong>disp.</strong> a 1 no hay ninguna espera.
+      </p>
     `;
+
+    this._bindBarrera();
+  }
+
+  /**
+   * Habilita/deshabilita la barrera segun la frecuencia de cada tarea.
+   *
+   * Sin esto, cambiar «por token» a «por lote» dejaria las casillas muertas hasta
+   * reabrir el panel, y al reves: se podrian rellenar y guardar valores de
+   * barrera en tareas por token, que el motor ignora.
+   */
+  _bindBarrera() {
+    this._body.querySelectorAll('tr[data-el-id]').forEach((tr) => {
+      const select = tr.querySelector('[data-field="frequency"]');
+      if (!select) return;
+
+      const barreras = tr.querySelectorAll('[data-field^="barrier."]');
+      const sincronizar = () => {
+        const esLote = select.value === 'lot';
+        barreras.forEach((input) => {
+          input.disabled = !esLote;
+          input.title = esLote ? '' : 'Solo para tareas «por lote»';
+        });
+      };
+
+      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(select, 'change', sincronizar);
+      sincronizar();
+    });
   }
 
   /**
@@ -2182,9 +2289,35 @@ class DataTablePanel {
       </p>
       <div class="caja-curva">${this._svgArranque(data.warmup)}</div>
       <p class="hint" data-resumen-arranque>${esc((0,_WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.describeWarmup)(data.warmup))}</p>
+
+      <h4 class="subtitulo">Tamaño de lote empírico</h4>
+      <p class="hint">
+        Solo se usa con el modo <strong>empirical</strong>: una tabla de tamaños con sus frecuencias,
+        que es como llegan los pedidos de verdad («de 10, el 30 % de las veces; de 20, el 50 %…»).
+        El <em>peso</em> es una frecuencia relativa: no hace falta que sume 100.
+      </p>
+      <table class="data-table">
+        <thead><tr><th>Tamaño del lote</th><th>Peso (frecuencia)</th><th></th></tr></thead>
+        <tbody class="filas-lote">
+          ${((data.lots && data.lots.table) || []).map((f) => this._filaLote(f)).join('')}
+        </tbody>
+      </table>
+      <button class="btn-anadir-fila" type="button" data-accion="anadir-lote">+ Añadir tamaño</button>
     `;
 
     this._bindGlobalExtras();
+  }
+
+  /** Una fila de la tabla de tamaños de lote empíricos. */
+  _filaLote(f) {
+    return `
+      <tr>
+        <td><input type="number" step="1" min="1" class="cell mini" data-lote="size"
+          value="${f && f.size != null ? f.size : ''}" placeholder="20"></td>
+        <td><input type="number" step="any" min="0" class="cell mini" data-lote="weight"
+          value="${f && f.weight != null ? f.weight : ''}" placeholder="1"></td>
+        <td><button class="btn-quitar-pool" type="button" title="Quitar este tamaño" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
   }
 
   /**
@@ -2264,27 +2397,36 @@ class DataTablePanel {
     if (resumen) resumen.textContent = (0,_WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.describeWarmup)(this._leerArranqueDelDom());
   }
 
-  /** Conecta el editor de descansos y la vista previa de la curva. */
+  /** Conecta las listas de la pestaña Global y la vista previa de la curva. */
   _bindGlobalExtras() {
-    const boton = this._body.querySelector('[data-accion="anadir-descanso"]');
-    if (boton) {
-      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(boton, 'click', () => {
-        const tbody = this._body.querySelector('.filas-descanso');
-        // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al parseo
-        // de un contenedor que no sea <table>/<tbody>.
-        tbody.insertAdjacentHTML('beforeend', this._filaDescanso(null));
-      });
-    }
+    // Las dos listas (descansos y tamaños de lote) usan el mismo patrón: un botón
+    // para añadir y delegación en el cuerpo para quitar.
+    const listas = [
+      { accion: 'anadir-descanso', tbody: '.filas-descanso', fila: () => this._filaDescanso(null) },
+      { accion: 'anadir-lote', tbody: '.filas-lote', fila: () => this._filaLote(null) }
+    ];
 
-    const tbody = this._body.querySelector('.filas-descanso');
-    if (tbody) {
-      min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(tbody, 'click', (e) => {
-        const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
-        if (!btn) return;
-        const tr = btn.closest('tr');
-        if (tr) tr.remove();
-      });
-    }
+    listas.forEach(({ accion, tbody, fila }) => {
+      const boton = this._body.querySelector(`[data-accion="${accion}"]`);
+      if (boton) {
+        min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(boton, 'click', () => {
+          const cuerpo = this._body.querySelector(tbody);
+          // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
+          // parseo de un contenedor que no sea <table>/<tbody>.
+          if (cuerpo) cuerpo.insertAdjacentHTML('beforeend', fila());
+        });
+      }
+
+      const cuerpo = this._body.querySelector(tbody);
+      if (cuerpo) {
+        min_dom__WEBPACK_IMPORTED_MODULE_4__.event.bind(cuerpo, 'click', (e) => {
+          const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
+          if (!btn) return;
+          const tr = btn.closest('tr');
+          if (tr) tr.remove();
+        });
+      }
+    });
 
     GLOBAL_FIELDS.forEach((f) => {
       if (!f.key.startsWith('warmup.')) return;
@@ -2392,6 +2534,43 @@ class DataTablePanel {
         // JSON no arrastra claves muertas.
         if (recurso) datos.resources = recurso;
         else delete datos.resources;
+
+        // Frecuencia y barrera. `_taskData` devuelve los valores por defecto para
+        // poder pintarlos, asi que hay que BORRARLOS del resultado: si no, cada
+        // tarea guardada arrastraria un `frequency: "token"` y una barrera que
+        // nunca se pidio, y el XML engordaria en cada guardado.
+        const frecuencia = val('frequency') === 'lot' ? 'lot' : 'token';
+
+        if (frecuencia === 'lot') {
+          const disp = num('barrier.availableProbability', 'disponibilidad de la barrera');
+          if (disp < 0 || disp > 1) {
+            throw new Error(`${name}: la disponibilidad de la barrera debe estar entre 0 y 1`);
+          }
+          const esperaMin = num('barrier.waitMin', 'espera mínima de la barrera');
+          const esperaModa = num('barrier.waitMode', 'espera modal de la barrera');
+          const esperaMax = num('barrier.waitMax', 'espera máxima de la barrera');
+          if (!(esperaMin <= esperaModa && esperaModa <= esperaMax)) {
+            throw new Error(
+              `${name}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo `
+              + `(has puesto ${esperaMin}, ${esperaModa}, ${esperaMax})`
+            );
+          }
+          const tolerancia = num('barrier.toleranceMinutes', 'tolerancia de la barrera');
+          if (tolerancia < 0) throw new Error(`${name}: la tolerancia no puede ser negativa`);
+
+          datos.frequency = 'lot';
+          datos.barrier = {
+            availableProbability: disp,
+            waitMin: esperaMin,
+            waitMode: esperaModa,
+            waitMax: esperaMax,
+            toleranceMinutes: tolerancia
+          };
+        } else {
+          // Una tarea por token no tiene barrera: el motor ni la lee.
+          delete datos.frequency;
+          delete datos.barrier;
+        }
 
         writes.push({ element: el, data: datos });
       });
@@ -2501,6 +2680,12 @@ class DataTablePanel {
       const raw = input.value;
 
       if (field.kind === 'number') {
+        // Campo opcional (la semilla): vacio es «no declarado», que el motor
+        // interpreta como «sacarla al azar» y luego guardarla.
+        if (field.optional && String(raw).trim() === '') {
+          setByPath(data, field.path, '');
+          return;
+        }
         const n = this._num(raw, field.label);
         if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
         if (field.max != null && n > field.max) throw new Error(`${field.label}: debe ser ≤ ${field.max}`);
@@ -2582,6 +2767,46 @@ class DataTablePanel {
     });
 
     setByPath(data, [ 'calendar', 'breaks' ], descansos);
+
+    // Tabla de tamaños de lote empíricos.
+    const tablaLotes = [];
+    this._body.querySelectorAll('.filas-lote tr').forEach((tr, i) => {
+      const leer = (campo) => {
+        const el = tr.querySelector(`[data-lote="${campo}"]`);
+        return el ? String(el.value).trim() : '';
+      };
+      const tam = leer('size');
+      const peso = leer('weight');
+      if (!tam && !peso) return; // fila vacia: se ignora
+
+      const size = this._num(tam, `Tamaño de lote ${i + 1}: tamaño`);
+      if (!Number.isInteger(size) || size < 1) {
+        throw new Error(`Tamaño de lote ${i + 1}: debe ser un entero mayor o igual que 1`);
+      }
+      const weight = this._num(peso, `Tamaño de lote ${i + 1}: peso`);
+      if (!(weight > 0)) throw new Error(`Tamaño de lote ${i + 1}: el peso debe ser mayor que 0`);
+
+      tablaLotes.push({ size, weight });
+    });
+    setByPath(data, [ 'lots', 'table' ], tablaLotes);
+
+    // Coherencia de los lotes: sin esto, el motor caeria en silencio al tamaño
+    // fijo (empirical sin tabla) o recortaria la triangular sin avisar.
+    const modoLote = getByPath(data, [ 'lots', 'sizeMode' ]);
+    if (getByPath(data, [ 'lots', 'enabled' ])) {
+      if (modoLote === 'empirical' && !tablaLotes.length) {
+        throw new Error('El tamaño de lote es «empirical» pero la tabla está vacía: añade al menos un tamaño');
+      }
+      if (modoLote === 'triangular') {
+        const min = getByPath(data, [ 'lots', 'min' ]);
+        const moda = getByPath(data, [ 'lots', 'mode' ]);
+        const max = getByPath(data, [ 'lots', 'max' ]);
+        if (!(min <= moda && moda <= max)) {
+          throw new Error(`En el tamaño de lote triangular debe cumplirse mínimo ≤ moda ≤ máximo `
+            + `(has puesto ${min}, ${moda}, ${max})`);
+        }
+      }
+    }
 
     writes.push({ element: info.element, data });
     return writes;
@@ -2828,11 +3053,16 @@ class DataTablePanel {
         'id', 'nombre', 'distribucion',
         'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
         'tasa_fallo', 'retrabajo', 'unidad_retrabajo',
-        'recurso', 'cant_recurso'
+        'recurso', 'cant_recurso',
+        'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol'
       ] ];
       this._getTasks().forEach((el) => {
         const d = this._taskData(el);
         const tri = d.processingTime.distribution === 'triangular';
+        // La barrera solo se exporta con «por lote»: en una tarea por token el
+        // motor no la lee, y sacarla rellena daria a entender que si.
+        const esLote = d.frequency === 'lot';
+        const b = d.barrier || {};
         rows.push([
           el.id,
           this._label(el),
@@ -2846,7 +3076,13 @@ class DataTablePanel {
           d.reworkTime.value,
           d.reworkTime.unit,
           (d.resources && d.resources.pool) || '',
-          (d.resources && d.resources.quantityRequired) || ''
+          (d.resources && d.resources.quantityRequired) || '',
+          esLote ? 'lot' : 'token',
+          esLote ? b.availableProbability : '',
+          esLote ? b.waitMin : '',
+          esLote ? b.waitMode : '',
+          esLote ? b.waitMax : '',
+          esLote ? b.toleranceMinutes : ''
         ]);
       });
       return rows;
@@ -2898,6 +3134,13 @@ class DataTablePanel {
       rows.push([ `descanso.${n}.fin`, `Descanso ${n}: hasta`, hhmm(b.end) ]);
       rows.push([ `descanso.${n}.cuentaComoJornada`, `Descanso ${n}: ¿cuenta como jornada?`, b.cuentaComoJornada ? 'si' : 'no' ]);
       rows.push([ `descanso.${n}.existeEnExtra`, `Descanso ${n}: ¿también en horas extra?`, b.existeEnExtra === false ? 'no' : 'si' ]);
+    });
+
+    // La tabla de tamaños de lote es otra lista: mismo criterio que los descansos.
+    ((info.data.lots && info.data.lots.table) || []).forEach((f, i) => {
+      const n = i + 1;
+      rows.push([ `lote.${n}.tamano`, `Tamaño de lote ${n}: tamaño`, f.size ]);
+      rows.push([ `lote.${n}.peso`, `Tamaño de lote ${n}: peso`, f.weight ]);
     });
 
     return rows;
@@ -3008,6 +3251,55 @@ class DataTablePanel {
           delete data.resources;
         }
 
+        // Frecuencia y barrera, tambien opcionales: un CSV antiguo no las trae y
+        // la tarea se queda como estaba (por token, sin barrera). `cur` trae los
+        // valores por defecto para poder pintarlos, asi que hay que borrarlos.
+        const iFreq = header.indexOf('frecuencia');
+        const freqRaw = iFreq !== -1 ? String(r[iFreq]).trim().toLowerCase() : '';
+        if (!freqRaw || freqRaw === 'token') {
+          delete data.frequency;
+          delete data.barrier;
+        } else if (freqRaw === 'lot' || freqRaw === 'lote') {
+          // Se lee por nombre y no por posicion: el usuario puede reordenar las
+          // columnas en Excel, y una fila recortada (columnas de barrera
+          // borradas a mano) merece un aviso claro y no un «no numérico».
+          const leer = (name) => {
+            const i = header.indexOf(name);
+            if (i === -1) {
+              throw new Error(
+                `Falta la columna «${name}» en el CSV: es necesaria para las tareas «por lote»`
+              );
+            }
+            if (r[i] === undefined) {
+              throw new Error(`Línea ${line}: la fila está incompleta, falta el valor de «${name}»`);
+            }
+            return r[i];
+          };
+          const disp = this._num(leer('barrera_disp'), `Línea ${line}: disponibilidad de la barrera`);
+          if (disp < 0 || disp > 1) {
+            throw new Error(`Línea ${line}: la disponibilidad de la barrera debe estar entre 0 y 1`);
+          }
+          const eMin = this._num(leer('barrera_min'), `Línea ${line}: espera mínima`);
+          const eModa = this._num(leer('barrera_moda'), `Línea ${line}: espera modal`);
+          const eMax = this._num(leer('barrera_max'), `Línea ${line}: espera máxima`);
+          if (!(eMin <= eModa && eModa <= eMax)) {
+            throw new Error(`Línea ${line}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo`);
+          }
+          const tol = this._num(leer('barrera_tol'), `Línea ${line}: tolerancia`);
+          if (tol < 0) throw new Error(`Línea ${line}: la tolerancia no puede ser negativa`);
+
+          data.frequency = 'lot';
+          data.barrier = {
+            availableProbability: disp,
+            waitMin: eMin,
+            waitMode: eModa,
+            waitMax: eMax,
+            toleranceMinutes: tol
+          };
+        } else {
+          throw new Error(`Línea ${line}: frecuencia «${freqRaw}» inválida (usa token o lot)`);
+        }
+
         updates.push({ element: el, data });
       });
       return updates;
@@ -3115,21 +3407,33 @@ class DataTablePanel {
 
     const data = JSON.parse(JSON.stringify(info.data));
 
-    // Los descansos se leen primero y se QUITAN de la lista de campos: si no,
-    // caerian en el bucle de abajo y saltaria «campo desconocido».
+    // Los descansos y la tabla de lotes se leen primero y se QUITAN de la lista
+    // de campos: si no, caerian en el bucle de abajo y saltaria «campo
+    // desconocido».
     const filasDescanso = new Map();
+    const filasLote = new Map();
     const filasCampos = [];
 
     body.forEach((r) => {
       const clave = String(r[iKey]).trim();
+
       const m = clave.match(/^descanso\.(\d+)\.(inicio|fin|cuentaComoJornada|existeEnExtra)$/);
-      if (!m) {
-        filasCampos.push(r);
+      if (m) {
+        const i = Number(m[1]);
+        if (!filasDescanso.has(i)) filasDescanso.set(i, {});
+        filasDescanso.get(i)[m[2]] = String(r[iVal]).trim();
         return;
       }
-      const idx = Number(m[1]);
-      if (!filasDescanso.has(idx)) filasDescanso.set(idx, {});
-      filasDescanso.get(idx)[m[2]] = String(r[iVal]).trim();
+
+      const ml = clave.match(/^lote\.(\d+)\.(tamano|peso)$/);
+      if (ml) {
+        const i = Number(ml[1]);
+        if (!filasLote.has(i)) filasLote.set(i, {});
+        filasLote.get(i)[ml[2]] = String(r[iVal]).trim();
+        return;
+      }
+
+      filasCampos.push(r);
     });
 
     filasCampos.forEach((r, n) => {
@@ -3139,9 +3443,17 @@ class DataTablePanel {
       const raw = r[iVal];
 
       if (field.kind === 'number') {
-        const num = this._num(raw, `Línea ${line}: ${field.label}`);
-        if (field.min != null && num < field.min) throw new Error(`Línea ${line}: ${field.label} debe ser ≥ ${field.min}`);
-        setByPath(data, field.path, num);
+        // Campo opcional (la semilla): vacio es «no declarado». Sin esta rama,
+        // exportar e importar la pestaña Global fallaba en la semilla vacia: la
+        // ida y vuelta del CSV se rompia sola con los valores por defecto.
+        if (field.optional && String(raw).trim() === '') {
+          setByPath(data, field.path, '');
+        } else {
+          const num = this._num(raw, `Línea ${line}: ${field.label}`);
+          if (field.min != null && num < field.min) throw new Error(`Línea ${line}: ${field.label} debe ser ≥ ${field.min}`);
+          if (field.max != null && num > field.max) throw new Error(`Línea ${line}: ${field.label} debe ser ≤ ${field.max}`);
+          setByPath(data, field.path, num);
+        }
       } else if (field.kind === 'select') {
         const v = String(raw).trim();
         if (!field.options.includes(v)) throw new Error(`Línea ${line}: valor «${v}» inválido (usa ${field.options.join('/')})`);
@@ -3197,6 +3509,23 @@ class DataTablePanel {
       });
 
       setByPath(data, [ 'calendar', 'breaks' ], descansos);
+    }
+
+    // Tabla de tamaños de lote: mismo criterio que los descansos, se reconstruye
+    // ENTERA solo si el CSV trae alguna fila.
+    if (filasLote.size) {
+      const tabla = [];
+      Array.from(filasLote.keys()).sort((a, b) => a - b).forEach((idx) => {
+        const f = filasLote.get(idx);
+        const size = this._num(f.tamano, `Línea del lote ${idx}: tamaño`);
+        if (!Number.isInteger(size) || size < 1) {
+          throw new Error(`Línea del lote ${idx}: el tamaño debe ser un entero mayor o igual que 1`);
+        }
+        const weight = this._num(f.peso, `Línea del lote ${idx}: peso`);
+        if (!(weight > 0)) throw new Error(`Línea del lote ${idx}: el peso debe ser mayor que 0`);
+        tabla.push({ size, weight });
+      });
+      setByPath(data, [ 'lots', 'table' ], tabla);
     }
 
     updates.push({ element: info.element, data });
@@ -4860,6 +5189,12 @@ class SimulationController {
     this._notifications.showNotification({ text: 'Ejecutando simulaciones (normal y con horas extras)...', type: 'info', duration: 2000 });
 
     this.lastMetric = null;
+
+    // Las dos pasadas (normal y con horas extra) son UNA corrida: comparten la
+    // semilla, para que la diferencia entre planes se deba al plan y no a la
+    // suerte. Si la semilla esta declarada esto no cambia nada; si esta vacia,
+    // cada pulsacion del boton saca una nueva.
+    if (this._simulationEngine.nuevaCorrida) this._simulationEngine.nuevaCorrida();
 
     // Run normal simulation
     this.clear();
@@ -6634,7 +6969,7 @@ __webpack_require__.r(__webpack_exports__);
  * nunca se alcanzaba. Con triangular(1, 2, 4) el soporte real terminaba en
  * 2,73 en lugar de 4, y un 27% de la distribucion era inalcanzable.
  */
-const triangular = (min, mode, max) => {
+const triangular = (min, mode, max, rand) => {
   // Guardas: sin ellas un mode fuera de rango da Math.sqrt de un negativo (NaN)
   // y un min == max da division por cero. El NaN se propagaba a las fechas y al
   // orden de la cola de eventos sin lanzar ningun error.
@@ -6642,11 +6977,84 @@ const triangular = (min, mode, max) => {
   if (mode < min) mode = min;
   if (mode > max) mode = max;
 
+  // `rand` se recibe de fuera cuando hay semilla (azar reproducible); si no, se
+  // toma del generador global.
+  const u = rand == null ? Math.random() : rand;
+
   const F = (mode - min) / (max - min);
-  const rand = Math.random();
-  return rand < F
-    ? min + Math.sqrt(rand * (mode - min) * (max - min))
-    : max - Math.sqrt((1 - rand) * (max - min) * (max - mode));
+  return u < F
+    ? min + Math.sqrt(u * (mode - min) * (max - min))
+    : max - Math.sqrt((1 - u) * (max - min) * (max - mode));
+};
+
+/**
+ * Generador pseudoaleatorio DETERMINISTA (mulberry32).
+ *
+ * El motor usaba Math.random() en todo, asi que dos corridas del mismo modelo
+ * daban numeros distintos y no habia forma de comparar escenarios con justicia.
+ * Con semilla se consiguen tres cosas, y la tercera es la que mas vale:
+ *
+ *   1. Reproducibilidad: la misma corrida da el mismo resultado.
+ *   2. Replicas de verdad: varias semillas -> intervalo de confianza.
+ *   3. NUMEROS ALEATORIOS COMUNES: dos escenarios ven la MISMA secuencia, asi que
+ *      la diferencia se debe al cambio y no a la suerte. Sin esto, comparar un
+ *      lote de 20 con uno de 50 es comparar dos muestras pequenas: ruido contra
+ *      ruido.
+ */
+const crearAleatorio = (semilla) => {
+  let a = semilla >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+/** Semilla declarada, o null para sacarla del reloj (corrida no reproducible). */
+const normalizarSemilla = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+};
+
+// ---------------------------------------------------------------------------
+// Lotes.
+//
+// En modo lote las instancias NO llegan una a una: llegan en grupos, y los
+// grupos van ESTRICTAMENTE EN SERIE, uno detras de otro (por traccion: el
+// siguiente arranca cuando cierra el anterior). Eso tiene tres consecuencias:
+//
+//   - No hay cola ENTRE lotes; la espera esta DENTRO del lote.
+//   - El paron entre lotes se VE y se mide: es el precio de la politica.
+//   - El tamano de muestra efectivo son los LOTES, no los tokens. 1.000 piezas
+//     en 50 lotes no son 1.000 muestras del patron de llegada: son 50.
+// ---------------------------------------------------------------------------
+const LOT_SIZE_MODES = [ 'fixed', 'triangular', 'empirical' ];
+
+const normalizeLots = (cfg) => {
+  const c = cfg || {};
+  const tabla = Array.isArray(c.table)
+    ? c.table
+      .map((f) => ({
+        size: Math.max(1, Math.round(Number(f && f.size) || 1)),
+        weight: Math.max(0, Number(f && f.weight) || 0)
+      }))
+      .filter((f) => f.weight > 0)
+    : [];
+
+  return {
+    enabled: Boolean(c.enabled),
+    sizeMode: LOT_SIZE_MODES.includes(c.sizeMode) ? c.sizeMode : 'fixed',
+    size: Math.max(1, Math.round(Number(c.size) || 1)),
+    min: Math.max(1, Math.round(Number(c.min) || 1)),
+    mode: Math.max(1, Math.round(Number(c.mode) || 1)),
+    max: Math.max(1, Math.round(Number(c.max) || 1)),
+    table: tabla,
+    // El paron de cambio de herramienta entre lotes, en minutos de trabajo. Es
+    // el objetivo de un SMED y lo que se cotiza: «si bajo el cambio de 20 a 5
+    // minutos, cuanto gano».
+    stopMinutes: Math.max(0, Number(c.stopMinutes) || 0)
+  };
 };
 
 const timeToMilliseconds = (value, unit) => {
@@ -6709,6 +7117,23 @@ class SimulationEngine {
     this.completedInstances = 0;
     this.calendar = null; // Will be initialized on run
     this.rootConfig = {};
+    // Semilla resuelta de la corrida en curso (vacia mientras no se corra nada).
+    // Se fija en `initialize()` para que las VARIAS pasadas de una misma corrida
+    // (plan normal y plan con horas extra) compartan el mismo azar.
+    this._semillaDeLaCorrida = null;
+  }
+
+  /**
+   * Empieza una corrida nueva.
+   *
+   * Una «corrida» puede incluir varias pasadas (normal y con horas extra), y
+   * todas deben usar el MISMO azar para que la comparacion sea limpia. Esto es
+   * lo que separa una corrida de la siguiente: si el campo de semilla esta
+   * vacio, cada corrida saca una nueva, y dentro de ella todos los planes la
+   * comparten.
+   */
+  nuevaCorrida() {
+    this._semillaDeLaCorrida = null;
   }
 
   initialize(rootConfig) {
@@ -6726,6 +7151,37 @@ class SimulationEngine {
     // de las tareas, no al trabajo contabilizado. Sin `warmup` en la
     // configuracion no hay arranque, que es el comportamiento de siempre.
     this.warmup = (0,_WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__.normalizeWarmup)(rootConfig.warmup);
+
+    // Semilla. Con ella la corrida es reproducible y, sobre todo, dos escenarios
+    // se pueden comparar sobre el MISMO azar. Sin semilla declarada se saca del
+    // reloj, pero la usada se guarda (y se imprime): asi una corrida interesante
+    // se puede repetir exactamente.
+    const semillaDeclarada = normalizarSemilla(rootConfig.seed);
+    if (semillaDeclarada != null) {
+      this.seed = semillaDeclarada;
+    } else if (this._semillaDeLaCorrida == null) {
+      // Sin semilla declarada se saca UNA por corrida, no una por pasada: los
+      // planes normal y con horas extra comparten secuencia (numeros aleatorios
+      // comunes). Sacandola en cada `initialize()` los dos planes usaban azar
+      // distinto y el informe imprimia dos semillas distintas para lo que el
+      // usuario cree que es una sola corrida. `nuevaCorrida()` borra esta.
+      this.seed = Date.now() % 2147483647;
+    } else {
+      this.seed = this._semillaDeLaCorrida;
+    }
+    this._semillaDeLaCorrida = this.seed;
+    this._random = crearAleatorio(this.seed);
+
+    // Lotes. `enabled: false` (el defecto) mantiene el comportamiento de siempre:
+    // llegadas una a una.
+    this.lotConfig = normalizeLots(rootConfig.lots);
+    this.lots = [];
+    this.lotNumber = 0;
+    this.lotStats = {
+      lots: 0, stops: 0, stopMinutes: 0,
+      waits: 0, waitMinutes: 0, waitsOverTolerance: 0,
+      perLotTaskExecutions: 0
+    };
 
     let simStart = new Date();
     if (rootConfig.startDate && /^\d{4}-\d{2}-\d{2}$/.test(rootConfig.startDate)) {
@@ -6793,7 +7249,7 @@ class SimulationEngine {
 
     let chosenFlow = null;
     if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
-      const rand = Math.random();
+      const rand = this._random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(flow);
@@ -6843,11 +7299,21 @@ class SimulationEngine {
       // calendario ESTANDAR en los dos planes, para que los tiempos de ciclo del
       // plan normal y del de horas extra sean comparables entre si.
       this.instanceCycleTimes.push(cicloMin);
+
+      // Cierre de lote: se consulta ANTES de borrar el estado, que es donde vive
+      // el numero de lote de la instancia.
+      const estadoInstancia = this.instanceStates.get(instanceId);
+      if (this.lotConfig.enabled && estadoInstancia && estadoInstancia.lotNumber) {
+        this._cerrarLoteSiProcede(estadoInstancia.lotNumber, this.clock);
+      }
+
       this.instanceStates.delete(instanceId);
       return;
     }
 
-    elementResults.executionCount++;
+    // Un token que solo CONTINUA tras una tarea por lote no cuenta como una
+    // ejecucion suya: la tarea por lote se ejecuto una vez, no una por token.
+    if (!event.continuacionDeLote) elementResults.executionCount++;
 
     const nextElements = this.findNextElements(element);
 
@@ -6869,7 +7335,13 @@ class SimulationEngine {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
       } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(nextElement, 'bpmn:Task') && data) {
-        this.scheduleTask({ type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime });
+        // Tarea POR LOTE: la ejecuta una sola vez el primer token que llega, y
+        // los demas esperan (barrera). Ver _atenderTareaPorLote.
+        if (data.frequency === 'lot' && this.lotConfig.enabled) {
+          this._atenderTareaPorLote(nextElement, data, instanceId, startTime, this.clock);
+        } else {
+          this.scheduleTask({ type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime });
+        }
       } else {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
       }
@@ -6885,7 +7357,7 @@ class SimulationEngine {
     const pt = data.processingTime;
     if (pt) {
       if (pt.distribution === 'triangular') {
-        const randomValue = triangular(pt.min, pt.mode, pt.max);
+        const randomValue = triangular(pt.min, pt.mode, pt.max, this._random());
         processingTime = timeToMilliseconds(randomValue, pt.unit);
       } else {
         processingTime = timeToMilliseconds(pt.value, pt.unit);
@@ -6893,11 +7365,11 @@ class SimulationEngine {
     }
 
     let reworkTime = 0;
-    if (data.failureRate && Math.random() < data.failureRate) {
+    if (data.failureRate && this._random() < data.failureRate) {
       const rt = data.reworkTime;
       if (rt) {
         if (rt.distribution === 'triangular') {
-          const randomValue = triangular(rt.min, rt.mode, rt.max);
+          const randomValue = triangular(rt.min, rt.mode, rt.max, this._random());
           reworkTime = timeToMilliseconds(randomValue, rt.unit);
         } else {
           reworkTime = timeToMilliseconds(rt.value, rt.unit);
@@ -6962,7 +7434,11 @@ class SimulationEngine {
       // Duracion de RELOJ con el arranque aplicado. Se guarda aparte de
       // `totalDuration` porque el camino de espera por recursos vuelve a calcular
       // el fin desde su propio inicio, y alli el arranque se reevalua.
-      effectiveDuration: duracionEfectivaMs
+      effectiveDuration: duracionEfectivaMs,
+      // Tareas POR LOTE: al terminar hay que despertar a los tokens que esperaban
+      // la barrera, y hay que saber de que lote era.
+      esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
+      lotNumber: taskEvent.lotNumber || null
     };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
@@ -7065,14 +7541,25 @@ class SimulationEngine {
       arrivalInterval = intervalInSeconds * 1000;
     }
 
-    startEvents.forEach((startEvent, index) => {
-      const instanceId = index + 1;
-      const startTime = this.simulationStartTime;
-      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: startTime, instanceId, startTime: startTime });
-      this.instanceStates.set(instanceId, { gateways: {} });
-    });
+    this.runValue = runValue;
+    this.startEvent = startEvents[0];
+    this.instanceCounter = 0;
 
-    let instanceCounter = startEvents.length;
+    if (this.lotConfig.enabled) {
+      // Lotes en SERIE por traccion: se libera el primero, y cada siguiente
+      // arranca cuando CIERRA el anterior (ver _cerrarLoteSiProcede). No hay dos
+      // lotes a la vez, asi que no hay cola entre lotes: la espera esta dentro.
+      this._liberarLote(this.simulationStartTime);
+    } else {
+      startEvents.forEach((startEvent, index) => {
+        const instanceId = index + 1;
+        const startTime = this.simulationStartTime;
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: startTime, instanceId, startTime: startTime });
+        this.instanceStates.set(instanceId, { gateways: {} });
+      });
+      this.instanceCounter = startEvents.length;
+    }
+
     let iterationCounter = 0;
 
     while (!this.eventQueue.isEmpty()) {
@@ -7084,7 +7571,14 @@ class SimulationEngine {
       const event = this.eventQueue.next();
       this.clock = event.time;
 
-      if (event.type === 'TASK_COMPLETE') {
+      if (event.type === 'LOT_TASK_START') {
+        // Una tarea por lote que estaba esperando la barrera arranca ahora.
+        this._iniciarTareaDeLote(event);
+      } else if (event.type === 'LOT_CONTINUE') {
+        // Un token que esperaba la barrera sigue: NO pasa por la contabilidad de
+        // tareas, porque no es una finalizacion de tarea.
+        this.processEvent(event);
+      } else if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
 
         results.totalProcessingTime += event.processingTime;
@@ -7140,17 +7634,26 @@ class SimulationEngine {
             this.eventQueue.add(nextTask);
           });
         }
+
+        // Tarea por lote: al terminar hay que despertar a los que esperaban la
+        // barrera. Va antes de processEvent para que los despiertos entren en la
+        // cola en el mismo instante.
+        if (event.esTareaDeLote) this._cerrarTareaDeLote(event);
+
         this.processEvent(event);
       } else {
         this.processEvent(event);
       }
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
-        instanceCounter++;
+      // Llegada de la siguiente instancia. En modo LOTES no se usa: alli las
+      // instancias de un lote entran juntas y el siguiente lote lo dispara el
+      // cierre del anterior.
+      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_3__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
+        this.instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
-        this.instanceStates.set(instanceCounter, { gateways: {} });
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: this.instanceCounter, startTime: nextArrivalTime });
+        this.instanceStates.set(this.instanceCounter, { gateways: {} });
       }
       if (this.completedInstances >= runValue) {
         console.log(`Target of ${runValue} completed instances reached. Ending simulation.`);
@@ -7232,6 +7735,267 @@ class SimulationEngine {
   }
 
   /**
+   * Tamano del siguiente lote, segun la secuencia declarada.
+   *
+   * Los tres modos cubren lo que se ve en planta: tamano fijo, tamano que varia
+   * (triangular) y tamanos reales con sus frecuencias (tabla empirica, que es la
+   * que mejor refleja como llegan los pedidos de verdad).
+   */
+  _tamanoDeLote() {
+    const c = this.lotConfig;
+
+    if (c.sizeMode === 'triangular') {
+      const min = Math.min(c.min, c.max);
+      const max = Math.max(c.min, c.max);
+      const moda = Math.min(max, Math.max(min, c.mode));
+      return Math.max(1, Math.round(triangular(min, moda, max, this._random())));
+    }
+
+    if (c.sizeMode === 'empirical' && c.table.length) {
+      const total = c.table.reduce((a, f) => a + f.weight, 0);
+      let r = this._random() * total;
+      for (let i = 0; i < c.table.length; i++) {
+        r -= c.table[i].weight;
+        if (r <= 0) return c.table[i].size;
+      }
+      return c.table[c.table.length - 1].size;
+    }
+
+    return c.size;
+  }
+
+  /**
+   * Libera un lote: sus instancias ENTRAN JUNTAS en ese instante.
+   *
+   * El tamano se recorta a lo que falta para el objetivo, asi que el total de
+   * instancias creadas es exactamente `runValue` y el ultimo lote puede salir
+   * incompleto — que es lo que pasa de verdad.
+   */
+  _liberarLote(tiempo) {
+    if (!this.startEvent) return;
+
+    const restantes = this.runValue - this.instanceCounter;
+    if (restantes <= 0) return;
+
+    const tamano = Math.min(this._tamanoDeLote(), restantes);
+    this.lotNumber++;
+
+    const lote = {
+      number: this.lotNumber,
+      size: tamano,
+      startTime: tiempo,
+      endTime: null,
+      pending: tamano,
+      stopMinutes: 0,
+      // Estado de las tareas POR LOTE de este lote (se crea al vuelo).
+      tareas: new Map()
+    };
+    this.lots.push(lote);
+    this.lotStats.lots++;
+
+    for (let i = 0; i < tamano; i++) {
+      this.instanceCounter++;
+      const instanceId = this.instanceCounter;
+      this.instanceStates.set(instanceId, { gateways: {}, lotNumber: lote.number });
+      this.eventQueue.add({
+        type: 'GATEWAY_COMPLETE',
+        element: this.startEvent,
+        time: tiempo,
+        instanceId,
+        startTime: tiempo
+      });
+    }
+  }
+
+  /**
+   * Cierra el lote cuando su ULTIMA instancia termina, aplica el paron de cambio
+   * y dispara el siguiente lote (traccion: uno detras de otro).
+   *
+   * El paron se MIDE porque es el precio exacto de la politica de lotes, y es la
+   * cifra que justifica (o descarta) un SMED.
+   */
+  _cerrarLoteSiProcede(lotNumber, tiempo) {
+    const lote = this.lots[lotNumber - 1];
+    if (!lote || lote.endTime != null) return;
+
+    lote.pending--;
+    if (lote.pending > 0) return;
+
+    lote.endTime = tiempo;
+
+    if (this.completedInstances < this.runValue) {
+      const parada = this.lotConfig.stopMinutes;
+      lote.stopMinutes = parada;
+
+      // El paron SOLO ocurre si hay un lote despues: no se cambia herramienta
+      // para cerrar la produccion. Contarlo en el ultimo lote inflaba el total
+      // (con 2 lotes daba 2 parones en vez de 1, y el doble de minutos).
+      if (parada > 0) {
+        this.lotStats.stops++;
+        this.lotStats.stopMinutes += parada;
+      }
+
+      const siguiente = parada > 0
+        ? this.calendar.addWorkingTime(new Date(tiempo), parada).getTime()
+        : tiempo;
+      this._liberarLote(siguiente);
+    }
+  }
+
+  /**
+   * Tarea POR LOTE: se ejecuta UNA vez por lote, la primera vez que el flujo pasa
+   * por ahi, y los demas tokens ESPERAN a que termine (barrera).
+   *
+   * Es la tarea administrativa: un documento de 30 minutos hecho por PIEZA en un
+   * lote de 20 son 10 horas; hecho por LOTE, 30 minutos. Un factor 20x — y la
+   * razon de fondo por la que producir por lotes abarata lo administrativo.
+   *
+   * En modo individual (sin lotes) se comporta como una tarea normal, para no
+   * dejar el modelo a medias.
+   */
+  _atenderTareaPorLote(element, data, instanceId, startTime, tiempo) {
+    const estadoInstancia = this.instanceStates.get(instanceId);
+    const lote = estadoInstancia && estadoInstancia.lotNumber
+      ? this.lots[estadoInstancia.lotNumber - 1]
+      : null;
+
+    if (!lote) {
+      this.scheduleTask({ type: 'TASK_START', element, time: tiempo, instanceId, startTime });
+      return;
+    }
+
+    const estado = lote.tareas.get(element.id) || { fase: 'pendiente', esperando: [] };
+
+    // Ya satisfecha: este token sigue de largo, sin volver a ejecutarla.
+    if (estado.fase === 'hecha') {
+      this._continuarTrasTareaDeLote(element, instanceId, startTime, tiempo);
+      return;
+    }
+
+    // En curso: el lote entero espera. Se apunta para despertarlo al terminar.
+    if (estado.fase === 'en curso') {
+      estado.esperando.push({ instanceId, startTime });
+      lote.tareas.set(element.id, estado);
+      return;
+    }
+
+    // Primera vez. La fase se reserva ANTES de programar nada: scheduleTask puede
+    // encolar eventos que volverian a entrar aqui.
+    estado.fase = 'en curso';
+    estado.esperando = [];
+    lote.tareas.set(element.id, estado);
+
+    const espera = this._esperaDeBarrera(data);
+
+    if (espera > 0) {
+      // La tarea no empieza hasta que atiendan. Se programa un ARRANQUE para
+      // entonces, y asi el recurso (si lo pide) no se toma antes de tiempo.
+      const inicio = this.calendar.addWorkingTime(new Date(tiempo), espera).getTime();
+      this.eventQueue.add({
+        type: 'LOT_TASK_START', element, time: inicio, instanceId, startTime, lotNumber: lote.number
+      });
+    } else {
+      this.scheduleTask({
+        type: 'TASK_START', element, time: tiempo, instanceId, startTime,
+        esTareaDeLote: true, lotNumber: lote.number
+      });
+    }
+  }
+
+  /**
+   * Espera de la barrera: cuanto tarda en atender quien tiene que firmar.
+   *
+   * Se modela por su EFECTO y no como una persona, porque su agenda no se conoce
+   * y modelarla seria falsa precision: con probabilidad p atienden a la primera y
+   * si no, el lote espera lo que diga la distribucion. La TOLERANCIA define que
+   * espera cuenta como paron reportable; sin umbral, cada espera de tres minutos
+   * ensucia el informe y al final nadie lo lee.
+   */
+  _esperaDeBarrera(data) {
+    const b = data && data.barrier;
+    if (!b) return 0;
+
+    const p = b.availableProbability == null
+      ? 1
+      : Math.max(0, Math.min(1, Number(b.availableProbability)));
+    if (this._random() < p) return 0;
+
+    let espera = triangular(
+      Number(b.waitMin) || 0,
+      Number(b.waitMode) || 0,
+      Number(b.waitMax) || 0,
+      this._random()
+    );
+    if (!(espera > 0)) espera = 0;
+
+    if (espera > 0) {
+      this.lotStats.waits++;
+      this.lotStats.waitMinutes += espera;
+      const tolerancia = Math.max(0, Number(b.toleranceMinutes) || 0);
+      if (espera > tolerancia) this.lotStats.waitsOverTolerance++;
+    }
+
+    return espera;
+  }
+
+  /** Arranca de verdad una tarea por lote que esperaba la barrera. */
+  _iniciarTareaDeLote(event) {
+    this.scheduleTask({
+      type: 'TASK_START',
+      element: event.element,
+      time: event.time,
+      instanceId: event.instanceId,
+      startTime: event.startTime,
+      esTareaDeLote: true,
+      lotNumber: event.lotNumber
+    });
+  }
+
+  /**
+   * Al terminar una tarea por lote: se marca como hecha y se despierta a TODOS
+   * los tokens que esperaban la barrera.
+   */
+  _cerrarTareaDeLote(event) {
+    const lote = this.lots[(event.lotNumber || 0) - 1];
+    if (!lote) return;
+
+    const estado = lote.tareas.get(event.element.id);
+    if (!estado || estado.fase !== 'en curso') return;
+
+    estado.fase = 'hecha';
+    this.lotStats.perLotTaskExecutions++;
+
+    const esperando = estado.esperando || [];
+    estado.esperando = [];
+
+    esperando.forEach(({ instanceId, startTime }) => {
+      this._continuarTrasTareaDeLote(event.element, instanceId, startTime, this.clock);
+    });
+  }
+
+  /**
+   * Un token que esperaba la barrera sigue su camino.
+   *
+   * Va como LOT_CONTINUE, y NO como TASK_COMPLETE: la continuacion no es una
+   * finalizacion de tarea y no tiene duraciones ni costos. Si se enviara como
+   * TASK_COMPLETE, la contabilidad leeria `processingTime` (que aqui no existe) y
+   * sumaria `undefined`, dejando las metricas del elemento en NaN.
+   *
+   * `continuacionDeLote` hace que processEvent enlace los sucesores pero NO
+   * cuente una ejecucion: la tarea por lote se ejecuto una vez, no una por token.
+   */
+  _continuarTrasTareaDeLote(element, instanceId, startTime, tiempo) {
+    this.eventQueue.add({
+      type: 'LOT_CONTINUE',
+      element,
+      time: tiempo,
+      instanceId,
+      startTime,
+      continuacionDeLote: true
+    });
+  }
+
+  /**
    * Descripcion legible del intervalo entre llegadas.
    *
    * `arrivalRate` es una TASA (llegadas por unidad de tiempo), NO un intervalo:
@@ -7291,6 +8055,11 @@ class SimulationEngine {
       descansos: (this.calendar.config.breaks || []).length,
       descansoCuentaComoJornada: (this.calendar.config.breaks || []).filter((b) => b.cuentaComoJornada).length,
       arranque: (0,_WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__.describeWarmup)(this.warmup),
+      semilla: this.seed,
+      lotes: this.lotConfig.enabled
+        ? `tamano ${this.lotConfig.sizeMode === 'fixed' ? this.lotConfig.size + ' (fijo)' : this.lotConfig.sizeMode}`
+          + `, en serie por traccion, paron de cambio ${this.lotConfig.stopMinutes} min`
+        : 'desactivados (llegadas una a una)',
       diasLaborables: cal.workingDays,
       festivos: (cal.holidays || []).length,
       tarifaBasePorHora: cfg.cost && cfg.cost.baseRatePerHour,
@@ -7374,6 +8143,32 @@ class SimulationEngine {
       espera_total_min: Math.round(suma('totalWaitTime')),
       fallos_totales: suma('failureCount')
     });
+
+    // Lotes: el lote pasa a ser la unidad de analisis, no la pieza. Y ojo con el
+    // tamano de muestra: 1.000 piezas en 50 lotes NO son 1.000 muestras del
+    // patron de llegada, son 50.
+    if (this.lotConfig.enabled && this.lots.length) {
+      const ciclosDeLote = this.lots
+        .filter((l) => l.endTime != null)
+        .map((l) => this.standardCalendar.calculateBusinessDurationInMinutes(
+          new Date(l.startTime), new Date(l.endTime)
+        ));
+      const resumenLotes = (0,_util__WEBPACK_IMPORTED_MODULE_0__.resumenMuestras)(ciclosDeLote);
+
+      console.log('SALIDAS · lotes', {
+        lotes: this.lots.length,
+        piezas_por_lote_media: Number((this.completedInstances / this.lots.length).toFixed(2)),
+        ciclo_de_lote_min_medio: resumenLotes ? Math.round(resumenLotes.media) : '—',
+        ciclo_de_lote_min_min: resumenLotes ? Math.round(resumenLotes.min) : '—',
+        ciclo_de_lote_min_max: resumenLotes ? Math.round(resumenLotes.max) : '—',
+        parones_de_cambio: this.lotStats.stops,
+        paron_total_min: Math.round(this.lotStats.stopMinutes),
+        esperas_de_firma: this.lotStats.waits,
+        espera_de_firma_total_min: Math.round(this.lotStats.waitMinutes),
+        esperas_sobre_tolerancia: this.lotStats.waitsOverTolerance,
+        ejecuciones_de_tareas_por_lote: this.lotStats.perLotTaskExecutions
+      });
+    }
 
     // Utilizacion por piscina. Es LA metrica de capacidad y es contraintuitiva
     // (un 0,90 parece "queda un 10 %" cuando es saturacion), asi que se imprime
@@ -18154,6 +18949,23 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   text-align: center;
 }
 
+/* Encabezado del bloque de barrera (Tareas). Va a dos lineas: con \`nowrap\`
+   empujaria la tabla y obligaria a desplazarse para ver el resto de columnas. */
+.sim-data-table-panel .data-table th.col-barrera {
+  font-weight: 500;
+  font-size: 11.5px;
+  line-height: 1.3;
+  white-space: normal;
+  border-left: 2px solid #ddd;
+  color: #555;
+}
+
+/* La columna de frecuencia abre el bloque, asi que se marca igual que su
+   encabezado: agrupa «frecuencia + barrera» frente al resto de la fila. */
+.sim-data-table-panel .data-table td.col-freq {
+  border-left: 2px solid #eee;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;
@@ -18294,7 +19106,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   fill: currentColor;
   display: block;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n/* --- pestaña Global: descansos y curva de arranque --- */\n\n.sim-data-table-panel .subtitulo {\n  margin: 22px 0 4px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Casilla booleana con su etiqueta a la derecha. */\n.sim-data-table-panel .casilla {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12.5px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .casilla input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .data-table td.centro {\n  text-align: center;\n}\n\n.sim-data-table-panel .data-table td.centro input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */\n.sim-data-table-panel .caja-curva {\n  display: inline-block;\n  padding: 6px 10px;\n  background: #fbfcfe;\n  border: 1px solid #dfe5ec;\n  border-radius: 6px;\n}\n\n.sim-data-table-panel .curva-arranque {\n  display: block;\n  width: 320px;\n  max-width: 100%;\n  height: auto;\n}\n\n.sim-data-table-panel .curva-arranque .eje {\n  stroke: #c9d3de;\n  stroke-width: 1;\n}\n\n.sim-data-table-panel .curva-arranque .referencia {\n  stroke: #c62828;\n  stroke-width: 1;\n  stroke-dasharray: 5 4;\n  opacity: .6;\n}\n\n.sim-data-table-panel .curva-arranque .linea {\n  fill: none;\n  stroke: #1565c0;\n  stroke-width: 2;\n  stroke-linejoin: round;\n}\n\n.sim-data-table-panel .curva-arranque .rotulo {\n  font-size: 9px;\n  fill: #8a94a0;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n/* --- pestaña Global: descansos y curva de arranque --- */\n\n.sim-data-table-panel .subtitulo {\n  margin: 22px 0 4px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Casilla booleana con su etiqueta a la derecha. */\n.sim-data-table-panel .casilla {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12.5px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .casilla input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .data-table td.centro {\n  text-align: center;\n}\n\n.sim-data-table-panel .data-table td.centro input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */\n.sim-data-table-panel .caja-curva {\n  display: inline-block;\n  padding: 6px 10px;\n  background: #fbfcfe;\n  border: 1px solid #dfe5ec;\n  border-radius: 6px;\n}\n\n.sim-data-table-panel .curva-arranque {\n  display: block;\n  width: 320px;\n  max-width: 100%;\n  height: auto;\n}\n\n.sim-data-table-panel .curva-arranque .eje {\n  stroke: #c9d3de;\n  stroke-width: 1;\n}\n\n.sim-data-table-panel .curva-arranque .referencia {\n  stroke: #c62828;\n  stroke-width: 1;\n  stroke-dasharray: 5 4;\n  opacity: .6;\n}\n\n.sim-data-table-panel .curva-arranque .linea {\n  fill: none;\n  stroke: #1565c0;\n  stroke-width: 2;\n  stroke-linejoin: round;\n}\n\n.sim-data-table-panel .curva-arranque .rotulo {\n  font-size: 9px;\n  fill: #8a94a0;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* Encabezado del bloque de barrera (Tareas). Va a dos lineas: con `nowrap`\n   empujaria la tabla y obligaria a desplazarse para ver el resto de columnas. */\n.sim-data-table-panel .data-table th.col-barrera {\n  font-weight: 500;\n  font-size: 11.5px;\n  line-height: 1.3;\n  white-space: normal;\n  border-left: 2px solid #ddd;\n  color: #555;\n}\n\n/* La columna de frecuencia abre el bloque, asi que se marca igual que su\n   encabezado: agrupa «frecuencia + barrera» frente al resto de la fila. */\n.sim-data-table-panel .data-table td.col-freq {\n  border-left: 2px solid #eee;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 

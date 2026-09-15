@@ -385,6 +385,12 @@ export default class SimulationController {
 
     this.lastMetric = null;
 
+    // Las dos pasadas (normal y con horas extra) son UNA corrida: comparten la
+    // semilla, para que la diferencia entre planes se deba al plan y no a la
+    // suerte. Si la semilla esta declarada esto no cambia nada; si esta vacia,
+    // cada pulsacion del boton saca una nueva.
+    if (this._simulationEngine.nuevaCorrida) this._simulationEngine.nuevaCorrida();
+
     // Run normal simulation
     this.clear();
     this.normalReport = this._runAndGetReport({ useOvertime: false });

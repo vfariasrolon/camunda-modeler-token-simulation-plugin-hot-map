@@ -20,15 +20,30 @@ const TAB_ACTIVE_CLS = 'active';
 // ---------------------------------------------------------------------------
 const TASK_UNITS = ['minutes', 'hours', 'seconds'];
 const RATE_UNITS = ['minute', 'hour', 'second'];
+const LOT_SIZE_MODES = ['fixed', 'triangular', 'empirical'];
+const TASK_FREQUENCIES = ['token', 'lot'];
 
 // Nombres de los dias para las casillas de "dias laborables". El indice es el
 // valor que espera el motor: 0 = domingo.
 const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
 
+// Cada cuanto se ejecuta una tarea y, si es por lote, quien tiene que firmarla.
+// `token` = una vez por token (el comportamiento de siempre); `lot` = una sola
+// vez por lote, la primera vez que el flujo pasa por ahi.
+const BARRIER_DEFAULTS = () => ({
+  availableProbability: 0.7,
+  waitMin: 10,
+  waitMode: 20,
+  waitMax: 60,
+  toleranceMinutes: 15
+});
+
 const TASK_DEFAULTS = () => ({
   processingTime: { distribution: 'fixed', value: 10, unit: 'minutes' },
   failureRate: 0,
-  reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' }
+  reworkTime: { distribution: 'fixed', value: 20, unit: 'minutes' },
+  frequency: 'token',
+  barrier: BARRIER_DEFAULTS()
 });
 
 const FLOW_DEFAULTS = () => ({ branchingProbability: 0.5 });
@@ -61,7 +76,21 @@ const GLOBAL_FIELDS = [
   { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1 },
   { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1 },
   { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ] },
-  { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] }
+  { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] },
+
+  // --- lotes ----------------------------------------------------------------
+  // En modo lote las instancias llegan en GRUPOS y los grupos van en serie (uno
+  // detras de otro): no hay dos lotes a la vez.
+  { key: 'lots.enabled', label: 'Llegadas por LOTES (en serie)', kind: 'checkbox', path: [ 'lots', 'enabled' ] },
+  { key: 'lots.sizeMode', label: 'Tamaño de lote: modo', kind: 'select', options: LOT_SIZE_MODES, path: [ 'lots', 'sizeMode' ] },
+  { key: 'lots.size', label: 'Tamaño de lote: fijo', kind: 'number', path: [ 'lots', 'size' ], min: 1 },
+  { key: 'lots.min', label: 'Tamaño de lote: mínimo (triangular)', kind: 'number', path: [ 'lots', 'min' ], min: 1 },
+  { key: 'lots.mode', label: 'Tamaño de lote: moda (triangular)', kind: 'number', path: [ 'lots', 'mode' ], min: 1 },
+  { key: 'lots.max', label: 'Tamaño de lote: máximo (triangular)', kind: 'number', path: [ 'lots', 'max' ], min: 1 },
+  { key: 'lots.stopMinutes', label: 'Parón de cambio entre lotes (min)', kind: 'number', path: [ 'lots', 'stopMinutes' ], min: 0 },
+
+  // --- semilla --------------------------------------------------------------
+  { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true }
 ];
 
 const DEFAULT_GLOBAL = () => ({
@@ -84,6 +113,19 @@ const DEFAULT_GLOBAL = () => ({
   // La curva de arranque SI trae valores por defecto: se declara, no se mide, y
   // un valor de partida razonable es mejor que ninguno. Todo ajustable.
   warmup: { ...WARMUP_DEFAULTS },
+  // Los lotes vienen DESACTIVADOS: activarlos cambia el modelo de llegadas por
+  // completo, y eso no debe pasar sin que nadie lo pida.
+  lots: {
+    enabled: false,
+    sizeMode: 'fixed',
+    size: 20,
+    min: 10,
+    mode: 20,
+    max: 30,
+    stopMinutes: 0,
+    table: []
+  },
+  seed: '',
   cost: { baseRatePerHour: 50, waitCostPerHour: 0 },
   overtime: { limitHours: 9, payMultiplier: 2, excessPayMultiplier: 3 }
 });
@@ -513,7 +555,8 @@ export default class DataTablePanel {
       ...d,
       ...raw,
       processingTime: { ...d.processingTime, ...(raw.processingTime || {}) },
-      reworkTime: { ...d.reworkTime, ...(raw.reworkTime || {}) }
+      reworkTime: { ...d.reworkTime, ...(raw.reworkTime || {}) },
+      barrier: { ...d.barrier, ...(raw.barrier || {}) }
     };
   }
 
@@ -590,6 +633,8 @@ export default class DataTablePanel {
             <th>Unidad</th>
             <th>Recurso</th>
             <th>Cant.</th>
+            <th>Frecuencia</th>
+            <th colspan="5" class="col-barrera">Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia</th>
           </tr>
         </thead>
         <tbody>
@@ -617,6 +662,17 @@ export default class DataTablePanel {
               `<option value="${esc(n)}" ${actual === n ? 'selected' : ''}>${n === '' ? '(ninguno)' : esc(n)}</option>`
             ).join('');
 
+            // Frecuencia y barrera. La barrera SOLO tiene sentido con «por
+            // lote» (es lo que hace esperar al lote entero), asi que con «por
+            // token» sus casillas se deshabilitan y se dice por que: dejarlas
+            // editables guardaria un valor que el motor ignoraria.
+            const esLote = (d.frequency || 'token') === 'lot';
+            const b = d.barrier;
+            const celdaBarrera = (campo, valor, marcador, atributos) =>
+              `<td><input type="number" ${atributos} class="cell mini"`
+              + ` data-field="barrier.${campo}" value="${valor == null ? '' : valor}"`
+              + ` placeholder="${marcador}"${esLote ? '' : ' disabled title="Solo para tareas «por lote»"'}></td>`;
+
             return `
               <tr data-el-id="${el.id}">
                 <td class="col-name" title="${esc(this._label(el))}">${esc(this._label(el))}</td>
@@ -637,6 +693,15 @@ export default class DataTablePanel {
                   value="${(d.resources && d.resources.quantityRequired) || 1}"
                   ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
                 </td>
+                <td class="col-freq"><select class="cell" data-field="frequency">
+                  <option value="token" ${esLote ? '' : 'selected'}>por token</option>
+                  <option value="lot" ${esLote ? 'selected' : ''}>por lote</option>
+                </select></td>
+                ${celdaBarrera('availableProbability', b.availableProbability, 'disp.', 'step="0.01" min="0" max="1"')}
+                ${celdaBarrera('waitMin', b.waitMin, 'mín', 'step="any" min="0"')}
+                ${celdaBarrera('waitMode', b.waitMode, 'moda', 'step="any" min="0"')}
+                ${celdaBarrera('waitMax', b.waitMax, 'máx', 'step="any" min="0"')}
+                ${celdaBarrera('toleranceMinutes', b.toleranceMinutes, 'tol.', 'step="any" min="0"')}
               </tr>`;
           }).join('')}
         </tbody>
@@ -654,7 +719,49 @@ export default class DataTablePanel {
         Las piscinas se definen en la pestaña <strong>Recursos</strong>; sin ninguna dada de alta, esta columna
         no tiene nada que ofrecer.
       </p>
+      <p class="hint">
+        <strong>Frecuencia</strong>: <em>por token</em> es lo de siempre (una vez por caso);
+        <em>por lote</em> se ejecuta <strong>una sola vez por lote</strong>, la primera vez que el flujo pasa
+        por aquí. Es el «hay que rellenar el documento» de cada lote: el resto de tokens del lote
+        <em>esperan</em> a que se haga.
+      </p>
+      <p class="hint">
+        <strong>Barrera</strong> (tareas «por lote»): quien firma no está dedicado a esta área, así que no se
+        modela como una persona —se modela por su efecto—. <strong>disp.</strong> es la probabilidad de que
+        atiendan a la primera; si no atienden, el lote espera una cantidad con forma
+        <strong>mín / moda / máx</strong>. La <strong>tol.</strong> es cuánta espera cuenta como parón
+        reportable: sin umbral, cada espera de tres minutos ensucia el informe y al final nadie lo lee.
+        Con <strong>disp.</strong> a 1 no hay ninguna espera.
+      </p>
     `;
+
+    this._bindBarrera();
+  }
+
+  /**
+   * Habilita/deshabilita la barrera segun la frecuencia de cada tarea.
+   *
+   * Sin esto, cambiar «por token» a «por lote» dejaria las casillas muertas hasta
+   * reabrir el panel, y al reves: se podrian rellenar y guardar valores de
+   * barrera en tareas por token, que el motor ignora.
+   */
+  _bindBarrera() {
+    this._body.querySelectorAll('tr[data-el-id]').forEach((tr) => {
+      const select = tr.querySelector('[data-field="frequency"]');
+      if (!select) return;
+
+      const barreras = tr.querySelectorAll('[data-field^="barrier."]');
+      const sincronizar = () => {
+        const esLote = select.value === 'lot';
+        barreras.forEach((input) => {
+          input.disabled = !esLote;
+          input.title = esLote ? '' : 'Solo para tareas «por lote»';
+        });
+      };
+
+      domEvent.bind(select, 'change', sincronizar);
+      sincronizar();
+    });
   }
 
   /**
@@ -1066,9 +1173,35 @@ export default class DataTablePanel {
       </p>
       <div class="caja-curva">${this._svgArranque(data.warmup)}</div>
       <p class="hint" data-resumen-arranque>${esc(describeWarmup(data.warmup))}</p>
+
+      <h4 class="subtitulo">Tamaño de lote empírico</h4>
+      <p class="hint">
+        Solo se usa con el modo <strong>empirical</strong>: una tabla de tamaños con sus frecuencias,
+        que es como llegan los pedidos de verdad («de 10, el 30 % de las veces; de 20, el 50 %…»).
+        El <em>peso</em> es una frecuencia relativa: no hace falta que sume 100.
+      </p>
+      <table class="data-table">
+        <thead><tr><th>Tamaño del lote</th><th>Peso (frecuencia)</th><th></th></tr></thead>
+        <tbody class="filas-lote">
+          ${((data.lots && data.lots.table) || []).map((f) => this._filaLote(f)).join('')}
+        </tbody>
+      </table>
+      <button class="btn-anadir-fila" type="button" data-accion="anadir-lote">+ Añadir tamaño</button>
     `;
 
     this._bindGlobalExtras();
+  }
+
+  /** Una fila de la tabla de tamaños de lote empíricos. */
+  _filaLote(f) {
+    return `
+      <tr>
+        <td><input type="number" step="1" min="1" class="cell mini" data-lote="size"
+          value="${f && f.size != null ? f.size : ''}" placeholder="20"></td>
+        <td><input type="number" step="any" min="0" class="cell mini" data-lote="weight"
+          value="${f && f.weight != null ? f.weight : ''}" placeholder="1"></td>
+        <td><button class="btn-quitar-pool" type="button" title="Quitar este tamaño" data-tip="Quitar esta fila">×</button></td>
+      </tr>`;
   }
 
   /**
@@ -1148,27 +1281,36 @@ export default class DataTablePanel {
     if (resumen) resumen.textContent = describeWarmup(this._leerArranqueDelDom());
   }
 
-  /** Conecta el editor de descansos y la vista previa de la curva. */
+  /** Conecta las listas de la pestaña Global y la vista previa de la curva. */
   _bindGlobalExtras() {
-    const boton = this._body.querySelector('[data-accion="anadir-descanso"]');
-    if (boton) {
-      domEvent.bind(boton, 'click', () => {
-        const tbody = this._body.querySelector('.filas-descanso');
-        // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al parseo
-        // de un contenedor que no sea <table>/<tbody>.
-        tbody.insertAdjacentHTML('beforeend', this._filaDescanso(null));
-      });
-    }
+    // Las dos listas (descansos y tamaños de lote) usan el mismo patrón: un botón
+    // para añadir y delegación en el cuerpo para quitar.
+    const listas = [
+      { accion: 'anadir-descanso', tbody: '.filas-descanso', fila: () => this._filaDescanso(null) },
+      { accion: 'anadir-lote', tbody: '.filas-lote', fila: () => this._filaLote(null) }
+    ];
 
-    const tbody = this._body.querySelector('.filas-descanso');
-    if (tbody) {
-      domEvent.bind(tbody, 'click', (e) => {
-        const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
-        if (!btn) return;
-        const tr = btn.closest('tr');
-        if (tr) tr.remove();
-      });
-    }
+    listas.forEach(({ accion, tbody, fila }) => {
+      const boton = this._body.querySelector(`[data-accion="${accion}"]`);
+      if (boton) {
+        domEvent.bind(boton, 'click', () => {
+          const cuerpo = this._body.querySelector(tbody);
+          // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
+          // parseo de un contenedor que no sea <table>/<tbody>.
+          if (cuerpo) cuerpo.insertAdjacentHTML('beforeend', fila());
+        });
+      }
+
+      const cuerpo = this._body.querySelector(tbody);
+      if (cuerpo) {
+        domEvent.bind(cuerpo, 'click', (e) => {
+          const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
+          if (!btn) return;
+          const tr = btn.closest('tr');
+          if (tr) tr.remove();
+        });
+      }
+    });
 
     GLOBAL_FIELDS.forEach((f) => {
       if (!f.key.startsWith('warmup.')) return;
@@ -1276,6 +1418,43 @@ export default class DataTablePanel {
         // JSON no arrastra claves muertas.
         if (recurso) datos.resources = recurso;
         else delete datos.resources;
+
+        // Frecuencia y barrera. `_taskData` devuelve los valores por defecto para
+        // poder pintarlos, asi que hay que BORRARLOS del resultado: si no, cada
+        // tarea guardada arrastraria un `frequency: "token"` y una barrera que
+        // nunca se pidio, y el XML engordaria en cada guardado.
+        const frecuencia = val('frequency') === 'lot' ? 'lot' : 'token';
+
+        if (frecuencia === 'lot') {
+          const disp = num('barrier.availableProbability', 'disponibilidad de la barrera');
+          if (disp < 0 || disp > 1) {
+            throw new Error(`${name}: la disponibilidad de la barrera debe estar entre 0 y 1`);
+          }
+          const esperaMin = num('barrier.waitMin', 'espera mínima de la barrera');
+          const esperaModa = num('barrier.waitMode', 'espera modal de la barrera');
+          const esperaMax = num('barrier.waitMax', 'espera máxima de la barrera');
+          if (!(esperaMin <= esperaModa && esperaModa <= esperaMax)) {
+            throw new Error(
+              `${name}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo `
+              + `(has puesto ${esperaMin}, ${esperaModa}, ${esperaMax})`
+            );
+          }
+          const tolerancia = num('barrier.toleranceMinutes', 'tolerancia de la barrera');
+          if (tolerancia < 0) throw new Error(`${name}: la tolerancia no puede ser negativa`);
+
+          datos.frequency = 'lot';
+          datos.barrier = {
+            availableProbability: disp,
+            waitMin: esperaMin,
+            waitMode: esperaModa,
+            waitMax: esperaMax,
+            toleranceMinutes: tolerancia
+          };
+        } else {
+          // Una tarea por token no tiene barrera: el motor ni la lee.
+          delete datos.frequency;
+          delete datos.barrier;
+        }
 
         writes.push({ element: el, data: datos });
       });
@@ -1385,6 +1564,12 @@ export default class DataTablePanel {
       const raw = input.value;
 
       if (field.kind === 'number') {
+        // Campo opcional (la semilla): vacio es «no declarado», que el motor
+        // interpreta como «sacarla al azar» y luego guardarla.
+        if (field.optional && String(raw).trim() === '') {
+          setByPath(data, field.path, '');
+          return;
+        }
         const n = this._num(raw, field.label);
         if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
         if (field.max != null && n > field.max) throw new Error(`${field.label}: debe ser ≤ ${field.max}`);
@@ -1466,6 +1651,46 @@ export default class DataTablePanel {
     });
 
     setByPath(data, [ 'calendar', 'breaks' ], descansos);
+
+    // Tabla de tamaños de lote empíricos.
+    const tablaLotes = [];
+    this._body.querySelectorAll('.filas-lote tr').forEach((tr, i) => {
+      const leer = (campo) => {
+        const el = tr.querySelector(`[data-lote="${campo}"]`);
+        return el ? String(el.value).trim() : '';
+      };
+      const tam = leer('size');
+      const peso = leer('weight');
+      if (!tam && !peso) return; // fila vacia: se ignora
+
+      const size = this._num(tam, `Tamaño de lote ${i + 1}: tamaño`);
+      if (!Number.isInteger(size) || size < 1) {
+        throw new Error(`Tamaño de lote ${i + 1}: debe ser un entero mayor o igual que 1`);
+      }
+      const weight = this._num(peso, `Tamaño de lote ${i + 1}: peso`);
+      if (!(weight > 0)) throw new Error(`Tamaño de lote ${i + 1}: el peso debe ser mayor que 0`);
+
+      tablaLotes.push({ size, weight });
+    });
+    setByPath(data, [ 'lots', 'table' ], tablaLotes);
+
+    // Coherencia de los lotes: sin esto, el motor caeria en silencio al tamaño
+    // fijo (empirical sin tabla) o recortaria la triangular sin avisar.
+    const modoLote = getByPath(data, [ 'lots', 'sizeMode' ]);
+    if (getByPath(data, [ 'lots', 'enabled' ])) {
+      if (modoLote === 'empirical' && !tablaLotes.length) {
+        throw new Error('El tamaño de lote es «empirical» pero la tabla está vacía: añade al menos un tamaño');
+      }
+      if (modoLote === 'triangular') {
+        const min = getByPath(data, [ 'lots', 'min' ]);
+        const moda = getByPath(data, [ 'lots', 'mode' ]);
+        const max = getByPath(data, [ 'lots', 'max' ]);
+        if (!(min <= moda && moda <= max)) {
+          throw new Error(`En el tamaño de lote triangular debe cumplirse mínimo ≤ moda ≤ máximo `
+            + `(has puesto ${min}, ${moda}, ${max})`);
+        }
+      }
+    }
 
     writes.push({ element: info.element, data });
     return writes;
@@ -1712,11 +1937,16 @@ export default class DataTablePanel {
         'id', 'nombre', 'distribucion',
         'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
         'tasa_fallo', 'retrabajo', 'unidad_retrabajo',
-        'recurso', 'cant_recurso'
+        'recurso', 'cant_recurso',
+        'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol'
       ] ];
       this._getTasks().forEach((el) => {
         const d = this._taskData(el);
         const tri = d.processingTime.distribution === 'triangular';
+        // La barrera solo se exporta con «por lote»: en una tarea por token el
+        // motor no la lee, y sacarla rellena daria a entender que si.
+        const esLote = d.frequency === 'lot';
+        const b = d.barrier || {};
         rows.push([
           el.id,
           this._label(el),
@@ -1730,7 +1960,13 @@ export default class DataTablePanel {
           d.reworkTime.value,
           d.reworkTime.unit,
           (d.resources && d.resources.pool) || '',
-          (d.resources && d.resources.quantityRequired) || ''
+          (d.resources && d.resources.quantityRequired) || '',
+          esLote ? 'lot' : 'token',
+          esLote ? b.availableProbability : '',
+          esLote ? b.waitMin : '',
+          esLote ? b.waitMode : '',
+          esLote ? b.waitMax : '',
+          esLote ? b.toleranceMinutes : ''
         ]);
       });
       return rows;
@@ -1782,6 +2018,13 @@ export default class DataTablePanel {
       rows.push([ `descanso.${n}.fin`, `Descanso ${n}: hasta`, hhmm(b.end) ]);
       rows.push([ `descanso.${n}.cuentaComoJornada`, `Descanso ${n}: ¿cuenta como jornada?`, b.cuentaComoJornada ? 'si' : 'no' ]);
       rows.push([ `descanso.${n}.existeEnExtra`, `Descanso ${n}: ¿también en horas extra?`, b.existeEnExtra === false ? 'no' : 'si' ]);
+    });
+
+    // La tabla de tamaños de lote es otra lista: mismo criterio que los descansos.
+    ((info.data.lots && info.data.lots.table) || []).forEach((f, i) => {
+      const n = i + 1;
+      rows.push([ `lote.${n}.tamano`, `Tamaño de lote ${n}: tamaño`, f.size ]);
+      rows.push([ `lote.${n}.peso`, `Tamaño de lote ${n}: peso`, f.weight ]);
     });
 
     return rows;
@@ -1892,6 +2135,55 @@ export default class DataTablePanel {
           delete data.resources;
         }
 
+        // Frecuencia y barrera, tambien opcionales: un CSV antiguo no las trae y
+        // la tarea se queda como estaba (por token, sin barrera). `cur` trae los
+        // valores por defecto para poder pintarlos, asi que hay que borrarlos.
+        const iFreq = header.indexOf('frecuencia');
+        const freqRaw = iFreq !== -1 ? String(r[iFreq]).trim().toLowerCase() : '';
+        if (!freqRaw || freqRaw === 'token') {
+          delete data.frequency;
+          delete data.barrier;
+        } else if (freqRaw === 'lot' || freqRaw === 'lote') {
+          // Se lee por nombre y no por posicion: el usuario puede reordenar las
+          // columnas en Excel, y una fila recortada (columnas de barrera
+          // borradas a mano) merece un aviso claro y no un «no numérico».
+          const leer = (name) => {
+            const i = header.indexOf(name);
+            if (i === -1) {
+              throw new Error(
+                `Falta la columna «${name}» en el CSV: es necesaria para las tareas «por lote»`
+              );
+            }
+            if (r[i] === undefined) {
+              throw new Error(`Línea ${line}: la fila está incompleta, falta el valor de «${name}»`);
+            }
+            return r[i];
+          };
+          const disp = this._num(leer('barrera_disp'), `Línea ${line}: disponibilidad de la barrera`);
+          if (disp < 0 || disp > 1) {
+            throw new Error(`Línea ${line}: la disponibilidad de la barrera debe estar entre 0 y 1`);
+          }
+          const eMin = this._num(leer('barrera_min'), `Línea ${line}: espera mínima`);
+          const eModa = this._num(leer('barrera_moda'), `Línea ${line}: espera modal`);
+          const eMax = this._num(leer('barrera_max'), `Línea ${line}: espera máxima`);
+          if (!(eMin <= eModa && eModa <= eMax)) {
+            throw new Error(`Línea ${line}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo`);
+          }
+          const tol = this._num(leer('barrera_tol'), `Línea ${line}: tolerancia`);
+          if (tol < 0) throw new Error(`Línea ${line}: la tolerancia no puede ser negativa`);
+
+          data.frequency = 'lot';
+          data.barrier = {
+            availableProbability: disp,
+            waitMin: eMin,
+            waitMode: eModa,
+            waitMax: eMax,
+            toleranceMinutes: tol
+          };
+        } else {
+          throw new Error(`Línea ${line}: frecuencia «${freqRaw}» inválida (usa token o lot)`);
+        }
+
         updates.push({ element: el, data });
       });
       return updates;
@@ -1999,21 +2291,33 @@ export default class DataTablePanel {
 
     const data = JSON.parse(JSON.stringify(info.data));
 
-    // Los descansos se leen primero y se QUITAN de la lista de campos: si no,
-    // caerian en el bucle de abajo y saltaria «campo desconocido».
+    // Los descansos y la tabla de lotes se leen primero y se QUITAN de la lista
+    // de campos: si no, caerian en el bucle de abajo y saltaria «campo
+    // desconocido».
     const filasDescanso = new Map();
+    const filasLote = new Map();
     const filasCampos = [];
 
     body.forEach((r) => {
       const clave = String(r[iKey]).trim();
+
       const m = clave.match(/^descanso\.(\d+)\.(inicio|fin|cuentaComoJornada|existeEnExtra)$/);
-      if (!m) {
-        filasCampos.push(r);
+      if (m) {
+        const i = Number(m[1]);
+        if (!filasDescanso.has(i)) filasDescanso.set(i, {});
+        filasDescanso.get(i)[m[2]] = String(r[iVal]).trim();
         return;
       }
-      const idx = Number(m[1]);
-      if (!filasDescanso.has(idx)) filasDescanso.set(idx, {});
-      filasDescanso.get(idx)[m[2]] = String(r[iVal]).trim();
+
+      const ml = clave.match(/^lote\.(\d+)\.(tamano|peso)$/);
+      if (ml) {
+        const i = Number(ml[1]);
+        if (!filasLote.has(i)) filasLote.set(i, {});
+        filasLote.get(i)[ml[2]] = String(r[iVal]).trim();
+        return;
+      }
+
+      filasCampos.push(r);
     });
 
     filasCampos.forEach((r, n) => {
@@ -2023,9 +2327,17 @@ export default class DataTablePanel {
       const raw = r[iVal];
 
       if (field.kind === 'number') {
-        const num = this._num(raw, `Línea ${line}: ${field.label}`);
-        if (field.min != null && num < field.min) throw new Error(`Línea ${line}: ${field.label} debe ser ≥ ${field.min}`);
-        setByPath(data, field.path, num);
+        // Campo opcional (la semilla): vacio es «no declarado». Sin esta rama,
+        // exportar e importar la pestaña Global fallaba en la semilla vacia: la
+        // ida y vuelta del CSV se rompia sola con los valores por defecto.
+        if (field.optional && String(raw).trim() === '') {
+          setByPath(data, field.path, '');
+        } else {
+          const num = this._num(raw, `Línea ${line}: ${field.label}`);
+          if (field.min != null && num < field.min) throw new Error(`Línea ${line}: ${field.label} debe ser ≥ ${field.min}`);
+          if (field.max != null && num > field.max) throw new Error(`Línea ${line}: ${field.label} debe ser ≤ ${field.max}`);
+          setByPath(data, field.path, num);
+        }
       } else if (field.kind === 'select') {
         const v = String(raw).trim();
         if (!field.options.includes(v)) throw new Error(`Línea ${line}: valor «${v}» inválido (usa ${field.options.join('/')})`);
@@ -2081,6 +2393,23 @@ export default class DataTablePanel {
       });
 
       setByPath(data, [ 'calendar', 'breaks' ], descansos);
+    }
+
+    // Tabla de tamaños de lote: mismo criterio que los descansos, se reconstruye
+    // ENTERA solo si el CSV trae alguna fila.
+    if (filasLote.size) {
+      const tabla = [];
+      Array.from(filasLote.keys()).sort((a, b) => a - b).forEach((idx) => {
+        const f = filasLote.get(idx);
+        const size = this._num(f.tamano, `Línea del lote ${idx}: tamaño`);
+        if (!Number.isInteger(size) || size < 1) {
+          throw new Error(`Línea del lote ${idx}: el tamaño debe ser un entero mayor o igual que 1`);
+        }
+        const weight = this._num(f.peso, `Línea del lote ${idx}: peso`);
+        if (!(weight > 0)) throw new Error(`Línea del lote ${idx}: el peso debe ser mayor que 0`);
+        tabla.push({ size, weight });
+      });
+      setByPath(data, [ 'lots', 'table' ], tabla);
     }
 
     updates.push({ element: info.element, data });

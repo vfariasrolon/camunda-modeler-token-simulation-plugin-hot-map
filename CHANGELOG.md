@@ -4,6 +4,46 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **llegadas por lotes, en serie y por tracción**. No hay dos lotes a la vez: se arranca
+  uno, se cierra, y arranca el siguiente. El reloj de llegadas pasa a ser el reloj de lotes, y el
+  **parón de cambio** entre ellos se mide como tiempo muerto con causa declarada («ocioso por fin
+  de lote»). El tamaño se elige **fijo**, **triangular** o por **tabla empírica** (10 el 30 % de las
+  veces, 20 el 50 %…), que es como llegan los pedidos de verdad. El **último lote puede ser
+  parcial**: es lo que hace que la muestra efectiva sean los lotes y no las piezas.
+* `FEAT`: **semilla global** (`mulberry32`) en el motor y en el configurador. Da reproducibilidad
+  (misma corrida, mismo resultado) y **números aleatorios comunes**, que es lo que permite comparar
+  dos escenarios sabiendo que la diferencia se debe al cambio y no a la suerte. Vacío = al azar, y
+  la que se usó queda guardada en el informe.
+* `FEAT`: **tareas por lote** (columna «Frecuencia» en la pestaña Tareas). `por token` es lo de
+  siempre; `por lote` se ejecuta **una sola vez por lote**, la primera vez que el flujo pasa por
+  ahí. Un documento de 30 minutos hecho por pieza en un lote de 20 son 10 horas; hecho por lote, 30
+  minutos: un factor 20×, que es la razón de fondo por la que producir por lotes abarata lo
+  administrativo.
+* `FEAT`: **barrera de firma**. El lote entero espera a que firmen, y se modela **por su efecto y no
+  como una persona** (la agenda del firmante no se conoce y modelarla sería falsa precisión):
+  probabilidad de que atiendan a la primera, espera con forma mín/moda/máx si no atienden, y una
+  **tolerancia** que decide qué espera cuenta como parón reportable. Sin umbral, cada espera de tres
+  minutos ensucia el informe y al final nadie lo lee.
+* `FEAT`: el informe de consola imprime el bloque de **lotes**: cuántos, piezas por lote de media,
+  ciclo de lote (medio/mín/máx), parones de cambio y su total, esperas de firma, cuántas superaron
+  la tolerancia y las ejecuciones de tareas por lote.
+* `FIX`: **las dos pasadas de una corrida (normal y con horas extra) usaban semillas distintas.** La
+  semilla se resolvía en cada pasada, así que con el campo vacío cada plan sacaba una del reloj: la
+  comparación entre planes mezclaba el efecto del plan con el de la suerte, que es justo lo que el
+  campo existe para evitar, y el informe imprimía **dos semillas distintas** para lo que el usuario
+  cree que es una sola corrida. Ahora una corrida fija su semilla y la comparte entre pasadas; la
+  siguiente pulsación saca otra. Lo encontró una comprobación escrita para el efecto contrario.
+* `FIX`: **exportar y volver a importar la pestaña Global estaba roto**. La semilla es un campo
+  opcional («vacío = al azar») y esa rama solo existía al recoger del formulario: al importar, el
+  valor vacío se rechazaba por «no numérico». Lo encontró el arnés de DOM, no una prueba del motor.
+* `FIX`: **el parón de cambio se contaba también en el último lote**, aunque ya no quedara nada que
+  producir: con un lote de prueba salían dos parones en vez de uno.
+* `FIX`: importar el CSV de tareas con `frecuencia = lot` **explica** qué falta si las columnas de
+  barrera no están o si la fila viene recortada, en vez de decir «valor no numérico».
+* `FEAT`: la ida y vuelta del CSV es **idempotente** y está verificada: exportar → importar →
+  exportar devuelve exactamente lo mismo, tanto en Tareas (frecuencia y barrera incluidas) como en
+  Global (tabla de tamaños de lote incluida). Los CSV exportados antes de este cambio siguen
+  importándose: las columnas nuevas son opcionales.
 * `FEAT`: **tramos de trabajo y descansos**. La jornada deja de ser un bloque: un descanso la parte
   en tramos, y la tarea que lo pilla a medias **se pausa y se retoma al volver**. Un descanso tiene
   **tres interruptores independientes**: si cuenta como jornada (afecta al umbral de horas extra —

@@ -162,6 +162,49 @@ Consecuencias:
 
 ## 4. A3 · Lotes y barrera
 
+> **Estado: IMPLEMENTADO.** Semilla (`mulberry32`) en el motor y en el configurador, llegadas por
+> lotes en serie por tracción con tamaño fijo / triangular / tabla empírica, parón de cambio entre
+> lotes, **tareas por lote** una sola vez por lote, **barrera de firma** (disponibilidad + espera
+> triangular + tolerancia) con el lote entero esperando, y las métricas de lote en el informe de
+> consola. Verificado con **34 comprobaciones** sobre el motor real y **54** sobre el panel de datos
+> (`_renderTasks`, `_collect`, CSV de ida y vuelta) en un DOM real.
+>
+> **Decisiones tomadas al implementar** (más allá del diseño):
+>
+> 1. **El reparto del lote se marca con `frequency` en la tarea, y la barrera se borra cuando la
+>    frecuencia es `token`.** Guardar una barrera que el motor no lee es una trampa para el que
+>    abra el XML después; y al revés, no guardar nada deja el diagrama igual que antes de A3.
+> 2. **La barrera no toma unidades de la piscina.** Quien firma no está dado de alta como recurso:
+>    se modela por su efecto (§4.5). Una tarea por lote que encuentra la barrera se reencola
+>    (`LOT_TASK_START` → `LOT_CONTINUE`) en vez de ocupar una unidad durante la espera, porque la
+>    espera no consume capacidad: la consume el trabajo, y ese sí pasa por `scheduleTask`.
+> 3. **El último lote puede ser parcial** (el que cierra la corrida se corta con lo que falte para
+>    `runValue`). No es un defecto: es lo que hace que la muestra efectiva sean los lotes.
+> 4. **La continuidad de un token tras la barrera viaja en un evento propio** (`LOT_CONTINUE`), no
+>    reutilizando `TASK_COMPLETE`. Reutilizarlo hacía que la contabilidad de la tarea sumara un
+>    `totalProcessingTime` inexistente y el informe saliera con `NaN`.
+>
+> **Tres defectos que encontró la verificación** (los tres reales, los tres corregidos):
+>
+> - **El parón se contaba también en el último lote**: el cierre del lote disparaba el cambio de
+>   herramienta aunque ya no quedara nada que producir. Con un lote de prueba salían 2 parones
+>   (60 min) en vez de 1 (30 min).
+> - **La ida y vuelta del CSV de la pestaña Global estaba rota**: `seed` es un campo opcional, y la
+>   rama «vacío es *no declarado*» solo existía al recoger del formulario, no al importar. Exportar
+>   la pestaña Global con los valores por defecto y volver a importarla fallaba. Lo cazó el arnés de
+>   DOM, no una prueba del motor.
+> - **Las dos pasadas de una corrida (normal y con horas extra) usaban semillas distintas.** La
+>   semilla se resolvía en cada pasada, así que con el campo vacío cada plan sacaba una del reloj y
+>   el informe imprimía dos semillas para una sola corrida. Es exactamente el fallo que el campo
+>   existe para evitar (§4.7): la comparación dejaba de ser sobre el mismo azar. Ahora la corrida
+>   fija su semilla (`nuevaCorrida()` la olvida al pulsar de nuevo) y la comparten todas las pasadas.
+>
+> **Pendiente de refinar (documentado, no olvidado):**
+>
+> - **El reintento de la barrera es una sola espera** (decidido): no hay segunda tanda de atención.
+> - **El % de disponibilidad es una estimación del analista.** Para eso está la semilla: correr con
+>   90 % y con 70 % y ver si el plan se mueve (§4.5).
+
 ### 4.1 Modos de llegada
 
 `arrivalRate` describe hoy un chorro continuo. Se añade el modo por lotes, y **conviven**:
@@ -354,9 +397,13 @@ Todos **ajustables** y **todos impresos en el informe** junto al resultado.
 | Eficiencia de arranque | 0,70 | Con vista previa de la curva |
 | Recuperación del arranque | ~30 min | Exponencial por defecto |
 | Re-arranque tras descanso | Activado | Mismo mecanismo |
+| Llegadas por lotes | Desactivado | Activado, el reloj de llegadas pasa a ser el de lotes |
+| Tamaño de lote | 20 | Fijo, triangular o tabla empírica |
 | Parón de cambio de lote | A declarar | Es el objetivo de SMED |
 | Descanso en tramo extra | Seleccionable | El tercer interruptor |
+| Frecuencia de tarea | Por token | `por lote` = una vez por lote |
 | Probabilidad de atención de firma | 70 % | Sujeto a sensibilidad |
+| Espera de firma si no atienden | mín 10 / moda 20 / máx 60 min | Distribución con cola |
 | Tolerancia de espera de firma | 15 min | Define qué se avisa |
 | Semilla | Global | Habilita réplicas y números comunes |
 
@@ -412,3 +459,7 @@ Para que quede **por qué**, no solo **qué**.
 | Masas en series separadas | Un total único combinado | Cargar y arrastrar no son la misma magnitud |
 | Semilla global | Semilla solo en lotes | Sin números comunes, el barrido de lotes es ruido contra ruido |
 | Rampas con hora de vigencia | Valores fijos | La ley cambia; los informes viejos deben seguir siendo auditables |
+| La barrera se borra en tareas por token | Conservarla «por si acaso» | Una barrera que el motor no lee es una trampa al auditar el XML |
+| Continuidad de lote en evento propio (`LOT_CONTINUE`) | Reutilizar `TASK_COMPLETE` | Reutilizarlo sumaba un tiempo inexistente y el informe salía con `NaN` |
+| El último lote puede ser parcial | Forzar lotes completos | La muestra efectiva son los lotes; completarlo inflaría la muestra |
+| El campo opcional se acepta vacío al importar | Exigir siempre un número | Exportar e importar la pestaña Global tiene que devolver lo mismo |

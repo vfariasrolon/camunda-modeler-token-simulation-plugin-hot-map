@@ -265,6 +265,17 @@ La estructura del JSON varía según el tipo de elemento.
     "onShiftStart": true,
     "onBreakReturn": true
   },
+  "lots": {
+    "enabled": true,
+    "sizeMode": "fixed",
+    "size": 20,
+    "min": 10,
+    "mode": 20,
+    "max": 30,
+    "stopMinutes": 15,
+    "table": [ { "size": 10, "weight": 3 }, { "size": 20, "weight": 5 } ]
+  },
+  "seed": 123456789,
   "cost": {
     "baseRatePerHour": 50,
     "waitCostPerHour": 0
@@ -354,6 +365,14 @@ El arranque lento **no se mide, se declara**. `shapes`: `exponential` (por defec
   },
   "resources": {
     "pool": "Analistas", "quantityRequired": 1
+  },
+  "frequency": "lot",
+  "barrier": {
+    "availableProbability": 0.7,
+    "waitMin": 10,
+    "waitMode": 20,
+    "waitMax": 60,
+    "toleranceMinutes": 15
   }
 }
 ```
@@ -378,6 +397,63 @@ sin que nada lo indicara.
 **Nota:** El costo de la tarea **no** se define aquí; se calcula a partir de
 `cost.baseRatePerHour` de la configuración raíz. Cualquier campo `cost` dentro de una tarea
 es código heredado y se ignora.
+
+### `frequency`: una tarea, una vez por pieza o una vez por lote
+
+`frequency` es **opcional**: ausente o `"token"` es el comportamiento de siempre (una ejecución por
+token). Con `"lot"` la tarea se ejecuta **una sola vez por lote**, la primera vez que el flujo pasa
+por ahí — la posición en el diagrama da el momento gratis (al principio es la preparación, al final
+es el cierre).
+
+- Con `lots.enabled` a `false` **no cambia nada**: `frequency: "lot"` se ejecuta por token, porque
+  sin lotes no hay nada de lo que colgar la frecuencia.
+- Dentro de un bucle **no se repite en cada vuelta** (ese es justo el caso incómodo que resuelve).
+- `barrier` **solo se lee con `frequency: "lot"`**, y desde la interfaz se **borra** cuando la
+  frecuencia es `token`: guardar una barrera que el motor no mira es una trampa al auditar el XML.
+
+`barrier` modela **el efecto** de la firma, no a la persona (su agenda no se conoce; modelarla sería
+falsa precisión). Con probabilidad `availableProbability` atienden **a la primera** (espera 0); si
+no, el lote **entero** espera `triangular(waitMin, waitMode, waitMax)`. `toleranceMinutes` decide
+qué espera cuenta como parón reportable: por debajo es ruido, por encima se marca y se mide.
+
+**Cómo viaja por el motor** (es la parte que más fácil se rompe):
+
+1. `_atenderTareaPorLote` dispara `LOT_TASK_START` para el primer token que llega.
+2. Si hay barrera, `_esperaDeBarrera` devuelve los minutos de espera y se reencola otro
+   `LOT_TASK_START` **más tarde**; la tarea no ocupa recursos durante la espera (la espera no
+   consume capacidad, la consume el trabajo).
+3. Al terminar de verdad, `_cerrarTareaDeLote` marca la tarea del lote como hecha y **despierta a
+   todos** los tokens que esperaban. Cada uno sigue por un evento **`LOT_CONTINUE`** (no
+   `TASK_COMPLETE`: reutilizarlo metía un tiempo inexistente en la contabilidad y el informe salía
+   con `NaN`).
+
+### Lotes en serie y la semilla
+
+Con `lots.enabled` el reloj de llegadas **deja de ser el de llegadas**: pasa a ser el de lotes.
+**No hay dos lotes a la vez** (por tracción): se cierra uno y arranca el siguiente, y `stopMinutes`
+es el parón de cambio entre ellos. `sizeMode` es `fixed`, `triangular` (`min`/`mode`/`max`) o
+`empirical` (la tabla `[{ size, weight }]`, donde `weight` es una **frecuencia relativa**: no hace
+falta que sume 100).
+
+Dos consecuencias que hay que tener presentes al leer resultados:
+
+- **El tamaño de muestra efectivo son los LOTES, no los tokens.** 1 000 piezas en 50 lotes no son
+  1 000 muestras del patrón de llegada: son 50.
+- **El ranking por número de ejecuciones deja de ser comparable.** Una tarea por lote se ejecuta 50
+  veces y otra por token 1 000: hay que ordenar por **tiempo o coste total**.
+
+`seed` (raíz, opcional) es la **semilla global** (PRNG `mulberry32` en `crearAleatorio`). Vacío =
+al azar, y la usada **se guarda** en el informe. Sirve para tres cosas, y la tercera es la que
+justifica el campo: reproducibilidad, **réplicas** de verdad, y **números aleatorios comunes** — dos
+escenarios ven la misma secuencia de azar, así que la diferencia se debe al cambio y no a la suerte.
+Sin esto, comparar dos tamaños de lote es comparar ruido contra ruido.
+
+⚠️ **Una corrida, una semilla.** Los dos planes (normal y con horas extra) son dos `run()` sobre el
+MISMO motor, y con la semilla vacía **comparten** la que sacó el reloj: por eso la semilla se
+resuelve en `initialize()` y se recuerda en `_semillaDeLaCorrida`. El controlador llama a
+`nuevaCorrida()` **una vez por pulsación** del botón, que es lo que separa una corrida de la
+siguiente. Resolverla en cada `initialize()` (el error que hubo) daba dos semillas distintas por
+pulsación y arruinaba la comparación entre planes.
 
 **C. Para un Flujo de Secuencia (`bpmn:SequenceFlow`) saliente de una Compuerta Exclusiva:**
 ```json

@@ -433,6 +433,23 @@
   text-align: center;
 }
 
+/* Encabezado del bloque de barrera (Tareas). Va a dos lineas: con `nowrap`
+   empujaria la tabla y obligaria a desplazarse para ver el resto de columnas. */
+.sim-data-table-panel .data-table th.col-barrera {
+  font-weight: 500;
+  font-size: 11.5px;
+  line-height: 1.3;
+  white-space: normal;
+  border-left: 2px solid #ddd;
+  color: #555;
+}
+
+/* La columna de frecuencia abre el bloque, asi que se marca igual que su
+   encabezado: agrupa «frecuencia + barrera» frente al resto de la fila. */
+.sim-data-table-panel .data-table td.col-freq {
+  border-left: 2px solid #eee;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;

@@ -18,7 +18,7 @@ import { normalizeWarmup, effectiveDuration, describeWarmup } from './WarmupCurv
  * nunca se alcanzaba. Con triangular(1, 2, 4) el soporte real terminaba en
  * 2,73 en lugar de 4, y un 27% de la distribucion era inalcanzable.
  */
-const triangular = (min, mode, max) => {
+const triangular = (min, mode, max, rand) => {
   // Guardas: sin ellas un mode fuera de rango da Math.sqrt de un negativo (NaN)
   // y un min == max da division por cero. El NaN se propagaba a las fechas y al
   // orden de la cola de eventos sin lanzar ningun error.
@@ -26,11 +26,84 @@ const triangular = (min, mode, max) => {
   if (mode < min) mode = min;
   if (mode > max) mode = max;
 
+  // `rand` se recibe de fuera cuando hay semilla (azar reproducible); si no, se
+  // toma del generador global.
+  const u = rand == null ? Math.random() : rand;
+
   const F = (mode - min) / (max - min);
-  const rand = Math.random();
-  return rand < F
-    ? min + Math.sqrt(rand * (mode - min) * (max - min))
-    : max - Math.sqrt((1 - rand) * (max - min) * (max - mode));
+  return u < F
+    ? min + Math.sqrt(u * (mode - min) * (max - min))
+    : max - Math.sqrt((1 - u) * (max - min) * (max - mode));
+};
+
+/**
+ * Generador pseudoaleatorio DETERMINISTA (mulberry32).
+ *
+ * El motor usaba Math.random() en todo, asi que dos corridas del mismo modelo
+ * daban numeros distintos y no habia forma de comparar escenarios con justicia.
+ * Con semilla se consiguen tres cosas, y la tercera es la que mas vale:
+ *
+ *   1. Reproducibilidad: la misma corrida da el mismo resultado.
+ *   2. Replicas de verdad: varias semillas -> intervalo de confianza.
+ *   3. NUMEROS ALEATORIOS COMUNES: dos escenarios ven la MISMA secuencia, asi que
+ *      la diferencia se debe al cambio y no a la suerte. Sin esto, comparar un
+ *      lote de 20 con uno de 50 es comparar dos muestras pequenas: ruido contra
+ *      ruido.
+ */
+const crearAleatorio = (semilla) => {
+  let a = semilla >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+/** Semilla declarada, o null para sacarla del reloj (corrida no reproducible). */
+const normalizarSemilla = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+};
+
+// ---------------------------------------------------------------------------
+// Lotes.
+//
+// En modo lote las instancias NO llegan una a una: llegan en grupos, y los
+// grupos van ESTRICTAMENTE EN SERIE, uno detras de otro (por traccion: el
+// siguiente arranca cuando cierra el anterior). Eso tiene tres consecuencias:
+//
+//   - No hay cola ENTRE lotes; la espera esta DENTRO del lote.
+//   - El paron entre lotes se VE y se mide: es el precio de la politica.
+//   - El tamano de muestra efectivo son los LOTES, no los tokens. 1.000 piezas
+//     en 50 lotes no son 1.000 muestras del patron de llegada: son 50.
+// ---------------------------------------------------------------------------
+const LOT_SIZE_MODES = [ 'fixed', 'triangular', 'empirical' ];
+
+const normalizeLots = (cfg) => {
+  const c = cfg || {};
+  const tabla = Array.isArray(c.table)
+    ? c.table
+      .map((f) => ({
+        size: Math.max(1, Math.round(Number(f && f.size) || 1)),
+        weight: Math.max(0, Number(f && f.weight) || 0)
+      }))
+      .filter((f) => f.weight > 0)
+    : [];
+
+  return {
+    enabled: Boolean(c.enabled),
+    sizeMode: LOT_SIZE_MODES.includes(c.sizeMode) ? c.sizeMode : 'fixed',
+    size: Math.max(1, Math.round(Number(c.size) || 1)),
+    min: Math.max(1, Math.round(Number(c.min) || 1)),
+    mode: Math.max(1, Math.round(Number(c.mode) || 1)),
+    max: Math.max(1, Math.round(Number(c.max) || 1)),
+    table: tabla,
+    // El paron de cambio de herramienta entre lotes, en minutos de trabajo. Es
+    // el objetivo de un SMED y lo que se cotiza: «si bajo el cambio de 20 a 5
+    // minutos, cuanto gano».
+    stopMinutes: Math.max(0, Number(c.stopMinutes) || 0)
+  };
 };
 
 const timeToMilliseconds = (value, unit) => {
@@ -93,6 +166,23 @@ export default class SimulationEngine {
     this.completedInstances = 0;
     this.calendar = null; // Will be initialized on run
     this.rootConfig = {};
+    // Semilla resuelta de la corrida en curso (vacia mientras no se corra nada).
+    // Se fija en `initialize()` para que las VARIAS pasadas de una misma corrida
+    // (plan normal y plan con horas extra) compartan el mismo azar.
+    this._semillaDeLaCorrida = null;
+  }
+
+  /**
+   * Empieza una corrida nueva.
+   *
+   * Una «corrida» puede incluir varias pasadas (normal y con horas extra), y
+   * todas deben usar el MISMO azar para que la comparacion sea limpia. Esto es
+   * lo que separa una corrida de la siguiente: si el campo de semilla esta
+   * vacio, cada corrida saca una nueva, y dentro de ella todos los planes la
+   * comparten.
+   */
+  nuevaCorrida() {
+    this._semillaDeLaCorrida = null;
   }
 
   initialize(rootConfig) {
@@ -110,6 +200,37 @@ export default class SimulationEngine {
     // de las tareas, no al trabajo contabilizado. Sin `warmup` en la
     // configuracion no hay arranque, que es el comportamiento de siempre.
     this.warmup = normalizeWarmup(rootConfig.warmup);
+
+    // Semilla. Con ella la corrida es reproducible y, sobre todo, dos escenarios
+    // se pueden comparar sobre el MISMO azar. Sin semilla declarada se saca del
+    // reloj, pero la usada se guarda (y se imprime): asi una corrida interesante
+    // se puede repetir exactamente.
+    const semillaDeclarada = normalizarSemilla(rootConfig.seed);
+    if (semillaDeclarada != null) {
+      this.seed = semillaDeclarada;
+    } else if (this._semillaDeLaCorrida == null) {
+      // Sin semilla declarada se saca UNA por corrida, no una por pasada: los
+      // planes normal y con horas extra comparten secuencia (numeros aleatorios
+      // comunes). Sacandola en cada `initialize()` los dos planes usaban azar
+      // distinto y el informe imprimia dos semillas distintas para lo que el
+      // usuario cree que es una sola corrida. `nuevaCorrida()` borra esta.
+      this.seed = Date.now() % 2147483647;
+    } else {
+      this.seed = this._semillaDeLaCorrida;
+    }
+    this._semillaDeLaCorrida = this.seed;
+    this._random = crearAleatorio(this.seed);
+
+    // Lotes. `enabled: false` (el defecto) mantiene el comportamiento de siempre:
+    // llegadas una a una.
+    this.lotConfig = normalizeLots(rootConfig.lots);
+    this.lots = [];
+    this.lotNumber = 0;
+    this.lotStats = {
+      lots: 0, stops: 0, stopMinutes: 0,
+      waits: 0, waitMinutes: 0, waitsOverTolerance: 0,
+      perLotTaskExecutions: 0
+    };
 
     let simStart = new Date();
     if (rootConfig.startDate && /^\d{4}-\d{2}-\d{2}$/.test(rootConfig.startDate)) {
@@ -177,7 +298,7 @@ export default class SimulationEngine {
 
     let chosenFlow = null;
     if (is(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
-      const rand = Math.random();
+      const rand = this._random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
         const data = getSimulationData(flow);
@@ -227,11 +348,21 @@ export default class SimulationEngine {
       // calendario ESTANDAR en los dos planes, para que los tiempos de ciclo del
       // plan normal y del de horas extra sean comparables entre si.
       this.instanceCycleTimes.push(cicloMin);
+
+      // Cierre de lote: se consulta ANTES de borrar el estado, que es donde vive
+      // el numero de lote de la instancia.
+      const estadoInstancia = this.instanceStates.get(instanceId);
+      if (this.lotConfig.enabled && estadoInstancia && estadoInstancia.lotNumber) {
+        this._cerrarLoteSiProcede(estadoInstancia.lotNumber, this.clock);
+      }
+
       this.instanceStates.delete(instanceId);
       return;
     }
 
-    elementResults.executionCount++;
+    // Un token que solo CONTINUA tras una tarea por lote no cuenta como una
+    // ejecucion suya: la tarea por lote se ejecuto una vez, no una por token.
+    if (!event.continuacionDeLote) elementResults.executionCount++;
 
     const nextElements = this.findNextElements(element);
 
@@ -253,7 +384,13 @@ export default class SimulationEngine {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
       } else if (is(nextElement, 'bpmn:Task') && data) {
-        this.scheduleTask({ type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime });
+        // Tarea POR LOTE: la ejecuta una sola vez el primer token que llega, y
+        // los demas esperan (barrera). Ver _atenderTareaPorLote.
+        if (data.frequency === 'lot' && this.lotConfig.enabled) {
+          this._atenderTareaPorLote(nextElement, data, instanceId, startTime, this.clock);
+        } else {
+          this.scheduleTask({ type: 'TASK_START', element: nextElement, time: this.clock, instanceId, startTime });
+        }
       } else {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
       }
@@ -269,7 +406,7 @@ export default class SimulationEngine {
     const pt = data.processingTime;
     if (pt) {
       if (pt.distribution === 'triangular') {
-        const randomValue = triangular(pt.min, pt.mode, pt.max);
+        const randomValue = triangular(pt.min, pt.mode, pt.max, this._random());
         processingTime = timeToMilliseconds(randomValue, pt.unit);
       } else {
         processingTime = timeToMilliseconds(pt.value, pt.unit);
@@ -277,11 +414,11 @@ export default class SimulationEngine {
     }
 
     let reworkTime = 0;
-    if (data.failureRate && Math.random() < data.failureRate) {
+    if (data.failureRate && this._random() < data.failureRate) {
       const rt = data.reworkTime;
       if (rt) {
         if (rt.distribution === 'triangular') {
-          const randomValue = triangular(rt.min, rt.mode, rt.max);
+          const randomValue = triangular(rt.min, rt.mode, rt.max, this._random());
           reworkTime = timeToMilliseconds(randomValue, rt.unit);
         } else {
           reworkTime = timeToMilliseconds(rt.value, rt.unit);
@@ -346,7 +483,11 @@ export default class SimulationEngine {
       // Duracion de RELOJ con el arranque aplicado. Se guarda aparte de
       // `totalDuration` porque el camino de espera por recursos vuelve a calcular
       // el fin desde su propio inicio, y alli el arranque se reevalua.
-      effectiveDuration: duracionEfectivaMs
+      effectiveDuration: duracionEfectivaMs,
+      // Tareas POR LOTE: al terminar hay que despertar a los tokens que esperaban
+      // la barrera, y hay que saber de que lote era.
+      esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
+      lotNumber: taskEvent.lotNumber || null
     };
 
     if (data.resources && data.resources.pool && this.resourcePools.has(data.resources.pool)) {
@@ -449,14 +590,25 @@ export default class SimulationEngine {
       arrivalInterval = intervalInSeconds * 1000;
     }
 
-    startEvents.forEach((startEvent, index) => {
-      const instanceId = index + 1;
-      const startTime = this.simulationStartTime;
-      this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: startTime, instanceId, startTime: startTime });
-      this.instanceStates.set(instanceId, { gateways: {} });
-    });
+    this.runValue = runValue;
+    this.startEvent = startEvents[0];
+    this.instanceCounter = 0;
 
-    let instanceCounter = startEvents.length;
+    if (this.lotConfig.enabled) {
+      // Lotes en SERIE por traccion: se libera el primero, y cada siguiente
+      // arranca cuando CIERRA el anterior (ver _cerrarLoteSiProcede). No hay dos
+      // lotes a la vez, asi que no hay cola entre lotes: la espera esta dentro.
+      this._liberarLote(this.simulationStartTime);
+    } else {
+      startEvents.forEach((startEvent, index) => {
+        const instanceId = index + 1;
+        const startTime = this.simulationStartTime;
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvent, time: startTime, instanceId, startTime: startTime });
+        this.instanceStates.set(instanceId, { gateways: {} });
+      });
+      this.instanceCounter = startEvents.length;
+    }
+
     let iterationCounter = 0;
 
     while (!this.eventQueue.isEmpty()) {
@@ -468,7 +620,14 @@ export default class SimulationEngine {
       const event = this.eventQueue.next();
       this.clock = event.time;
 
-      if (event.type === 'TASK_COMPLETE') {
+      if (event.type === 'LOT_TASK_START') {
+        // Una tarea por lote que estaba esperando la barrera arranca ahora.
+        this._iniciarTareaDeLote(event);
+      } else if (event.type === 'LOT_CONTINUE') {
+        // Un token que esperaba la barrera sigue: NO pasa por la contabilidad de
+        // tareas, porque no es una finalizacion de tarea.
+        this.processEvent(event);
+      } else if (event.type === 'TASK_COMPLETE') {
         const results = this.results.get(event.element.id);
 
         results.totalProcessingTime += event.processingTime;
@@ -524,17 +683,26 @@ export default class SimulationEngine {
             this.eventQueue.add(nextTask);
           });
         }
+
+        // Tarea por lote: al terminar hay que despertar a los que esperaban la
+        // barrera. Va antes de processEvent para que los despiertos entren en la
+        // cola en el mismo instante.
+        if (event.esTareaDeLote) this._cerrarTareaDeLote(event);
+
         this.processEvent(event);
       } else {
         this.processEvent(event);
       }
 
-      if (is(event.element, 'bpmn:StartEvent') && instanceCounter < runValue) {
-        instanceCounter++;
+      // Llegada de la siguiente instancia. En modo LOTES no se usa: alli las
+      // instancias de un lote entran juntas y el siguiente lote lo dispara el
+      // cierre del anterior.
+      if (!this.lotConfig.enabled && is(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
+        this.instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
-        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: instanceCounter, startTime: nextArrivalTime });
-        this.instanceStates.set(instanceCounter, { gateways: {} });
+        this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: startEvents[0], time: nextArrivalTime, instanceId: this.instanceCounter, startTime: nextArrivalTime });
+        this.instanceStates.set(this.instanceCounter, { gateways: {} });
       }
       if (this.completedInstances >= runValue) {
         console.log(`Target of ${runValue} completed instances reached. Ending simulation.`);
@@ -616,6 +784,267 @@ export default class SimulationEngine {
   }
 
   /**
+   * Tamano del siguiente lote, segun la secuencia declarada.
+   *
+   * Los tres modos cubren lo que se ve en planta: tamano fijo, tamano que varia
+   * (triangular) y tamanos reales con sus frecuencias (tabla empirica, que es la
+   * que mejor refleja como llegan los pedidos de verdad).
+   */
+  _tamanoDeLote() {
+    const c = this.lotConfig;
+
+    if (c.sizeMode === 'triangular') {
+      const min = Math.min(c.min, c.max);
+      const max = Math.max(c.min, c.max);
+      const moda = Math.min(max, Math.max(min, c.mode));
+      return Math.max(1, Math.round(triangular(min, moda, max, this._random())));
+    }
+
+    if (c.sizeMode === 'empirical' && c.table.length) {
+      const total = c.table.reduce((a, f) => a + f.weight, 0);
+      let r = this._random() * total;
+      for (let i = 0; i < c.table.length; i++) {
+        r -= c.table[i].weight;
+        if (r <= 0) return c.table[i].size;
+      }
+      return c.table[c.table.length - 1].size;
+    }
+
+    return c.size;
+  }
+
+  /**
+   * Libera un lote: sus instancias ENTRAN JUNTAS en ese instante.
+   *
+   * El tamano se recorta a lo que falta para el objetivo, asi que el total de
+   * instancias creadas es exactamente `runValue` y el ultimo lote puede salir
+   * incompleto — que es lo que pasa de verdad.
+   */
+  _liberarLote(tiempo) {
+    if (!this.startEvent) return;
+
+    const restantes = this.runValue - this.instanceCounter;
+    if (restantes <= 0) return;
+
+    const tamano = Math.min(this._tamanoDeLote(), restantes);
+    this.lotNumber++;
+
+    const lote = {
+      number: this.lotNumber,
+      size: tamano,
+      startTime: tiempo,
+      endTime: null,
+      pending: tamano,
+      stopMinutes: 0,
+      // Estado de las tareas POR LOTE de este lote (se crea al vuelo).
+      tareas: new Map()
+    };
+    this.lots.push(lote);
+    this.lotStats.lots++;
+
+    for (let i = 0; i < tamano; i++) {
+      this.instanceCounter++;
+      const instanceId = this.instanceCounter;
+      this.instanceStates.set(instanceId, { gateways: {}, lotNumber: lote.number });
+      this.eventQueue.add({
+        type: 'GATEWAY_COMPLETE',
+        element: this.startEvent,
+        time: tiempo,
+        instanceId,
+        startTime: tiempo
+      });
+    }
+  }
+
+  /**
+   * Cierra el lote cuando su ULTIMA instancia termina, aplica el paron de cambio
+   * y dispara el siguiente lote (traccion: uno detras de otro).
+   *
+   * El paron se MIDE porque es el precio exacto de la politica de lotes, y es la
+   * cifra que justifica (o descarta) un SMED.
+   */
+  _cerrarLoteSiProcede(lotNumber, tiempo) {
+    const lote = this.lots[lotNumber - 1];
+    if (!lote || lote.endTime != null) return;
+
+    lote.pending--;
+    if (lote.pending > 0) return;
+
+    lote.endTime = tiempo;
+
+    if (this.completedInstances < this.runValue) {
+      const parada = this.lotConfig.stopMinutes;
+      lote.stopMinutes = parada;
+
+      // El paron SOLO ocurre si hay un lote despues: no se cambia herramienta
+      // para cerrar la produccion. Contarlo en el ultimo lote inflaba el total
+      // (con 2 lotes daba 2 parones en vez de 1, y el doble de minutos).
+      if (parada > 0) {
+        this.lotStats.stops++;
+        this.lotStats.stopMinutes += parada;
+      }
+
+      const siguiente = parada > 0
+        ? this.calendar.addWorkingTime(new Date(tiempo), parada).getTime()
+        : tiempo;
+      this._liberarLote(siguiente);
+    }
+  }
+
+  /**
+   * Tarea POR LOTE: se ejecuta UNA vez por lote, la primera vez que el flujo pasa
+   * por ahi, y los demas tokens ESPERAN a que termine (barrera).
+   *
+   * Es la tarea administrativa: un documento de 30 minutos hecho por PIEZA en un
+   * lote de 20 son 10 horas; hecho por LOTE, 30 minutos. Un factor 20x — y la
+   * razon de fondo por la que producir por lotes abarata lo administrativo.
+   *
+   * En modo individual (sin lotes) se comporta como una tarea normal, para no
+   * dejar el modelo a medias.
+   */
+  _atenderTareaPorLote(element, data, instanceId, startTime, tiempo) {
+    const estadoInstancia = this.instanceStates.get(instanceId);
+    const lote = estadoInstancia && estadoInstancia.lotNumber
+      ? this.lots[estadoInstancia.lotNumber - 1]
+      : null;
+
+    if (!lote) {
+      this.scheduleTask({ type: 'TASK_START', element, time: tiempo, instanceId, startTime });
+      return;
+    }
+
+    const estado = lote.tareas.get(element.id) || { fase: 'pendiente', esperando: [] };
+
+    // Ya satisfecha: este token sigue de largo, sin volver a ejecutarla.
+    if (estado.fase === 'hecha') {
+      this._continuarTrasTareaDeLote(element, instanceId, startTime, tiempo);
+      return;
+    }
+
+    // En curso: el lote entero espera. Se apunta para despertarlo al terminar.
+    if (estado.fase === 'en curso') {
+      estado.esperando.push({ instanceId, startTime });
+      lote.tareas.set(element.id, estado);
+      return;
+    }
+
+    // Primera vez. La fase se reserva ANTES de programar nada: scheduleTask puede
+    // encolar eventos que volverian a entrar aqui.
+    estado.fase = 'en curso';
+    estado.esperando = [];
+    lote.tareas.set(element.id, estado);
+
+    const espera = this._esperaDeBarrera(data);
+
+    if (espera > 0) {
+      // La tarea no empieza hasta que atiendan. Se programa un ARRANQUE para
+      // entonces, y asi el recurso (si lo pide) no se toma antes de tiempo.
+      const inicio = this.calendar.addWorkingTime(new Date(tiempo), espera).getTime();
+      this.eventQueue.add({
+        type: 'LOT_TASK_START', element, time: inicio, instanceId, startTime, lotNumber: lote.number
+      });
+    } else {
+      this.scheduleTask({
+        type: 'TASK_START', element, time: tiempo, instanceId, startTime,
+        esTareaDeLote: true, lotNumber: lote.number
+      });
+    }
+  }
+
+  /**
+   * Espera de la barrera: cuanto tarda en atender quien tiene que firmar.
+   *
+   * Se modela por su EFECTO y no como una persona, porque su agenda no se conoce
+   * y modelarla seria falsa precision: con probabilidad p atienden a la primera y
+   * si no, el lote espera lo que diga la distribucion. La TOLERANCIA define que
+   * espera cuenta como paron reportable; sin umbral, cada espera de tres minutos
+   * ensucia el informe y al final nadie lo lee.
+   */
+  _esperaDeBarrera(data) {
+    const b = data && data.barrier;
+    if (!b) return 0;
+
+    const p = b.availableProbability == null
+      ? 1
+      : Math.max(0, Math.min(1, Number(b.availableProbability)));
+    if (this._random() < p) return 0;
+
+    let espera = triangular(
+      Number(b.waitMin) || 0,
+      Number(b.waitMode) || 0,
+      Number(b.waitMax) || 0,
+      this._random()
+    );
+    if (!(espera > 0)) espera = 0;
+
+    if (espera > 0) {
+      this.lotStats.waits++;
+      this.lotStats.waitMinutes += espera;
+      const tolerancia = Math.max(0, Number(b.toleranceMinutes) || 0);
+      if (espera > tolerancia) this.lotStats.waitsOverTolerance++;
+    }
+
+    return espera;
+  }
+
+  /** Arranca de verdad una tarea por lote que esperaba la barrera. */
+  _iniciarTareaDeLote(event) {
+    this.scheduleTask({
+      type: 'TASK_START',
+      element: event.element,
+      time: event.time,
+      instanceId: event.instanceId,
+      startTime: event.startTime,
+      esTareaDeLote: true,
+      lotNumber: event.lotNumber
+    });
+  }
+
+  /**
+   * Al terminar una tarea por lote: se marca como hecha y se despierta a TODOS
+   * los tokens que esperaban la barrera.
+   */
+  _cerrarTareaDeLote(event) {
+    const lote = this.lots[(event.lotNumber || 0) - 1];
+    if (!lote) return;
+
+    const estado = lote.tareas.get(event.element.id);
+    if (!estado || estado.fase !== 'en curso') return;
+
+    estado.fase = 'hecha';
+    this.lotStats.perLotTaskExecutions++;
+
+    const esperando = estado.esperando || [];
+    estado.esperando = [];
+
+    esperando.forEach(({ instanceId, startTime }) => {
+      this._continuarTrasTareaDeLote(event.element, instanceId, startTime, this.clock);
+    });
+  }
+
+  /**
+   * Un token que esperaba la barrera sigue su camino.
+   *
+   * Va como LOT_CONTINUE, y NO como TASK_COMPLETE: la continuacion no es una
+   * finalizacion de tarea y no tiene duraciones ni costos. Si se enviara como
+   * TASK_COMPLETE, la contabilidad leeria `processingTime` (que aqui no existe) y
+   * sumaria `undefined`, dejando las metricas del elemento en NaN.
+   *
+   * `continuacionDeLote` hace que processEvent enlace los sucesores pero NO
+   * cuente una ejecucion: la tarea por lote se ejecuto una vez, no una por token.
+   */
+  _continuarTrasTareaDeLote(element, instanceId, startTime, tiempo) {
+    this.eventQueue.add({
+      type: 'LOT_CONTINUE',
+      element,
+      time: tiempo,
+      instanceId,
+      startTime,
+      continuacionDeLote: true
+    });
+  }
+
+  /**
    * Descripcion legible del intervalo entre llegadas.
    *
    * `arrivalRate` es una TASA (llegadas por unidad de tiempo), NO un intervalo:
@@ -675,6 +1104,11 @@ export default class SimulationEngine {
       descansos: (this.calendar.config.breaks || []).length,
       descansoCuentaComoJornada: (this.calendar.config.breaks || []).filter((b) => b.cuentaComoJornada).length,
       arranque: describeWarmup(this.warmup),
+      semilla: this.seed,
+      lotes: this.lotConfig.enabled
+        ? `tamano ${this.lotConfig.sizeMode === 'fixed' ? this.lotConfig.size + ' (fijo)' : this.lotConfig.sizeMode}`
+          + `, en serie por traccion, paron de cambio ${this.lotConfig.stopMinutes} min`
+        : 'desactivados (llegadas una a una)',
       diasLaborables: cal.workingDays,
       festivos: (cal.holidays || []).length,
       tarifaBasePorHora: cfg.cost && cfg.cost.baseRatePerHour,
@@ -758,6 +1192,32 @@ export default class SimulationEngine {
       espera_total_min: Math.round(suma('totalWaitTime')),
       fallos_totales: suma('failureCount')
     });
+
+    // Lotes: el lote pasa a ser la unidad de analisis, no la pieza. Y ojo con el
+    // tamano de muestra: 1.000 piezas en 50 lotes NO son 1.000 muestras del
+    // patron de llegada, son 50.
+    if (this.lotConfig.enabled && this.lots.length) {
+      const ciclosDeLote = this.lots
+        .filter((l) => l.endTime != null)
+        .map((l) => this.standardCalendar.calculateBusinessDurationInMinutes(
+          new Date(l.startTime), new Date(l.endTime)
+        ));
+      const resumenLotes = resumenMuestras(ciclosDeLote);
+
+      console.log('SALIDAS · lotes', {
+        lotes: this.lots.length,
+        piezas_por_lote_media: Number((this.completedInstances / this.lots.length).toFixed(2)),
+        ciclo_de_lote_min_medio: resumenLotes ? Math.round(resumenLotes.media) : '—',
+        ciclo_de_lote_min_min: resumenLotes ? Math.round(resumenLotes.min) : '—',
+        ciclo_de_lote_min_max: resumenLotes ? Math.round(resumenLotes.max) : '—',
+        parones_de_cambio: this.lotStats.stops,
+        paron_total_min: Math.round(this.lotStats.stopMinutes),
+        esperas_de_firma: this.lotStats.waits,
+        espera_de_firma_total_min: Math.round(this.lotStats.waitMinutes),
+        esperas_sobre_tolerancia: this.lotStats.waitsOverTolerance,
+        ejecuciones_de_tareas_por_lote: this.lotStats.perLotTaskExecutions
+      });
+    }
 
     // Utilizacion por piscina. Es LA metrica de capacidad y es contraintuitiva
     // (un 0,90 parece "queda un 10 %" cuando es saturacion), asi que se imprime

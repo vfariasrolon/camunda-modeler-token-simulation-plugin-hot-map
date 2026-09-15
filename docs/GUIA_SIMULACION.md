@@ -160,6 +160,8 @@ en la primera semana. El informe de la consola imprime la tasa **ya resuelta**
 | **Unidad** (2.ª) | Unidad del retrabajo. | Independiente de la anterior. |
 | **Recurso** | Piscina de la que toma unidades la tarea (`(ninguno)` = sin restricción). | Si la piscina no existe, el motor **ignora el recurso en silencio**; por eso es un desplegable y no texto libre. |
 | **Cant.** | Cuántas unidades toma a la vez. | Entero ≥ 1. Con 2 y una piscina de 3, dos tareas lo agotan. |
+| **Frecuencia** | `por token` (lo de siempre) o `por lote` (una sola vez por lote). | «Llenar la orden» es `por lote`; «registrar cada pieza» es `por token`. Ver §4.1. |
+| **Barrera** (`disp.` / `mín` / `moda` / `máx` / `tol.`) | Quien firma: probabilidad de atender a la primera, espera si no atiende, y tolerancia. | Solo se lee con `por lote`. Con `disp.` a 1 no hay ninguna espera. Ver §4.2. |
 
 > **Scrap vs. retrabajo.** Este motor modela **retrabajo**, no chatarra: un fallo
 > añade tiempo y el caso continúa. No hay pérdida de piezas. Si tu proceso descarta
@@ -198,6 +200,84 @@ arranca (no hay fallback a valores por defecto).
 | Multiplicador de exceso | 3 = triple. |
 | Días laborables | 0 = domingo … 6 = sábado. |
 | Hora de entrada / salida | Jornada estándar. Entrada debe ser anterior a salida. |
+| Descansos | Lista de descansos con **tres interruptores**: si cuenta como jornada, si es tiempo productivo y si también se toma en horas extra. Ver §6. |
+| Arranque (curva) | Forma (exponencial/lineal), eficiencia inicial, minutos de recuperación y sus dos disparadores. Se dibuja la curva mientras se ajusta. Ver §6. |
+| Llegadas por LOTES | Activado, las llegadas dejan de ser un chorro continuo y van **en serie**: un lote detrás de otro. Ver §4.3. |
+| Tamaño de lote (modo y valores) | `fixed`, `triangular` (mín/moda/máx) o `empirical` (tabla de tamaños con su peso). |
+| Parón de cambio entre lotes | Minutos de cambio de herramienta/utillaje entre un lote y el siguiente. |
+| Semilla | Vacío = al azar; la que se use queda guardada en el informe. Ver §4.4. |
+| Tabla de tamaños de lote | Solo con el modo `empirical`: cada tamaño con su **peso** (frecuencia relativa; no hace falta que sume 100). |
+
+### 4.1 Frecuencia: ¿una vez por pieza o una vez por lote?
+
+`por lote` se ejecuta **una sola vez por lote**, la primera vez que el flujo pasa por ahí. La
+**posición en el diagrama da el momento**: al principio del flujo es la preparación (rellenar la
+orden), al final es el cierre (reportar lo producido), y si hay dos, son las dos. No hace falta un
+campo «inicio/cierre», y dentro de un bucle **no se repite en cada vuelta**.
+
+No es un detalle menor: un documento de 30 minutos hecho **por pieza** en un lote de 20 son
+**10 horas**; hecho **por lote**, **30 minutos**. Un factor **20×**. Es la razón de fondo por la que
+producir por lotes abarata lo administrativo: **el sobrecoste se reparte entre el lote**.
+
+Y la etiqueta **sugiere, no deriva**: marcar una tarea como administrativa puede pre-rellenar la
+frecuencia, pero dos tareas administrativas pueden comportarse distinto.
+
+### 4.2 Barrera: el lote entero espera la firma
+
+Con la frecuencia `por lote`, la barrera describe a quien tiene que firmar. Se modela **por su
+efecto y no como una persona**, porque su agenda no se conoce y modelarla sería falsa precisión:
+
+| Campo | Qué significa | Por defecto |
+|---|---|---|
+| `disp.` | Probabilidad de que atiendan **a la primera** (espera 0). | 0,70 |
+| `mín` / `moda` / `máx` | Si no atienden, lo que espera el lote, en minutos. | 10 / 20 / 60 |
+| `tol.` | **Tolerancia**: por debajo, la espera es ruido; por encima, se marca y se mide. | 15 min |
+
+La **tolerancia** es el umbral de lo aceptable: sin ella, cada espera de tres minutos ensucia el
+informe y al final nadie lo lee. El precio de la simplificación, para que sea una decisión y no un
+descuido: no hay contrapresión entre avisos (no se ve si el firmante atiende a muchas áreas) y no
+se puede «simular contratar a otro firmante». A cambio, se cuantifica **el coste de la espera**, que
+es lo que hace falta para decidir.
+
+Como el `disp.` es una estimación, la forma honesta de usarlo es **análisis de sensibilidad**:
+correr con 90 % y con 70 %. Si el plan apenas se mueve, el dato no importa y no merece perder
+tiempo en medirlo; si se desmorona, hay que ir a medirlo. **El programa dice cuánto pesa no
+saberlo.**
+
+### 4.3 Lotes en serie: el reloj deja de ser el de llegadas
+
+Con las llegadas por lotes **no hay dos lotes a la vez**: se arranca uno, se cierra y arranca el
+siguiente (**por tracción**). El reloj de llegadas pasa a ser el **reloj de lotes**, y el **parón de
+cambio** entre ellos se mide como tiempo muerto con causa declarada («ocioso por fin de lote»).
+
+Es el **precio exacto de la política de lotes**, y como la política se declara, se puede **cotizar**:
+«¿cuánto ganaría si dejara solapar dos lotes?» tiene respuesta.
+
+El **último lote puede ser parcial** (se corta con lo que falte para completar las instancias
+pedidas). No es un defecto: es lo que hace que **la muestra efectiva sean los lotes**, no las
+piezas.
+
+Dos consecuencias que hay que tener presentes al leer los resultados:
+
+- **El tamaño de muestra efectivo son los LOTES.** 1 000 piezas en 50 lotes no son 1 000 muestras
+  del patrón de llegada: son **50**. Con lotes pequeños, la incertidumbre de todo lo que dependa del
+  ritmo de llegada es mucho mayor de lo que parece.
+- **El ranking por número de ejecuciones deja de ser comparable.** Una tarea por lote se ejecuta 50
+  veces y otra por token 1 000. Ordena por **tiempo o coste total** y, para el coste por pieza,
+  **divide por el tamaño del lote**.
+
+### 4.4 La semilla
+
+Con ella se consiguen tres cosas, y la tercera es la que justifica el campo:
+
+1. **Reproducibilidad**: la misma corrida da el mismo resultado.
+2. **Réplicas de verdad**: varias semillas → intervalo de confianza.
+3. **Números aleatorios comunes**: dos escenarios ven **la misma secuencia de azar**, así que la
+   diferencia se debe al cambio y **no a la suerte**. Sin esto, comparar dos tamaños de lote es
+   comparar dos muestras pequeñas: **ruido contra ruido**.
+
+Déjala **vacía** para simular con azar y que el sistema guarde la que usó (así el resultado sigue
+siendo auditable). Escríbela a mano solo si quieres **repetir** una corrida concreta.
 
 ---
 
@@ -619,15 +699,21 @@ de página) los añade ese diálogo, no el plugin: actívalos si los quieres.
 ## 13. Cómo validar una corrida a mano
 
 El motor imprime un informe en la **consola del navegador** (DevTools → Console) con
-cuatro bloques: entradas globales, entradas por tarea, salidas por tarea y totales. Con
+cuatro bloques — entradas globales, entradas por tarea, salidas por tarea y totales — y un
+quinto bloque **`SALIDAS · lotes`** cuando las llegadas son por lotes: cuántos lotes, piezas por
+lote de media, ciclo de lote (medio / mín / máx), parones de cambio y su total, esperas de firma,
+cuántas superaron la tolerancia y cuántas tareas se ejecutaron por lote. Con
 distribución **fija** y sin fallos, **cada número se recalcula con papel**.
 
 ### El procedimiento
 
 1. **Comprueba las entradas.** Que lo que ves es lo que creías haber configurado.
-   Mira especialmente `llegada`: viene ya resuelta («una cada 1.0 s»).
+   Mira especialmente `llegada`: viene ya resuelta («una cada 1.0 s»), y `semilla`, sin la cual
+   una corrida interesante no se puede repetir.
 2. **Comprueba las salidas por tarea.** `proceso_total_min` debe ser
-   `n × duración` (con distribución fija).
+   `n × duración` (con distribución fija). Con lotes, `n` son las **piezas**, pero una tarea
+   `por lote` solo se ejecuta **una vez por lote**: ahí `proceso_total_min` es
+   `nº de lotes × duración`, y `ejecuciones_de_tareas_por_lote` te lo confirma.
 3. **Comprueba los totales**, en este orden:
    - `horas_extra_min` = suma de las horas extra de las tareas.
    - `semanas_con_horas_extra` y las horas de cada tramo → **es la llave para entender
@@ -678,11 +764,11 @@ Esto es lo más importante del documento para quien vaya a **decidir** con estos
 
 | Práctica | Estado |
 |---|---|
-| Semilla fija (PRNG reproducible) | **No.** Usa `Math.random()`. Dos corridas del mismo modelo dan números distintos. |
-| Réplicas independientes | **No.** Cada corrida es **una** réplica. |
+| Semilla fija (PRNG reproducible) | **Sí** (§4.4). Vacío = al azar, pero la usada se guarda y se imprime. |
+| Números aleatorios comunes para comparar escenarios | **Sí.** Los dos planes de una corrida comparten la misma secuencia de azar. |
+| Réplicas independientes | **A mano.** Cada corrida es **una** réplica; con semilla puedes repetirla o cambiarla. |
 | Intervalos de confianza | **No.** Se reportan medias puntuales. |
-| Periodo de calentamiento (*warm-up*) | **No.** El transitorio inicial se incluye en los resultados. |
-| Números aleatorios comunes para comparar escenarios | **No.** Los planes normal y con horas extra usan flujos aleatorios independientes. |
+| Periodo de calentamiento (*warm-up* estadístico) | **No.** El transitorio inicial se incluye en los resultados. No confundir con la **curva de arranque** (§6): esa no descarta nada, modela que la planta empieza lenta. |
 
 ### Qué implica, en la práctica
 
@@ -714,18 +800,27 @@ Esto es lo más importante del documento para quien vaya a **decidir** con estos
 
 Deliberadamente explícitas, para que no se confundan con funcionalidad ausente:
 
-1. **Sin semilla ni réplicas** (§14). Es la limitación metodológica principal.
+1. **Sin réplicas automáticas ni intervalos de confianza** (§14). Hay semilla (así que las
+   réplicas se pueden hacer a mano y repetir), pero no se lanzan N corridas ni se agrega el
+   intervalo: esa sigue siendo la limitación metodológica principal.
 2. **`calculateBusinessDurationInMinutes` recorre el rango minuto a minuto.** Es
    correcto pero su coste crece con la duración simulada. En corridas de decenas de
    miles de minutos puede notarse.
 3. **Sin turnos múltiples**: un solo bloque de jornada por día.
-4. **Sin lotes ni transporte**: las métricas de logística se retiraron porque el motor
-   no las calculaba.
+4. **Sin métricas de transporte ni de distancia**: se retiraron porque el motor no las
+   calculaba. Los **lotes** sí están modelados (§4.3); el *por dónde* y el *cuánto pesa*
+   llegar hasta ahí, no.
 5. **La espera no se penaliza si `waitCostPerHour = 0`**: las colas aparecerán en el
    tiempo, no en el coste.
 6. **Terminación**: si un caso no llega nunca a un elemento sin salida, no se cuenta
    como completado y el objetivo puede no alcanzarse. El freno de seguridad evita el
    cuelgue, pero el error que lanza hay que leerlo como «revisa el diagrama».
+7. **La barrera de firma es un único aviso.** Si no atienden, el lote espera **una** vez;
+   no hay segunda tanda ni contrapresión entre áreas (§4.2).
+8. **El recurso se mantiene retenido durante el descanso.** Al pausar la tarea no se libera
+   la unidad de la piscina, así que otra tarea en cola no la aprovecha. Y el re-arranque
+   tras el descanso se aplica a las tareas que **empiezan** en el tramo siguiente, no a las
+   que se reanudan a medias.
 
 ---
 
