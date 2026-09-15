@@ -302,9 +302,30 @@ export default class DataTablePanel {
     if (!this._panel) return;
     this._setStatus('');
 
-    if (this._activeTab === 'tasks') return this._renderTasks();
-    if (this._activeTab === 'flows') return this._renderFlows();
-    return this._renderGlobal();
+    if (this._activeTab === 'tasks') this._renderTasks();
+    else if (this._activeTab === 'flows') this._renderFlows();
+    else this._renderGlobal();
+
+    this._avisarSinRaiz();
+  }
+
+  /**
+   * Aviso en Tareas y Flujos cuando no hay evento raiz.
+   *
+   * Sin esto se puede rellenar y guardar toda la tabla y descubrir al simular
+   * que el motor se niega a arrancar ("No root start event found"), sin ninguna
+   * pista de donde esta el problema: la causa esta en otra pestaña.
+   */
+  _avisarSinRaiz() {
+    if (this._activeTab === 'global') return;
+    if (this._getRootStartEvent()) return;
+    if (!this._body) return;
+
+    const aviso = domify(
+      '<p class="aviso-raiz">Sin evento raíz configurado la simulación no se ejecutará. '
+      + 'Ve a la pestaña <strong>Global</strong> para crearlo.</p>'
+    );
+    this._body.insertBefore(aviso, this._body.firstChild);
   }
 
   _renderTasks() {
@@ -385,11 +406,41 @@ export default class DataTablePanel {
     const info = this._globalData();
 
     if (!info) {
+      // Hueco que tenia la tabla: la pestaña Global solo EDITABA un evento raiz
+      // que ya existiera, pero no habia forma de crearlo desde aqui. El usuario
+      // rellenaba las tareas, guardaba, y al simular recibia "No root start
+      // event found" sin saber que le faltaba. Ahora se puede crear desde aqui.
+      const inicios = this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:StartEvent'));
+
+      if (!inicios.length) {
+        this._body.innerHTML = `
+          <p class="empty">
+            El diagrama no tiene ningún <strong>evento de inicio</strong>.<br>
+            Añade uno al diagrama para poder configurar la simulación.
+          </p>`;
+        return;
+      }
+
       this._body.innerHTML = `
         <p class="empty">
-          No hay ningún evento de inicio marcado como <strong>«Usar como Configuración Raíz»</strong>.<br>
-          Marca uno en el editor de datos antes de usar esta pestaña: sin evento raíz la simulación no se ejecuta.
-        </p>`;
+          Ningún evento de inicio está marcado como <strong>configuración raíz</strong>.<br>
+          Sin él la simulación no se ejecuta: no hay jornada, ni tarifa, ni número de instancias.
+        </p>
+        <div class="raices">
+          ${inicios.map((el) => `
+            <button class="btn-raiz" data-el-id="${el.id}">
+              Usar <strong>${esc(this._label(el))}</strong> como configuración raíz
+            </button>`).join('')}
+        </div>
+        <p class="hint">
+          Se crearán los valores por defecto: 1000 instancias, llegada cada 60 min,
+          jornada 09:00-17:00 de lunes a viernes, y 50 por hora. Podrás ajustarlos aquí mismo.
+        </p>
+      `;
+
+      this._body.querySelectorAll('.btn-raiz').forEach((btn) => {
+        domEvent.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
+      });
       return;
     }
 
@@ -621,6 +672,36 @@ export default class DataTablePanel {
 
   _azar(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  /**
+   * Marca un evento de inicio como configuracion raiz, creando los valores por
+   * defecto. Se escribe de inmediato porque el resto del panel depende de que
+   * exista la raiz (es lo que leen getRootStartEvent() y el motor).
+   */
+  marcarRaiz(elId) {
+    const el = this._elementRegistry.get(elId);
+    if (!el) return;
+
+    try {
+      setSimulationData(el, DEFAULT_GLOBAL(), { modeling: this._modeling, bpmnFactory: this._bpmnFactory });
+    } catch (err) {
+      const soloLectura = /read-only/i.test(String(err && err.message));
+      const texto = soloLectura
+        ? 'No se pudo crear la configuración raíz: el diagrama está en solo lectura porque el modo '
+          + 'Token Simulation está activo. Desactívalo (menú «Toggle Token Simulation» o la tecla T).'
+        : `No se pudo crear la configuración raíz: ${err.message || err}`;
+      this._setStatus(texto, 'error');
+      this._notifications.showNotification({ text: texto, type: 'error', duration: 10000 });
+      return;
+    }
+
+    this._notifications.showNotification({
+      text: `«${this._label(el)}» es ahora la configuración raíz. Ya puedes simular.`,
+      type: 'info',
+      duration: 4000
+    });
+    this._render();
   }
 
   save() {
