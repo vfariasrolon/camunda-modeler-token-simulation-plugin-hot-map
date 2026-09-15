@@ -1423,6 +1423,10 @@ const TAB_ACTIVE_CLS = 'active';
 const TASK_UNITS = ['minutes', 'hours', 'seconds'];
 const RATE_UNITS = ['minute', 'hour', 'second'];
 
+// Nombres de los dias para las casillas de "dias laborables". El indice es el
+// valor que espera el motor: 0 = domingo.
+const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
+
 const TASK_DEFAULTS = () => ({
   processingTime: { distribution: 'fixed', value: 10, unit: 'minutes' },
   failureRate: 0,
@@ -1801,13 +1805,21 @@ class DataTablePanel {
         return `<select class="cell" data-field="${field.key}">${field.options
           .map((o) => `<option value="${o}" ${value === o ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
       }
+      // Dias laborables con CASILLAS, no texto libre: era una regresion respecto
+      // al editor elemento a elemento. Un "1,2,3,4,5" escrito a mano puede
+      // quedar invalido por una errata sin que nada avise; con casillas no hay
+      // forma de equivocarse. El CSV los sigue tratando como lista de numeros.
       if (field.kind === 'days') {
-        const text = Array.isArray(value) ? value.join(',') : '';
-        return `<input type="text" class="cell" data-field="${field.key}" value="${esc(text)}" placeholder="1,2,3,4,5">`;
+        const activos = Array.isArray(value) ? value : [];
+        return `<span class="dias">${DIAS.map((nombre, i) =>
+          `<label><input type="checkbox" data-days="${field.key}" value="${i}"`
+          + `${activos.includes(i) ? ' checked' : ''}> ${nombre}</label>`
+        ).join('')}</span>`;
       }
+      // Selector de hora nativo: mismo motivo, y evita el formato invalido.
       if (field.kind === 'time') {
         const text = value && typeof value === 'object' ? `${pad(value.hour)}:${pad(value.minute)}` : '';
-        return `<input type="text" class="cell" data-field="${field.key}" value="${esc(text)}" placeholder="09:00">`;
+        return `<input type="time" class="cell" data-field="${field.key}" value="${esc(text)}">`;
       }
       return `<input type="text" class="cell" data-field="${field.key}" value="${esc(value == null ? '' : value)}">`;
     };
@@ -1826,7 +1838,7 @@ class DataTablePanel {
             </tr>`).join('')}
         </tbody>
       </table>
-      <p class="hint">«Días laborables»: números separados por comas, 0 = domingo. Horas en formato <code>HH:MM</code>.</p>
+      <p class="hint">Marca los días laborables y ajusta las horas con los selectores. La hora de entrada debe ser anterior a la de salida.</p>
     `;
   }
 
@@ -1891,36 +1903,50 @@ class DataTablePanel {
     if (!info) throw new Error('No hay evento raíz configurado');
 
     const data = JSON.parse(JSON.stringify(info.data));
-    this._body.querySelectorAll('tbody tr').forEach((tr) => {
-      tr.querySelectorAll('[data-field]').forEach((input) => {
-        const field = GLOBAL_FIELDS.find((f) => f.key === input.dataset.field);
-        if (!field) return;
-        const raw = input.value;
 
-        if (field.kind === 'number') {
-          const n = this._num(raw, field.label, tr);
-          if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
-          setByPath(data, field.path, n);
-        } else if (field.kind === 'days') {
-          const days = String(raw).split(',').map((s) => s.trim()).filter((s) => s !== '')
-            .map((s) => {
-              const n = Number(s);
-              if (!Number.isInteger(n) || n < 0 || n > 6) throw new Error(`Días laborables: «${s}» no es un día válido (0-6)`);
-              return n;
-            });
-          setByPath(data, field.path, days);
-        } else if (field.kind === 'time') {
-          const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})$/);
-          if (!m) throw new Error(`${field.label}: usa el formato HH:MM («${raw}»)`);
-          const hour = Number(m[1]);
-          const minute = Number(m[2]);
-          if (hour > 23 || minute > 59) throw new Error(`${field.label}: hora fuera de rango («${raw}»)`);
-          setByPath(data, field.path, { hour, minute });
-        } else {
-          setByPath(data, field.path, raw);
+    // Se recorre la lista de campos en vez de los inputs del DOM: los dias son
+    // VARIAS casillas por campo (una por dia), asi que no encajan en el patron
+    // "un input por campo" que usan las demas pestañas.
+    GLOBAL_FIELDS.forEach((field) => {
+      if (field.kind === 'days') {
+        const marcados = Array.from(this._body.querySelectorAll(`[data-days="${field.key}"]:checked`))
+          .map((c) => Number(c.value));
+        if (!marcados.length) {
+          throw new Error(`${field.label}: marca al menos un día`);
         }
-      });
+        setByPath(data, field.path, marcados.sort((a, b) => a - b));
+        return;
+      }
+
+      const input = this._body.querySelector(`[data-field="${field.key}"]`);
+      if (!input) return;
+      const raw = input.value;
+
+      if (field.kind === 'number') {
+        const n = this._num(raw, field.label);
+        if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
+        setByPath(data, field.path, n);
+      } else if (field.kind === 'time') {
+        // <input type="time"> ya entrega HH:MM, pero puede quedar vacio si el
+        // usuario borra el campo, asi que se valida igualmente.
+        const m = String(raw).match(/^(\d{2}):(\d{2})$/);
+        if (!m) throw new Error(`${field.label}: hora no válida («${raw}»)`);
+        const hour = Number(m[1]);
+        const minute = Number(m[2]);
+        if (hour > 23 || minute > 59) throw new Error(`${field.label}: hora fuera de rango («${raw}»)`);
+        setByPath(data, field.path, { hour, minute });
+      } else {
+        setByPath(data, field.path, raw);
+      }
     });
+
+    // Coherencia del horario: si la entrada es posterior a la salida, el motor
+    // no calcula nada util y el usuario no recibe ningun aviso.
+    const entrada = getByPath(data, [ 'calendar', 'workingHours', 'start' ]);
+    const salida = getByPath(data, [ 'calendar', 'workingHours', 'end' ]);
+    if (entrada && salida && (entrada.hour * 60 + entrada.minute) >= (salida.hour * 60 + salida.minute)) {
+      throw new Error('La hora de entrada debe ser anterior a la de salida');
+    }
 
     writes.push({ element: info.element, data });
     return writes;
@@ -15041,6 +15067,27 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   border-color: #90caf9;
 }
 
+/* Casillas de "dias laborables": una por dia, en linea. */
+.sim-data-table-panel .dias {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.sim-data-table-panel .dias label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .dias input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;
@@ -15087,7 +15134,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
 .sim-data-table-panel .btn-save:hover {
   background: #0d47a1;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, anclado abajo a la derecha. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  width: min(1180px, calc(100vw - 60px));\n  max-height: calc(100vh - 60px);\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 14px 16px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"AAAA;;qEAEqE;;AAErE;EACE,kBAAkB;EAClB,YAAY;EACZ,WAAW;EACX,sCAAsC;EACtC,8BAA8B;EAC9B,aAAa;EACb,sBAAsB;EACtB,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;EAClB,0CAA0C;EAC1C,YAAY;EACZ,eAAe;EACf,WAAW;AACb;;AAEA;EACE,aAAa;AACf;;AAEA,qBAAqB;AACrB;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,kBAAkB;EAClB,6BAA6B;EAC7B,mBAAmB;EACnB,0BAA0B;AAC5B;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;EACR,gBAAgB;EAChB,iBAAiB;EACjB,OAAO;AACT;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,kBAAkB;AACpB;;AAEA;EACE,aAAa;EACb,mBAAmB;EACnB,QAAQ;AACV;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,uBAAuB;EACvB,WAAW;EACX,YAAY;EACZ,UAAU;EACV,gBAAgB;EAChB,YAAY;EACZ,kBAAkB;EAClB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,gBAAgB;EAChB,WAAW;AACb;;AAEA;EACE,WAAW;EACX,YAAY;EACZ,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,mBAAmB;EACnB,cAAc;AAChB;;AAEA,qBAAqB;AACrB;EACE,aAAa;EACb,QAAQ;EACR,eAAe;EACf,6BAA6B;EAC7B,mBAAmB;AACrB;;AAEA;EACE,iBAAiB;EACjB,gBAAgB;EAChB,YAAY;EACZ,oCAAoC;EACpC,eAAe;EACf,gBAAgB;EAChB,WAAW;EACX,eAAe;AACjB;;AAEA;EACE,WAAW;AACb;;AAEA;EACE,cAAc;EACd,4BAA4B;AAC9B;;AAEA,mBAAmB;AACnB;EACE,OAAO;EACP,aAAa;EACb,cAAc;EACd,kBAAkB;AACpB;;AAEA;EACE,cAAc;EACd,kBAAkB;EAClB,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,gBAAgB;EAChB,eAAe;EACf,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,gBAAgB;EAChB,gBAAgB;EAChB,kBAAkB;AACpB;;AAEA,kBAAkB;AAClB;EACE,WAAW;EACX,yBAAyB;AAC3B;;AAEA;EACE,gBAAgB;EAChB,MAAM;EACN,UAAU;EACV,mBAAmB;EACnB,sBAAsB;EACtB,iBAAiB;EACjB,gBAAgB;EAChB,gBAAgB;EAChB,eAAe;EACf,mBAAmB;AACrB;;AAEA;EACE,yBAAyB;EACzB,gBAAgB;EAChB,sBAAsB;AACxB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;EACE,mBAAmB;AACrB;;AAEA;;EAEE,gBAAgB;EAChB,gBAAgB;EAChB,uBAAuB;EACvB,mBAAmB;AACrB;;AAEA;EACE,UAAU;EACV,WAAW;AACb;;AAEA;EACE,WAAW;EACX,eAAe;EACf,gBAAgB;EAChB,iBAAiB;EACjB,oBAAoB;EACpB,cAAc;EACd,gBAAgB;EAChB,sBAAsB;EACtB,kBAAkB;AACpB;;AAEA;EACE,0BAA0B;EAC1B,oBAAoB;EACpB,qBAAqB;AACvB;;AAEA,0DAA0D;AAC1D;EACE,aAAa;EACb,eAAe;EACf,aAAa;AACf;;AAEA;EACE,oBAAoB;EACpB,mBAAmB;EACnB,QAAQ;EACR,iBAAiB;EACjB,mBAAmB;EACnB,eAAe;AACjB;;AAEA;EACE,SAAS;EACT,eAAe;AACjB;;AAEA,gBAAgB;AAChB;EACE,aAAa;EACb,mBAAmB;EACnB,SAAS;EACT,kBAAkB;EAClB,0BAA0B;EAC1B,mBAAmB;EACnB,0BAA0B;AAC5B;;AAEA;EACE,OAAO;EACP,iBAAiB;EACjB,WAAW;EACX,gBAAgB;AAClB;;AAEA;EACE,cAAc;EACd,gBAAgB;AAClB;;AAEA;EACE,cAAc;EACd,gBAAgB;AAClB;;AAEA;EACE,WAAW;AACb;;AAEA;EACE,iBAAiB;EACjB,eAAe;EACf,gBAAgB;EAChB,WAAW;EACX,mBAAmB;EACnB,YAAY;EACZ,kBAAkB;EAClB,eAAe;AACjB;;AAEA;EACE,mBAAmB;AACrB","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, anclado abajo a la derecha. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 20px;\n  right: 20px;\n  width: min(1180px, calc(100vw - 60px));\n  max-height: calc(100vh - 60px);\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 16px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 14px 16px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 12px 16px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 

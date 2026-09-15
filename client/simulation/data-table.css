@@ -207,6 +207,27 @@
   border-color: #90caf9;
 }
 
+/* Casillas de "dias laborables": una por dia, en linea. */
+.sim-data-table-panel .dias {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.sim-data-table-panel .dias label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sim-data-table-panel .dias input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
 /* --- pie --- */
 .sim-data-table-panel .panel-footer {
   display: flex;

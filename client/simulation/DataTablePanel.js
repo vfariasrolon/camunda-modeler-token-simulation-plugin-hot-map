@@ -20,6 +20,10 @@ const TAB_ACTIVE_CLS = 'active';
 const TASK_UNITS = ['minutes', 'hours', 'seconds'];
 const RATE_UNITS = ['minute', 'hour', 'second'];
 
+// Nombres de los dias para las casillas de "dias laborables". El indice es el
+// valor que espera el motor: 0 = domingo.
+const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
+
 const TASK_DEFAULTS = () => ({
   processingTime: { distribution: 'fixed', value: 10, unit: 'minutes' },
   failureRate: 0,
@@ -398,13 +402,21 @@ export default class DataTablePanel {
         return `<select class="cell" data-field="${field.key}">${field.options
           .map((o) => `<option value="${o}" ${value === o ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
       }
+      // Dias laborables con CASILLAS, no texto libre: era una regresion respecto
+      // al editor elemento a elemento. Un "1,2,3,4,5" escrito a mano puede
+      // quedar invalido por una errata sin que nada avise; con casillas no hay
+      // forma de equivocarse. El CSV los sigue tratando como lista de numeros.
       if (field.kind === 'days') {
-        const text = Array.isArray(value) ? value.join(',') : '';
-        return `<input type="text" class="cell" data-field="${field.key}" value="${esc(text)}" placeholder="1,2,3,4,5">`;
+        const activos = Array.isArray(value) ? value : [];
+        return `<span class="dias">${DIAS.map((nombre, i) =>
+          `<label><input type="checkbox" data-days="${field.key}" value="${i}"`
+          + `${activos.includes(i) ? ' checked' : ''}> ${nombre}</label>`
+        ).join('')}</span>`;
       }
+      // Selector de hora nativo: mismo motivo, y evita el formato invalido.
       if (field.kind === 'time') {
         const text = value && typeof value === 'object' ? `${pad(value.hour)}:${pad(value.minute)}` : '';
-        return `<input type="text" class="cell" data-field="${field.key}" value="${esc(text)}" placeholder="09:00">`;
+        return `<input type="time" class="cell" data-field="${field.key}" value="${esc(text)}">`;
       }
       return `<input type="text" class="cell" data-field="${field.key}" value="${esc(value == null ? '' : value)}">`;
     };
@@ -423,7 +435,7 @@ export default class DataTablePanel {
             </tr>`).join('')}
         </tbody>
       </table>
-      <p class="hint">«Días laborables»: números separados por comas, 0 = domingo. Horas en formato <code>HH:MM</code>.</p>
+      <p class="hint">Marca los días laborables y ajusta las horas con los selectores. La hora de entrada debe ser anterior a la de salida.</p>
     `;
   }
 
@@ -488,36 +500,50 @@ export default class DataTablePanel {
     if (!info) throw new Error('No hay evento raíz configurado');
 
     const data = JSON.parse(JSON.stringify(info.data));
-    this._body.querySelectorAll('tbody tr').forEach((tr) => {
-      tr.querySelectorAll('[data-field]').forEach((input) => {
-        const field = GLOBAL_FIELDS.find((f) => f.key === input.dataset.field);
-        if (!field) return;
-        const raw = input.value;
 
-        if (field.kind === 'number') {
-          const n = this._num(raw, field.label, tr);
-          if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
-          setByPath(data, field.path, n);
-        } else if (field.kind === 'days') {
-          const days = String(raw).split(',').map((s) => s.trim()).filter((s) => s !== '')
-            .map((s) => {
-              const n = Number(s);
-              if (!Number.isInteger(n) || n < 0 || n > 6) throw new Error(`Días laborables: «${s}» no es un día válido (0-6)`);
-              return n;
-            });
-          setByPath(data, field.path, days);
-        } else if (field.kind === 'time') {
-          const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})$/);
-          if (!m) throw new Error(`${field.label}: usa el formato HH:MM («${raw}»)`);
-          const hour = Number(m[1]);
-          const minute = Number(m[2]);
-          if (hour > 23 || minute > 59) throw new Error(`${field.label}: hora fuera de rango («${raw}»)`);
-          setByPath(data, field.path, { hour, minute });
-        } else {
-          setByPath(data, field.path, raw);
+    // Se recorre la lista de campos en vez de los inputs del DOM: los dias son
+    // VARIAS casillas por campo (una por dia), asi que no encajan en el patron
+    // "un input por campo" que usan las demas pestañas.
+    GLOBAL_FIELDS.forEach((field) => {
+      if (field.kind === 'days') {
+        const marcados = Array.from(this._body.querySelectorAll(`[data-days="${field.key}"]:checked`))
+          .map((c) => Number(c.value));
+        if (!marcados.length) {
+          throw new Error(`${field.label}: marca al menos un día`);
         }
-      });
+        setByPath(data, field.path, marcados.sort((a, b) => a - b));
+        return;
+      }
+
+      const input = this._body.querySelector(`[data-field="${field.key}"]`);
+      if (!input) return;
+      const raw = input.value;
+
+      if (field.kind === 'number') {
+        const n = this._num(raw, field.label);
+        if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
+        setByPath(data, field.path, n);
+      } else if (field.kind === 'time') {
+        // <input type="time"> ya entrega HH:MM, pero puede quedar vacio si el
+        // usuario borra el campo, asi que se valida igualmente.
+        const m = String(raw).match(/^(\d{2}):(\d{2})$/);
+        if (!m) throw new Error(`${field.label}: hora no válida («${raw}»)`);
+        const hour = Number(m[1]);
+        const minute = Number(m[2]);
+        if (hour > 23 || minute > 59) throw new Error(`${field.label}: hora fuera de rango («${raw}»)`);
+        setByPath(data, field.path, { hour, minute });
+      } else {
+        setByPath(data, field.path, raw);
+      }
     });
+
+    // Coherencia del horario: si la entrada es posterior a la salida, el motor
+    // no calcula nada util y el usuario no recibe ningun aviso.
+    const entrada = getByPath(data, [ 'calendar', 'workingHours', 'start' ]);
+    const salida = getByPath(data, [ 'calendar', 'workingHours', 'end' ]);
+    if (entrada && salida && (entrada.hour * 60 + entrada.minute) >= (salida.hour * 60 + salida.minute)) {
+      throw new Error('La hora de entrada debe ser anterior a la de salida');
+    }
 
     writes.push({ element: info.element, data });
     return writes;
