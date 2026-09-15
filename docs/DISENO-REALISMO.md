@@ -468,9 +468,8 @@ Todos **ajustables** y **todos impresos en el informe** junto al resultado.
 
 ## 8. A5 · Personas, carga y operatividad
 
-> **Estado: IMPLEMENTADO (motor, editor, CSV e informe).** Falta solo el panel de gráficos por
-> persona (barras de activo/ocioso y líneas a lo largo del día), que se apoya en estos datos.
-> Verificado con **29 comprobaciones** sobre el motor real y **25** sobre el editor en un DOM real.
+> **Estado: IMPLEMENTADO (motor, editor, CSV, informe y gráficos).** Verificado con **46
+> comprobaciones** sobre el motor real y **25** sobre el editor en un DOM real.
 >
 > **Tres defectos reales que encontró la verificación** (los tres corregidos):
 >
@@ -482,6 +481,15 @@ Todos **ajustables** y **todos impresos en el informe** junto al resultado.
 > - **Las filas anidadas de la tabla de miembros se leían como piscinas**, así que una piscina con
 >   nombres se habría guardado como varias piscinas sin nombre.
 >
+> **Y dos más al implementar la operatividad** (los dos corregidos):
+>
+> - **El tiempo bloqueado por habilidad siempre valía cero**: el acumulador leía un campo
+>   (`bloqueoMinutos`) que no existía en ningún evento. Ahora es la **duración que habría ocupado la
+>   tarea**, que es la única lectura honesta porque no hay reloj que medir.
+> - **El tiempo trabajado no se anotaba cuando la tarea no tenía carga**: el reparto de minutos por
+>   persona vivía detrás del corte por «carga vacía», así que cualquier tarea sin masa declarada
+>   dejaba el **activo de la persona en cero**. El tiempo y la masa son dos cosas distintas.
+>
 > **Decisión de implementación que conviene recordar:** la masa se anota **por ejecución de la
 > tarea** y no por token. Como una tarea `por lote` solo genera un `TASK_COMPLETE` por lote, el
 > reparto por frecuencia sale **gratis** en vez de necesitar una bandera aparte. Si algún día se
@@ -489,9 +497,10 @@ Todos **ajustables** y **todos impresos en el informe** junto al resultado.
 >
 > **Pendiente de refinar (documentado, no olvidado):**
 >
-> - **El tiempo muerto por persona no se desglosa todavía en las cuatro categorías.** El motor ya
->   cuenta los bloqueos por habilidad y las esperas de firma, pero «sin trabajo» y «con trabajo
->   asignable» necesitan saber qué cola había en cada instante, que es otro paso.
+> - **«Con trabajo asignable» no se calcula.** Haría falta reconstruir qué cola había en cada
+>   instante; hoy se declara como no calculado en vez de inventarlo.
+> - **La espera y el bloqueo se imputan por reparto**, no se miden por persona: el motor no sabe
+>   quién aguantó cada espera. Se imprime como imputación declarada.
 > - **La carga máxima no se compara todavía con la masa por levantamiento.** El motor acumula
 >   toneladas y kg·m; para avisar de «esta persona supera sus 25 kg» hace falta la masa **por
 >   levantamiento**, que ya está declarada pero no se compara con `cargaMaximaKg`.

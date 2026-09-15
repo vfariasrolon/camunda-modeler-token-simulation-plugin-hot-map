@@ -712,6 +712,66 @@ export default class ReportPanel {
           que falta bloquea, no acelera.
         </div>
       ` : ''}
+      ${this._operatividad(ctx)}
+    `;
+  }
+
+  /**
+   * Operatividad por persona: activo y las tres ociosidades medibles.
+   *
+   * Las cuatro cifras **suman la jornada disponible** de cada persona, y eso es lo
+   * que las hace útiles: no hay un «resto» sin explicar. Lo que NO se calcula
+   * («con trabajo asignable») se declara en la propia tabla, porque un hueco sin
+   * explicar se leería como un cero.
+   */
+  _operatividad(ctx) {
+    const op = ctx.operatividad;
+    const personas = (op && op.porMiembro) || [];
+    if (!personas.length) return '';
+
+    const filas = personas.map((p) => {
+      const horas = (m) => num(m / 60, 2);
+      return `
+        <tr>
+          <td>${esc(p.nombre)} <span class="sub">${esc(p.piscina)}</span></td>
+          <td class="num">${ent(p.tareas)}</td>
+          <td class="num">${horas(p.activoMin)}</td>
+          <td class="num">${horas(p.sinTrabajoMin)}</td>
+          <td class="num">${horas(p.esperandoFirmaMin)}</td>
+          <td class="num">${horas(p.bloqueadoPorHabilidadMin)}</td>
+          <td class="num">${num(p.ocupacion * 100, 1)} %</td>
+        </tr>`;
+    }).join('');
+
+    // La comprobacion: activo + las tres ociosidades tiene que dar la jornada.
+    const cuadra = personas.every((p) => Math.abs(
+      (p.activoMin + p.sinTrabajoMin + p.esperandoFirmaMin + p.bloqueadoPorHabilidadMin) - p.disponibleMin
+    ) < 0.02);
+
+    const sinCalcular = (op.noCalculado || []);
+
+    return `
+      <h3>4.2 · Operatividad por persona</h3>
+      <p>Cómo se repartió la jornada de cada persona, en horas. Las cuatro columnas
+      <strong>suman la jornada disponible</strong>: no hay un resto sin explicar.</p>
+      <table>
+        <thead><tr><th>Persona</th><th class="num">Tareas</th><th class="num">Activo</th>
+          <th class="num">Sin trabajo</th><th class="num">Esperando firma</th>
+          <th class="num">Bloqueado por habilidad</th><th class="num">Ocupación</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      <div class="aviso ${cuadra ? 'ok' : 'mal'}">
+        ${cuadra
+          ? 'Las cuatro categorías suman la jornada disponible de cada persona: el reparto cuadra.'
+          : 'Las cuatro categorías NO suman la jornada disponible. Revise antes de usar estas cifras.'}
+      </div>
+      ${sinCalcular.length ? `
+        <p class="sub"><strong>No calculado, y por qué:</strong> ${esc(sinCalcular.join('; '))}. Un hueco sin
+        explicar se leería como un cero, así que se declara en vez de dejarlo vacío.</p>
+      ` : ''}
+      <p class="sub">La <em>espera de firma</em> y el <em>bloqueo por habilidad</em> se reparten entre las
+      personas de la piscina: es una <strong>imputación declarada</strong>, no una medida, porque el motor no
+      sabe a ciencia cierta quién aguantó cada espera.</p>
     `;
   }
 

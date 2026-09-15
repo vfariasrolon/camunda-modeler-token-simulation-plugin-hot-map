@@ -56,6 +56,10 @@ export default class ChartPanel {
               <option value="allWaitTimes">Tiempos de Espera por Tarea (completo)</option>
               <option value="overtime">Top 5 por Tiempo Extra</option>
             </optgroup>
+            <optgroup label="Personas (requiere miembros con nombre)">
+              <option value="operatividadPersona">Jornada por Persona (activo y tiempo muerto)</option>
+              <option value="cargaPersona">Carga Física por Persona (series separadas)</option>
+            </optgroup>
             <optgroup label="Calidad y flujos">
               <option value="pareto">Pareto (Fallos)</option>
               <option value="paretoTime">Pareto (Tiempos)</option>
@@ -104,6 +108,13 @@ export default class ChartPanel {
               ver qué tareas caras lo son por durar o por otra cosa.</li>
             <li><strong>Producción Diaria / Comparativa:</strong> piezas terminadas por día,
               plan normal frente a plan con horas extra.</li>
+            <li><strong>Jornada por Persona:</strong> barras apiladas con el <em>activo</em> y las tres
+              ociosidades que el motor puede medir (<em>sin trabajo</em>, <em>esperando firma</em>,
+              <em>bloqueado por habilidad</em>). Las cuatro suman la jornada disponible, así que el
+              gráfico cuadra por construcción. Necesita <strong>miembros con nombre</strong>.</li>
+            <li><strong>Carga Física por Persona:</strong> masa <em>cargada</em> y <em>arrastrada</em> en
+              <strong>columnas separadas</strong>. No se apilan a propósito: no son la misma magnitud y
+              sumarlas daría un número sin significado.</li>
           </ul>
 
           <h5>Tres cosas que conviene tener claras</h5>

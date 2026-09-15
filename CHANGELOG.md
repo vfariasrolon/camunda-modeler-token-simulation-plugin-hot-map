@@ -4,6 +4,25 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **operatividad por persona**: activo y las tres ociosidades que el motor puede medir de
+  verdad (**sin trabajo**, **esperando firma**, **bloqueado por habilidad**). Las cuatro cifras
+  **suman la jornada disponible** de cada persona, así que no queda un resto sin explicar, y el
+  informe lo **comprueba** e imprime el veredicto. La espera de firma y el bloqueo se reparten entre
+  las personas de la piscina: es una **imputación declarada**, no una medida, y se dice así.
+  «Con trabajo asignable» **no se calcula** —haría falta reconstruir qué cola había en cada
+  instante— y se declara en la tabla, porque un hueco sin explicar se leería como un cero.
+* `FEAT`: dos gráficos nuevos en el grupo «Personas»: **jornada por persona** (barras apiladas con
+  activo y las tres ociosidades, con la ocupación en el tooltip) y **carga física por persona**
+  (masa cargada y arrastrada en **columnas separadas**, nunca apiladas: no son la misma magnitud).
+  Sin miembros con nombre explican que hacen falta, en vez de dibujar un gráfico vacío.
+* `FIX`: **el tiempo bloqueado por habilidad siempre valía cero.** El acumulador leía un campo
+  (`bloqueoMinutos`) que no existía en ningún evento. Ahora el tiempo es la **duración que habría
+  ocupado la tarea**, que es la única lectura honesta: no hay reloj que medir porque la tarea no
+  llega a arrancar.
+* `FIX`: **el tiempo trabajado no se anotaba cuando la tarea no tenía carga.** El reparto de minutos
+  por persona vivía detrás del corte por «carga vacía», así que cualquier tarea sin masa declarada
+  dejaba el **activo de la persona en cero** y toda su jornada aparecía como «sin trabajo». El
+  tiempo y la masa son dos cosas distintas: una tarea sin peso también ocupa a quien la hace.
 * `FEAT`: **carga física por tarea** (bloque A5). Cada tarea declara **masa cargada**, **masa
   arrastrada** y **distancia**, y el motor acumula kg, kg·m y toneladas. Las dos series **nunca se
   suman**: cargar (soportar el peso) y arrastrar (deslizarlo) no son la misma magnitud, y el informe

@@ -248,6 +248,29 @@ Tres cosas que conviene saber:
 > mover gente es tu decisión. Para comprobarla, cambia la política y **vuelve a simular**: la política
 > es declarada, no una caja negra.
 
+### 4.11 Operatividad: cómo se repartió la jornada
+
+Con miembros con nombre, el informe reparte la jornada de cada persona en **cuatro categorías que
+suman el total** (no queda un resto sin explicar):
+
+| Categoría | Qué es |
+|---|---|
+| **Activo** | Trabajando. Es lo que antes se llamaba «minutos del puesto». |
+| **Sin trabajo** | No había nada que hacer: la planta estaba ociosa. |
+| **Esperando firma** | El lote entero aguantó la barrera (§4.2). |
+| **Bloqueado por habilidad** | La tarea esperaba a alguien con la etiqueta que exige y no lo había. Ver §4.9. |
+
+«Con trabajo asignable» (había cola, pero no era la suya) **no se calcula**: haría falta reconstruir
+qué cola había en cada instante. Se declara en el informe en vez de dejar un hueco, porque un hueco
+sin explicar se lee como un cero.
+
+**La espera de firma y el bloqueo se reparten entre las personas de la piscina.** Es una *imputación
+declarada*, no una medida: el motor no sabe a ciencia cierta quién aguantó cada espera. El informe lo
+dice tal cual, para que no se lea como un dato medido.
+
+Con esto, el informe puede decir **quién tiene holgura** y **por qué** está parado cada uno — que es
+justo lo que hace falta para decidir a quién mover, sin que el programa lo decida solo.
+
 ### Pestaña **Global**
 
 Configuración del evento de inicio marcado como **raíz**. Sin raíz la simulación no

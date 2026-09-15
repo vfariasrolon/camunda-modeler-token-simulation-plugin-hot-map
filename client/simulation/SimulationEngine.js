@@ -383,6 +383,9 @@ export default class SimulationEngine {
         totalDoubleOvertimeCost: 0,
         totalTripleOvertimeCost: 0,
         totalDayPremiumCost: 0,
+        // Bloqueo por habilidad (A5): cuantas veces y cuantos minutos.
+        totalBlockedBySkill: 0,
+        totalBlockedMinutes: 0,
         name: element.businessObject.name || element.id
       });
     });
@@ -584,14 +587,25 @@ export default class SimulationEngine {
     // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
     const requeridas = habilidadesRequeridas(data);
     if (pool && requeridas.length && !pool.puedeAtender(requeridas)) {
-      this.operatividad.bloqueadoPorHabilidadMin += (taskEvent.bloqueoMinutos || 0);
+      // El tiempo bloqueado es la DURACION que esa tarea habria ocupado: no hay
+      // un reloj corriendo que medir, porque la tarea no llega a arrancar. Tomar
+      // la duracion es la unica lectura honesta: «este puesto estuvo parado el
+      // tiempo que habria tardado en hacerla». Antes se leia un campo
+      // `bloqueoMinutos` que nunca existia, asi que el acumulador quedaba en 0.
+      const duracionBloqueadaMs = this._msConArranque(
+        timeToMilliseconds((data.processingTime && data.processingTime.value) || 0,
+          data.processingTime && data.processingTime.unit), new Date(this.clock || 0));
+      this.operatividad.bloqueadoPorHabilidadMin += duracionBloqueadaMs / 60000;
       this.operatividad.tareasBloqueadas++;
       console.log(`[A5] tarea bloqueada por habilidad: ${element.id} necesita ${requeridas.join(', ')}`
         + ` y "${pool.name}" no tiene a nadie que la haga.`);
       // Se deja constancia en el resultado de la tarea y NO se programa nada: la
       // instancia se quedara ahi, que es exactamente lo que pasaria en planta.
       const r = this.results.get(element.id);
-      if (r) r.totalBlockedBySkill = (r.totalBlockedBySkill || 0) + 1;
+      if (r) {
+        r.totalBlockedBySkill = (r.totalBlockedBySkill || 0) + 1;
+        r.totalBlockedMinutes = (r.totalBlockedMinutes || 0) + duracionBloqueadaMs / 60000;
+      }
       return;
     }
 
@@ -830,6 +844,15 @@ export default class SimulationEngine {
     // tareas» de «las tareas no mueven peso».
     this.carga.area = acumularCarga(this.carga.area, inc);
 
+    // Minutos del puesto y reparto por persona. Va ANTES del corte por carga
+    // vacia y sin depender de ella: el TIEMPO trabajado y la masa movida son dos
+    // cosas distintas, y una tarea sin masa tambien ocupa a la persona. Cuando
+    // esto vivia detras del `if (vacia)`, cualquier tarea sin carga dejaba el
+    // activo de la persona en CERO.
+    if (pool && pool.conNombres) {
+      pool.anotarTrabajo(event.miembro, (event.effectiveDuration || event.totalDuration) / 60000, inc);
+    }
+
     if (vacia) return inc;
 
     const t = this.carga.porTarea.get(event.element.id) || cargaVacia();
@@ -843,11 +866,6 @@ export default class SimulationEngine {
       // perderla, y el informe la muestra como «sin nombre asignado».
       const p = this.carga.porPersona.get(pool.name) || cargaVacia();
       this.carga.porPersona.set(pool.name, acumularCarga(p, inc));
-    }
-
-    // Minutos del puesto y reparto por persona, para el informe de operatividad.
-    if (pool) {
-      pool.anotarTrabajo(event.miembro, (event.effectiveDuration || event.totalDuration) / 60000, inc);
     }
 
     return inc;
@@ -1139,6 +1157,78 @@ export default class SimulationEngine {
         utilization: disponible > 0 ? pool.busyMinutes / disponible : 0
       });
     });
+
+    this._calcularOperatividad(ventanaMin);
+  }
+
+  /**
+   * Operatividad por persona: activo y las CUATRO categorías de tiempo muerto.
+   *
+   * Las cuatro salen de lo que el motor ya sabe, sin instrumentar nada nuevo:
+   *
+   *   - ACTIVO: minutos trabajados, que ya acumula cada miembro de la piscina.
+   *   - ESPERANDO FIRMA: la barrera del lote retiene al lote entero. Se reparte
+   *     entre las personas de las piscinas que participan, porque el motor no
+   *     sabe a ciencia cierta quién aguantó la espera.
+   *   - BLOQUEADO POR HABILIDAD: el tiempo que estuvo parada una tarea cuya
+   *     habilidad no tenía nadie. Se imputa a quien PODRÍA haberla hecho si
+   *     hubiera sabido, que es la lectura útil: «esta persona está ociosa porque
+   *     le falta una etiqueta».
+   *   - SIN TRABAJO: el resto de la jornada disponible de la persona.
+   *
+   * «Con trabajo asignable» NO se calcula: haría falta reconstruir qué cola había
+   * en cada instante, y sin ese dato cualquier número sería una invención. Se deja
+   * fuera a propósito y el informe lo dice.
+   */
+  _calcularOperatividad(ventanaMin) {
+    if (!this.operatividad) {
+      this.operatividad = { porMiembro: [], bloqueadoPorHabilidadMin: 0, esperandoFirmaMin: 0, tareasBloqueadas: 0 };
+    }
+
+    const ventanaMs = ventanaMin * 60000;
+    const esperaFirmaMs = this.operatividad.esperandoFirmaMin || 0;
+    const bloqueoMs = this.operatividad.bloqueadoPorHabilidadMin || 0;
+
+    const filas = [];
+    this.resourcePools.forEach((pool) => {
+      if (!pool.conNombres) return;
+      pool.porMiembro.forEach((f) => {
+        const disponibleMs = ventanaMs;
+        const activoMs = f.busyMinutes * 60000;
+        // La espera y el bloqueo se reparten entre las personas de la piscina:
+        // es una imputación declarada, no una medida, y por eso se imprime así.
+        const reparto = pool.members.length || 1;
+        const esperaMs = esperaFirmaMs / reparto;
+        const bloqueoDeEsta = bloqueoMs / reparto;
+
+        const muertoMs = Math.max(0, disponibleMs - activoMs - esperaMs - bloqueoDeEsta);
+        filas.push({
+          nombre: f.nombre,
+          piscina: pool.name,
+          habilidades: f.habilidades.slice(),
+          cargaMaximaKg: f.cargaMaximaKg,
+          tarifaHora: f.tarifaHora,
+          tareas: f.tareas,
+          activoMin: activoMs / 60000,
+          esperandoFirmaMin: esperaMs / 60000,
+          bloqueadoPorHabilidadMin: bloqueoDeEsta / 60000,
+          sinTrabajoMin: muertoMs / 60000,
+          disponibleMin: disponibleMs / 60000,
+          // Ocupación = activo / disponible. Es el complemento exacto de la suma
+          // de las tres ociosidades, así que las cuatro cifras cuadran por
+          // construcción (hay una comprobación que lo verifica).
+          ocupacion: disponibleMs > 0 ? activoMs / disponibleMs : 0,
+          carga: { ...f.carga }
+        });
+      });
+    });
+
+    this.operatividad.porMiembro = filas;
+    this.operatividad.ventanaMin = Math.round(ventanaMin);
+    // Lo que NO se calcula, declarado en el propio dato: el informe lo imprime
+    // como limitación en vez de dejar un hueco que parezca un cero.
+    this.operatividad.noCalculado = [ 'con trabajo asignable (habría que reconstruir qué cola había en cada instante)' ];
+    return filas;
   }
 
   /**
@@ -1365,6 +1455,10 @@ export default class SimulationEngine {
     if (espera > 0) {
       this.lotStats.waits++;
       this.lotStats.waitMinutes += espera;
+      // Tambien al cubo de operatividad: es la categoria «esperando firma» del
+      // tiempo muerto, y sin esto el informe de personas no podria separarla de
+      // «sin trabajo».
+      this.operatividad.esperandoFirmaMin = (this.operatividad.esperandoFirmaMin || 0) + espera;
       const tolerancia = Math.max(0, Number(b.toleranceMinutes) || 0);
       if (espera > tolerancia) this.lotStats.waitsOverTolerance++;
     }
@@ -1644,6 +1738,44 @@ export default class SimulationEngine {
         esperas_sobre_tolerancia: this.lotStats.waitsOverTolerance,
         ejecuciones_de_tareas_por_lote: this.lotStats.perLotTaskExecutions
       });
+    }
+
+    // Operatividad por persona (A5). Solo con miembros con nombre: sin nombres no
+    // hay a quien atribuir el tiempo.
+    if (this.operatividad && this.operatividad.porMiembro && this.operatividad.porMiembro.length) {
+      console.log('SALIDAS · operatividad por persona');
+      console.table(this.operatividad.porMiembro.map((p) => ({
+        persona: p.nombre,
+        piscina: p.piscina,
+        activo_min: Math.round(p.activoMin),
+        sin_trabajo_min: Math.round(p.sinTrabajoMin),
+        esperando_firma_min: Math.round(p.esperandoFirmaMin),
+        bloqueado_habilidad_min: Math.round(p.bloqueadoPorHabilidadMin),
+        ocupacion: `${(p.ocupacion * 100).toFixed(1)} %`
+      })));
+      console.log('  (las cuatro cifras suman la jornada disponible de cada persona;'
+        + ' «con trabajo asignable» no se calcula: haría falta saber qué cola había en cada instante)');
+    }
+
+    // Carga fisica: DOS series que NUNCA se suman. Se imprimen en columnas
+    // separadas y no hay ninguna cifra de total conjunto, a proposito.
+    if (this.carga && (this.carga.area.cargadaKg > 0 || this.carga.area.arrastradaKg > 0)) {
+      console.log('SALIDAS · carga física (series separadas, NO se suman)', {
+        ejecuciones_contadas: this.carga.area.ejecuciones,
+        masa_cargada_t: Number((this.carga.area.cargadaKg / 1000).toFixed(2)),
+        masa_arrastrada_t: Number((this.carga.area.arrastradaKg / 1000).toFixed(2)),
+        kg_m_cargada: Math.round(this.carga.area.cargadaKgM),
+        kg_m_arrastrada: Math.round(this.carga.area.arrastradaKgM)
+      });
+      if (this.carga.porMiembro.size) {
+        console.table(Array.from(this.carga.porMiembro.values()).map((c) => ({
+          persona: c.nombre,
+          cargada_t: Number((c.cargadaKg / 1000).toFixed(2)),
+          arrastrada_t: Number((c.arrastradaKg / 1000).toFixed(2))
+        })));
+      }
+    } else if (this.carga) {
+      console.log('SALIDAS · carga física: no hay ninguna tarea con masa declarada.');
     }
 
     // Utilizacion por piscina. Es LA metrica de capacidad y es contraintuitiva

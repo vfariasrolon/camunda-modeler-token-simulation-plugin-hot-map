@@ -991,6 +991,130 @@ export default class SimulationController {
       };
     }
 
+    // Operatividad por persona (A5): activo y las tres ociosidades que el motor
+    // puede medir, apiladas. Sin nombres no hay nada que dibujar, y se dice.
+    if (metric === 'operatividadPersona' || metric === 'cargaPersona') {
+      const personas = (this.overtimeReport && this.overtimeReport.operatividad
+        && this.overtimeReport.operatividad.porMiembro) || [];
+
+      if (!personas.length) {
+        this._chartPanel.showHtmlContent(`
+          <div style="padding:18px; line-height:1.6;">
+            <h4 style="margin:0 0 8px;">Sin colaboradores con nombre</h4>
+            <p>Este gráfico necesita <strong>miembros con nombre</strong> en las piscinas: sin nombres el
+            motor solo sabe que la piscina trabajó, no <em>quién</em>.</p>
+            <p>Se declaran en la pestaña <strong>Recursos</strong>, dentro de cada piscina. Es opcional: sin
+            nombres, todo lo demás se comporta igual que siempre.</p>
+          </div>
+        `);
+        return null;
+      }
+
+      if (metric === 'operatividadPersona') {
+        const nombres = personas.map((p) => p.nombre);
+        const serie = (campo, etiqueta, color) => ({
+          label: etiqueta,
+          data: personas.map((p) => Number((p[campo] / 60).toFixed(2))),
+          backgroundColor: color
+        });
+
+        const libres = this.overtimeReport.operatividad.noCalculado || [];
+        return {
+          type: 'bar',
+          data: {
+            labels: nombres,
+            datasets: [
+              serie('activoMin', 'Activo (trabajando)', 'rgba(46, 125, 50, 0.75)'),
+              serie('sinTrabajoMin', 'Sin trabajo', 'rgba(158, 158, 158, 0.75)'),
+              serie('esperandoFirmaMin', 'Esperando firma', 'rgba(255, 159, 64, 0.85)'),
+              serie('bloqueadoPorHabilidadMin', 'Bloqueado por habilidad', 'rgba(198, 40, 40, 0.8)')
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { position: 'bottom' },
+              title: {
+                display: true,
+                text: 'Jornada de cada persona, en horas'
+                  + (libres.length ? ` · no incluye «${libres[0]}»` : '')
+              },
+              tooltip: {
+                callbacks: {
+                  afterBody: (items) => {
+                    const p = personas[items[0].dataIndex];
+                    return `Ocupación: ${(p.ocupacion * 100).toFixed(1)} %\nTareas: ${p.tareas}`;
+                  }
+                }
+              }
+            },
+            scales: {
+              x: { stacked: true },
+              y: {
+                stacked: true,
+                beginAtZero: true,
+                title: { display: true, text: 'Horas' }
+              }
+            }
+          }
+        };
+      }
+
+      // Carga física por persona: DOS series en columnas separadas, nunca
+      // apiladas, porque no son la misma magnitud y sumarlas daría un número sin
+      // significado.
+      const conCarga = personas.filter((p) => p.carga && (p.carga.cargadaKg > 0 || p.carga.arrastradaKg > 0));
+      if (!conCarga.length) {
+        this._chartPanel.showHtmlContent(`
+          <div style="padding:18px; line-height:1.6;">
+            <h4 style="margin:0 0 8px;">Sin carga declarada</h4>
+            <p>Ninguna tarea declara masa, así que no hay nada que dibujar. Se declara por tarea: masa
+            <strong>cargada</strong> (la que se soporta), masa <strong>arrastrada</strong> (la que se desliza)
+            y distancia.</p>
+            <p>Las dos series van separadas a propósito: <strong>no se suman</strong>.</p>
+          </div>
+        `);
+        return null;
+      }
+
+      return {
+        type: 'bar',
+        data: {
+          labels: conCarga.map((p) => p.nombre),
+          datasets: [
+            {
+              label: 'Masa cargada (t)',
+              data: conCarga.map((p) => Number((p.carga.cargadaKg / 1000).toFixed(3))),
+              backgroundColor: 'rgba(21, 101, 192, 0.75)'
+            },
+            {
+              label: 'Masa arrastrada (t)',
+              data: conCarga.map((p) => Number((p.carga.arrastradaKg / 1000).toFixed(3))),
+              backgroundColor: 'rgba(120, 144, 156, 0.8)'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom' },
+            title: {
+              display: true,
+              text: 'Masa movida por persona, en toneladas (series separadas: no se suman)'
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Toneladas' }
+            }
+          }
+        }
+      };
+    }
+
     const chartData = this.getChartData(metric);
 
     let chartType = 'bar';
