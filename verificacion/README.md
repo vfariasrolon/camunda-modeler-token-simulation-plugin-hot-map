@@ -1,12 +1,12 @@
 # Verificación
 
-Arneses que comprueban el **motor real** del plugin: 12 ficheros, **400 comprobaciones**.
+Arneses que comprueban el **motor real** del plugin: 13 ficheros, **427 comprobaciones**.
 
 ```bash
 pnpm run verificar
 ```
 
-Eso es todo. El comando copia el código del plugin, lo prepara para Node y corre los doce arneses,
+Eso es todo. El comando copia el código del plugin, lo prepara para Node y corre los trece arneses,
 imprimiendo al final un resumen y **solo lo que falle** si algo falla.
 
 ---
@@ -27,6 +27,7 @@ imprimiendo al final un resumen y **solo lo que falle** si algo falla.
 | `10-ejemplo-de-validacion` | El fichero `docs/ejemplo-validacion.bpmn`: XML válido, JSON válido, referencias completas y **el motor corriéndolo de verdad** | 40 |
 | `11-textos-sin-mentir` | Que **ningún texto del producto niegue una capacidad que sí existe**. Si implementas algo y dejas el «sin X», este arnés falla | 27 |
 | `12-ventana-de-tiempo` | Los días **laborables** y **naturales** de la ventana: que se cuenten los dos, que los naturales nunca sean menos, y que cruzar un fin de semana o un festivo los separe | 21 |
+| `13-mapa-de-calor-y-zoom` | Que el mapa de calor mida **lo mismo en pantalla** a cualquier zoom (el fallo de que desapareciera al alejarse), que la compensación **tenga tope** y que un zoom inválido no lo rompa | 27 |
 
 ---
 
@@ -99,7 +100,7 @@ esto está mal» en «esto está mal, aquí está la prueba y ya no puede volver
 
 ## Los arneses de interfaz
 
-Estos doce cubren el **motor** y la coherencia de los textos. La interfaz (panel de datos, diagnóstico y gráficos) se verificó con
+Estos trece cubren el **motor** y la coherencia de los textos. La interfaz (panel de datos, diagnóstico y gráficos) se verificó con
 un arnés aparte que monta el panel real en un navegador (webpack + Chrome headless, 112
 comprobaciones). **No se versiona** porque necesita el binario de Chrome, y un arnés que no corre en
 cualquier máquina es peor que no tenerlo: se queda como herramienta puntual y su resultado está

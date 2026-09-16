@@ -59,6 +59,12 @@ const ReportIcon = `
 // un subproceso grande generaria un circulo que tapa el diagrama entero.
 const MAX_BLOB_RADIUS = 240;
 
+// Hasta que zoom se compensa el tamano de las manchas del mapa de calor. Por
+// debajo no se compensa mas: un zoom del 5 % exigiria manchas 20x mas grandes y
+// al alejarse mucho todas se solaparian en una sola mancha que tapa el diagrama.
+// 0.25 cubre el zoom out habitual (25 %) con un crecimiento de 4x, que es mucho.
+const MIN_ZOOM_COMPENSADO = 0.25;
+
 // Diagnostico de datos: responde «¿tengo lo necesario para medir esto?» antes de
 // simular. La lista con la marca de verificacion se lee de un vistazo, que es
 // justo lo que se pide a un icono de «que datos tengo».
@@ -155,6 +161,8 @@ export default class SimulationController {
     this._chart = null;
     this._radius = 20;
     this._blur = 10;
+    // Temporizador del redibujado con rebote al cambiar el zoom.
+    this._redibujoPendiente = null;
     this.simulationResults = null;
     this.simulationReports = [];
     this.overtimeReport = null;
@@ -204,6 +212,14 @@ export default class SimulationController {
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
     this._eventBus.on('simulation.summary.requested', () => this.showSummaryModal());
     this._eventBus.on('simulation.comparison.requested', () => this.showPlanBreakdown());
+
+    // Al cambiar el zoom, las manchas del mapa de calor hay que REDIBUJARLAS: su
+    // radio se compensa por el zoom, y si no se recalcula, alejarse las deja
+    // pequenas igual que antes. Se hace con rebote (ver `_programarRedibujo`) para
+    // no redibujar en cada fotograma de una rueda del raton.
+    this._eventBus.on('canvas.viewbox.changed', () => {
+      if (this._heatmap) this._programarRedibujo();
+    });
   }
 
   /**
@@ -531,28 +547,78 @@ export default class SimulationController {
   }
 
   /**
-   * Radio de la mancha para un elemento.
+   * Redibuja el mapa de calor al terminar de cambiar el zoom, no en cada paso.
    *
-   * Antes el radio era fijo (this._radius + this._blur = 30 px) mientras que las
-   * tareas miden 100x80: la mancha cubria solo el centro y los bordes quedaban
-   * sin colorear, asi que parecia que el mapa de calor "no llegaba" a la figura.
+   * Redibujar en cada evento `canvas.viewbox.changed` durante una rueda del raton
+   * significa decenas de redibujados por segundo, y cada uno recorre TODOS los
+   * elementos del diagrama. Con un diagrama grande eso se nota.
    *
-   * El desvanecido del borde ocupa el ultimo tramo del radio, de modo que para
-   * que la mancha cubra la figura de forma solida hay que escalar el radio total
-   * en la misma proporcion que la figura:
-   *   total = (radio + desenfoque) * (semiFigura / radio)
+   * El rebote espera a que el zoom se quede quieto 120 ms. Es lo bastante corto
+   * para que el usuario no note el retraso y lo bastante largo para que una rueda
+   * del raton entera cueste UN redibujado en vez de veinte.
+   */
+  _programarRedibujo() {
+    if (this._redibujoPendiente) clearTimeout(this._redibujoPendiente);
+    this._redibujoPendiente = setTimeout(() => {
+      this._redibujoPendiente = null;
+      if (this.lastMetric && this._heatmap) this.showMetric(this.lastMetric);
+    }, 120);
+  }
+
+  /**
+   * Radio de la mancha para un elemento, CORREGIDO por el zoom actual.
+   *
+   * Dos ideas que hay que tener juntas:
+   *
+   *   1. El radio esta en coordenadas del DIAGRAMA, asi que crece con la figura
+   *      para cubrirla entera (antes era fijo y la mancha solo tapaba el centro,
+   *      de modo que parecia que el mapa de calor «no llegaba» a la figura).
+   *   2. Pero al ALEJAR el zoom esos circulos se encogen con todo lo demas y
+   *      acaban invisibles. En diagramas grandes —que es cuando mas se aleja— el
+   *      mapa de calor desaparecia justo cuando mas falta hacia.
+   *
+   * La correccion: se divide por el zoom para que el radio se mantenga CONSTANTE
+   * EN PANTALLA. Acercarse no cambia nada (el zoom es 1 o mas), y alejarse agranda
+   * la mancha en el diagrama para que se siga viendo igual de grande en pantalla.
+   *
+   * Con dos topes, porque compensar sin limite rompe el grafico:
+   *   - `MIN_ZOOM_COMPENSADO` (0.25): por debajo no se compensa mas. Compensar un
+   *     zoom del 5 % exigiria manchas 20x mas grandes, y al alejarse mucho TODAS
+   *     se solaparian y el diagrama quedaria tapado por una mancha unica.
+   *   - `MAX_BLOB_RADIUS`: el tope que ya existia, para no generar circulos que
+   *     tapen el diagrama entero.
    */
   _blobRadius(element) {
     const base = this._radius + this._blur;
+    const zoom = this._zoomActual();
+    // Sin compensacion por encima de 1: al acercarse, el mapa de calor se comporta
+    // como siempre y solo se agranda con el diagrama.
+    const factorZoom = zoom < 1 ? (1 / Math.max(zoom, MIN_ZOOM_COMPENSADO)) : 1;
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!is(element, 'bpmn:FlowNode')) return base;
+    if (!is(element, 'bpmn:FlowNode')) return base * factorZoom;
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
-    if (!half || half <= this._radius) return base;
+    if (!half || half <= this._radius) return base * factorZoom;
 
-    return Math.min(base * (half / this._radius), MAX_BLOB_RADIUS);
+    return Math.min(base * (half / this._radius), MAX_BLOB_RADIUS) * factorZoom;
+  }
+
+  /**
+   * Zoom actual del lienzo, como factor (1 = 100 %).
+   *
+   * `canvas.zoom()` sin argumentos devuelve el valor ACTUAL, no un cambio; con
+   * argumentos lo fija. Se protege contra una version de diagram-js que no lo
+   * exponga: sin dato, se asume 1 y el mapa de calor se comporta como siempre.
+   */
+  _zoomActual() {
+    try {
+      const z = this._canvas.zoom();
+      return (typeof z === 'number' && z > 0) ? z : 1;
+    } catch (e) {
+      return 1;
+    }
   }
 
   /**
