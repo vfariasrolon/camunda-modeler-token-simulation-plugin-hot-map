@@ -329,6 +329,20 @@ export default class SimulationController {
         totalWorkingDays: totalWorkingDays,
         totalCost: totalCost,
 
+        // --- ventana de tiempo, en dos relojes distintos ---
+        // El reloj de la PLANTA (dias laborables, lo que se trabaja) y el del
+        // CALENDARIO (dias naturales, lo que tarda en llegar la fecha). Los dos
+        // hacen falta y NO son intercambiables: decir «tarda 12 dias» sin decir
+        // cual de los dos es una cifra que cada uno lee como quiere.
+        inicio: new Date(this._simulationEngine.simulationStartTime),
+        fin: new Date(this._simulationEngine.clock),
+        // Dias naturales: del dia de inicio al de fin, contando AMBOS. Es lo que
+        // se mira en un calendario, no una resta de fechas.
+        diasNaturales: this._diasNaturales(
+            new Date(this._simulationEngine.simulationStartTime),
+            new Date(this._simulationEngine.clock)
+        ),
+
         // --- datos de distribucion y de capacidad (graficos e informe) ---
         // Muestras por caso: permiten percentiles e histograma. La media sola
         // esconde la cola.
@@ -406,6 +420,29 @@ export default class SimulationController {
             }))
     };
     return report;
+  }
+
+  /**
+   * Días NATURALES entre dos fechas, contando el primero y el último.
+   *
+   * Se cuentan ambos a proposito: si empiezas el lunes a las 18:00 y terminas el
+   * martes a las 10:00, eso son **2 días naturales** para cualquiera que mire un
+   * calendario, aunque hayan pasado 16 horas. Es la lectura que espera quien
+   * pregunta «¿cuántos días tarda?», y no una resta de fechas.
+   *
+   * Se comparan claves de día LOCAL (no milisegundos / 86400000), porque dividir
+   * milisegundos falla en los cambios de horario de verano: un día de 23 o 25
+   * horas daría un día de más o de menos.
+   */
+  _diasNaturales(desde, hasta) {
+    // `instanceof Date` NO basta: `new Date('cualquier cosa')` es un Date valido
+    // como objeto pero con getTime() = NaN, y esa NaN se propagaba al resumen
+    // («NaN días»). Hace falta comprobar que la fecha sea utilizable.
+    const util = (d) => d instanceof Date && Number.isFinite(d.getTime());
+    if (!util(desde) || !util(hasta)) return null;
+    const dia = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dias = Math.round((dia(hasta) - dia(desde)) / 86400000);
+    return dias + 1;
   }
 
   /** Copia de la configuracion global que el informe puede imprimir sin riesgo. */
@@ -1613,9 +1650,77 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       ? ((totalOvertimeMs / report.calendarDuration) * 100).toFixed(1)
       : 0;
 
+    // --- ventana de tiempo, contada en los DOS relojes ---
+    // El bloque va PRIMERO en el resumen porque es la pregunta que se hace antes
+    // que ninguna: «si produzco 1000 piezas, ¿cuándo termino?». Y hay que dar las
+    // dos respuestas, porque «12 días» significa cosas distintas según el reloj:
+    // 12 días trabajados (lo que se paga) o 12 días de calendario (lo que tarda
+    // en llegar la fecha). Confundirlos es el error más fácil de cometer.
+    const fechaHora = (d) => d instanceof Date && !Number.isNaN(d.getTime())
+      ? d.toLocaleString('es-MX', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '(sin fecha)';
+    const soloFecha = (d) => d instanceof Date && !Number.isNaN(d.getTime())
+      ? d.toLocaleDateString('es-MX', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+      : '(sin fecha)';
+
+    const diasLab = report.totalWorkingDays;
+    const diasNat = report.diasNaturales;
+    // Dias NO laborables dentro de la ventana: la diferencia entre los dos
+    // relojes, y lo que explica por que el trabajo se estira mas alla del
+    // calendario laboral.
+    const diasNoLaborables = (diasNat != null && diasLab != null) ? Math.max(0, diasNat - diasLab) : null;
+    const horasTrabajadasAlDia = (diasLab > 0) ? (report.calendarDuration / (1000 * 60 * 60)) / diasLab : 0;
+
+    const bloqueTiempo = `
+      <div class="sim-ventana">
+        <h3>¿Cuándo termina?</h3>
+        <table class="sim-ventana-tabla">
+          <tr>
+            <th>Empieza</th>
+            <td><strong>${fechaHora(report.inicio)}</strong>
+              <span class="sub">${soloFecha(report.inicio)}</span></td>
+          </tr>
+          <tr>
+            <th>Termina</th>
+            <td><strong>${fechaHora(report.fin)}</strong>
+              <span class="sub">${soloFecha(report.fin)}</span></td>
+          </tr>
+          <tr class="destacado">
+            <th>Días laborables</th>
+            <td><strong>${diasLab}</strong>
+              <span class="sub">lo que se trabaja y se paga (jornada completa de la planta)</span></td>
+          </tr>
+          <tr class="destacado">
+            <th>Días naturales</th>
+            <td><strong>${diasNat == null ? '—' : diasNat}</strong>
+              <span class="sub">lo que tarda en llegar la fecha, contando fines de semana y festivos</span></td>
+          </tr>
+          ${diasNoLaborables ? `
+            <tr>
+              <th>Días no laborables</th>
+              <td><strong>${diasNoLaborables}</strong>
+                <span class="sub">fines de semana y festivos dentro de la ventana: la diferencia entre los dos relojes</span></td>
+            </tr>` : ''}
+          <tr>
+            <th>Horas netas de trabajo</th>
+            <td><strong>${totalTimeHours} h</strong>
+              <span class="sub">${horasTrabajadasAlDia.toFixed(2)} h al día de media, en los ${diasLab} días laborables</span></td>
+          </tr>
+        </table>
+        <p class="sim-nota">
+          <strong>Los dos contadores NO son intercambiables.</strong> «${diasLab} días laborables» es lo que se trabaja
+          (${totalTimeHours} h netas); «${diasNat == null ? '—' : diasNat} días naturales» es lo que tarda en llegar la fecha
+          del final, porque en medio hay fines de semana y festivos en los que la planta no trabaja. Si tu pregunta es
+          <em>«¿cuándo le entrego al cliente?»</em>, la respuesta es la segunda. Si es <em>«¿cuánto le voy a pagar a la
+          plantilla?»</em>, la primera.
+        </p>
+      </div>
+    `;
+
     return `
       <div class="sim-summary-container">
         <h2>Resumen General</h2>
+        ${bloqueTiempo}
         <div class="sim-summary-grid">
           <div class="sim-summary-item">
             <span class="label">Piezas Producidas:</span>
@@ -1624,10 +1729,6 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
           <div class="sim-summary-item">
             <span class="label">Total de Errores:</span>
             <span class="value">${totalFailures}</span>
-          </div>
-          <div class="sim-summary-item">
-            <span class="label">Días Laborales Totales:</span>
-            <span class="value">${totalTimeDays}</span>
           </div>
           <div class="sim-summary-item">
             <span class="label">Tiempo Total (Horas Netas):</span>

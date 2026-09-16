@@ -693,6 +693,85 @@
   font-weight: bold;
 }
 
+/* --- ventana de tiempo del resumen --- */
+/* Va ARRIBA del todo y con fondo propio: es la respuesta a «¿cuándo termino?»,
+   que es la primera pregunta del usuario. Se separa visualmente de la rejilla de
+   KPI para que no se lea como una tarjeta mas. */
+.sim-ventana {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: #f4f8fd;
+  border: 1px solid #d5e3f5;
+  border-radius: 8px;
+}
+
+.sim-ventana h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #1565c0;
+}
+
+.sim-ventana-tabla {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sim-ventana-tabla th {
+  width: 190px;
+  text-align: left;
+  vertical-align: top;
+  padding: 7px 10px 7px 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #555;
+  border-bottom: 1px solid #e3ebf5;
+}
+
+.sim-ventana-tabla td {
+  padding: 7px 0;
+  font-size: 13px;
+  color: #222;
+  border-bottom: 1px solid #e3ebf5;
+}
+
+.sim-ventana-tabla tr:last-child th,
+.sim-ventana-tabla tr:last-child td {
+  border-bottom: none;
+}
+
+/* Las dos cifras que importan (dias laborables y naturales) se destacan: son la
+   respuesta, y el resto son el contexto que la explica. */
+.sim-ventana-tabla tr.destacado th {
+  color: #0d47a1;
+}
+
+.sim-ventana-tabla tr.destacado strong {
+  font-size: 1.25em;
+  color: #0d47a1;
+}
+
+.sim-ventana-tabla .sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: #6b7a8d;
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+.sim-ventana .sim-nota {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #e3ebf5;
+  font-size: 11.5px;
+  color: #555;
+  line-height: 1.5;
+}
+
+.sim-ventana .sim-nota strong {
+  color: #0d47a1;
+}
+
 /* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.
    Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de
    Intl.NumberFormat); el propio texto indica si coincide o no. */

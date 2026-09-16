@@ -4,6 +4,23 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **el resumen (y el informe) dicen cuándo empieza y cuándo termina**, con los días contados
+  en los **dos relojes**: **días laborables** (lo que se trabaja y se paga) y **días naturales** (lo
+  que tarda en llegar la fecha, con fines de semana y festivos dentro). Antes solo había un «Días
+  Laborales Totales» suelto, y quien pregunta «si produzco 1000 piezas, ¿cuándo termino?» no tenía
+  respuesta. El bloque va **primero** en el resumen porque es la primera pregunta, y explica en
+  palabras para qué sirve cada contador: el natural es el que se le dice al cliente, el laborable el
+  que se le paga a la plantilla.
+* `FEAT`: el bloque añade los **días no laborables** que quedan dentro de la ventana (la diferencia
+  entre los dos relojes, que es lo que explica por qué el trabajo se estira) y las **horas netas por
+  día laborable**, para poder contrastar la carga real de la jornada.
+* `FIX`: **una fecha inválida devolvía `NaN`** en el contador de días naturales, y ese `NaN` se
+  habría propagado al resumen como «NaN días». El guard `instanceof Date` no bastaba:
+  `new Date('cualquier cosa')` **es** un `Date`, solo que con `getTime()` a `NaN`. Ahora se comprueba
+  que la fecha sea utilizable.
+* `FIX`: **los backticks dentro del CSS del informe rompían la compilación**, porque el CSS es un
+  template literal de JavaScript y un backtick lo cierra. Mismo tipo de error que ya pasó con una
+  comilla suelta.
 * `DOCS`: **A6 (réplicas e intervalo de confianza) queda acordado en el diseño** como primer bloque
   de la próxima tanda, con las decisiones ya fijadas para no volver a discutirlas: el modelo
   determinista da **intervalo de ancho cero** (no se corre N veces ni se inventa incertidumbre), el

@@ -1,12 +1,12 @@
 # Verificación
 
-Arneses que comprueban el **motor real** del plugin: 11 ficheros, **379 comprobaciones**.
+Arneses que comprueban el **motor real** del plugin: 12 ficheros, **400 comprobaciones**.
 
 ```bash
 pnpm run verificar
 ```
 
-Eso es todo. El comando copia el código del plugin, lo prepara para Node y corre los once arneses,
+Eso es todo. El comando copia el código del plugin, lo prepara para Node y corre los doce arneses,
 imprimiendo al final un resumen y **solo lo que falle** si algo falla.
 
 ---
@@ -26,6 +26,7 @@ imprimiendo al final un resumen y **solo lo que falle** si algo falla.
 | `09-diagnostico-de-datos` | El diagnóstico de lo que se puede medir: inventario, estados y **coherencia de rutas** | 55 |
 | `10-ejemplo-de-validacion` | El fichero `docs/ejemplo-validacion.bpmn`: XML válido, JSON válido, referencias completas y **el motor corriéndolo de verdad** | 40 |
 | `11-textos-sin-mentir` | Que **ningún texto del producto niegue una capacidad que sí existe**. Si implementas algo y dejas el «sin X», este arnés falla | 27 |
+| `12-ventana-de-tiempo` | Los días **laborables** y **naturales** de la ventana: que se cuenten los dos, que los naturales nunca sean menos, y que cruzar un fin de semana o un festivo los separe | 21 |
 
 ---
 
@@ -98,7 +99,7 @@ esto está mal» en «esto está mal, aquí está la prueba y ya no puede volver
 
 ## Los arneses de interfaz
 
-Estos once cubren el **motor** y la coherencia de los textos. La interfaz (panel de datos, diagnóstico y gráficos) se verificó con
+Estos doce cubren el **motor** y la coherencia de los textos. La interfaz (panel de datos, diagnóstico y gráficos) se verificó con
 un arnés aparte que monta el panel real en un navegador (webpack + Chrome headless, 112
 comprobaciones). **No se versiona** porque necesita el binario de Chrome, y un arnés que no corre en
 cualquier máquina es peor que no tenerlo: se queda como herramienta puntual y su resultado está

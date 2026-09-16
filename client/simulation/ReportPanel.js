@@ -24,6 +24,10 @@ const ESTILOS_INFORME = `
 .sim-report h4 { font-size: 13px; margin: 14px 0 4px; color: #444; }
 .sim-report p { margin: 6px 0; }
 .sim-report .sub { color: #666; margin: 0 0 14px; }
+/* El mismo .sub usado DENTRO de una celda: ahi no lleva margen de parrafo, va en
+   su propia linea y mas pequeno, para explicar la cifra de al lado sin competir
+   con ella. */
+.sim-report td .sub, .sim-report th .sub { display: block; margin: 2px 0 0; font-size: 10.5px; line-height: 1.35; font-weight: 400; }
 .sim-report table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 12px; }
 .sim-report th { background: #eef3f9; border: 1px solid #cfd8e3; padding: 6px 8px; text-align: left; font-weight: 600; }
 .sim-report td { border: 1px solid #dfe5ec; padding: 5px 8px; }
@@ -357,6 +361,7 @@ export default class ReportPanel {
             <th class="num">Instancias completadas</th><td class="num">${ent(ctx.completadas)}</td></tr>
         <tr><th>Plan evaluado</th><td>Con horas extra (frente al plan normal)</td>
             <th>Jornada</th><td>${esc(this._jornada(ctx))}</td></tr>
+        ${this._fechas(ctx)}
         <tr><th>Días laborables simulados</th><td class="num">${ent(ctx.dias)}</td>
             <th class="num">Media de piezas por día</th><td class="num">${num(porDia, 1)}</td></tr>
         <tr><th>Reparto de llegadas</th><td colspan="3">${esc(this._llegada(ctx))}</td></tr>
@@ -373,6 +378,36 @@ export default class ReportPanel {
               + ` por encima del cupo, ${ctx.cumplimiento.diasSobreLimiteDiario} día(s) por encima del tope diario`
             : `<span class="ok">CUMPLE</span> — ningún día ni semana supera los topes`}</td></tr>` : ''}
       </table>
+    `;
+  }
+
+  /**
+   * Fechas de inicio y fin, y los días contados en los DOS relojes.
+   *
+   * Va en la portada porque es la primera pregunta que se hace quien lee un
+   * informe de plazos: «¿esto cuándo empieza y cuándo termina?». Y da las dos
+   * cifras a propósito: `días laborables` es lo que se trabaja y se paga;
+   * `días naturales` es lo que tarda en llegar la fecha, con los fines de semana
+   * y festivos dentro. Confundirlos es el error más fácil de cometer al leer.
+   */
+  _fechas(ctx) {
+    const r = ctx.overtime || {};
+    if (!r.inicio || !r.fin) return '';
+
+    const f = (d) => d.toLocaleString('es-MX', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+    const diasNat = r.diasNaturales;
+    const noLaborables = (diasNat != null) ? Math.max(0, diasNat - ctx.dias) : null;
+
+    return `
+      <tr><th>Empieza</th><td>${f(r.inicio)}</td>
+          <th>Termina</th><td>${f(r.fin)}</td></tr>
+      <tr><th>Días laborables</th><td><strong>${ent(ctx.dias)}</strong>
+            <span class="sub">lo que se trabaja y se paga</span></td>
+          <th>Días naturales</th><td><strong>${diasNat == null ? '—' : ent(diasNat)}</strong>
+            <span class="sub">lo que tarda en llegar la fecha${
+              noLaborables ? ` (${ent(noLaborables)} día(s) no laborable(s) dentro)` : ''}</span></td></tr>
     `;
   }
 
