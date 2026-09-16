@@ -4,21 +4,6 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
-* `FIX`: **el mapa de calor desaparecía al alejar el zoom**, justo cuando más falta hace (diagramas
-  grandes). Las manchas tienen el radio en coordenadas del **diagrama** —para cubrir la figura
-  entera— así que encogían con todo lo demás: al 25 % una mancha de 30 px se veía de 7,5 px. Ahora el
-  radio se **compensa por el zoom**, de forma que mide lo mismo **en pantalla** a cualquier
-  distancia, y se redibuja al terminar de hacer zoom (con rebote de 120 ms, para que una rueda del
-  ratón cueste un redibujado y no veinte).
-* `FEAT`: la compensación tiene **tope** (`MIN_ZOOM_COMPENSADO`, 25 %). Sin él, un zoom del 5 %
-  pediría manchas 20× más grandes y **todas se solaparían en una sola que tapa el diagrama**, que es
-  peor que el fallo original. Por encima del 100 % no se compensa nada: acercarse se comporta como
-  siempre.
-* `DOCS`: **los iconos de la librería de tokens sí desaparecen por debajo del 50 %**, y esto **no se
-  toca**: es una restricción de `bpmn-js-token-simulation` (`show: { minZoom: 0.5 }` en
-  `ElementNotifications`, `ContextPads` y `TokenCount`). No se parchea `node_modules` para
-  sobrescribirla: el mapa de calor —que es nuestro— ya se ve a cualquier zoom, y forzarlo obligaría a
-  revisar el parche en cada actualización de la dependencia.
 * `FEAT`: **el resumen (y el informe) dicen cuándo empieza y cuándo termina**, con los días contados
   en los **dos relojes**: **días laborables** (lo que se trabaja y se paga) y **días naturales** (lo
   que tarda en llegar la fecha, con fines de semana y festivos dentro). Antes solo había un «Días
