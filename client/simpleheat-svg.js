@@ -206,9 +206,15 @@ SimpleHeatSVG.prototype = {
   /**
    * Dibuja las manchas.
    *
-   * Cada punto es [cx, cy, valor] y opcionalmente [cx, cy, valor, radio].
-   * El cuarto elemento permite que una figura grande reciba una mancha mas
-   * grande que una pequena. Si falta, se usa el radio global (this._r).
+   * Cada punto es [cx, cy, valor] y, opcionalmente, [cx, cy, valor, radio] y
+   * [cx, cy, valor, radio, opacidad].
+   *
+   * - El cuarto elemento permite que una figura grande reciba una mancha mas
+   *   grande que una pequena. Si falta, se usa el radio global (this._r).
+   * - El quinto es la opacidad YA resuelta por quien llama. Quien conoce el
+   *   sentido del dato (aqui, el controlador via HeatmapScale) decide la
+   *   opacidad; esta libreria solo la pinta. Si falta, se cae a `valor / max`,
+   *   que es el comportamiento de siempre para quien use la libreria suelta.
    *
    * El degradado del borde esta definido en porcentajes del radio, asi que al
    * variar el radio el desvanecido se escala en la misma proporcion: no hace
@@ -236,7 +242,9 @@ SimpleHeatSVG.prototype = {
       circle.setAttribute('r', r);
       circle.setAttribute('fill', 'url(#heatmap-blur-gradient)');
 
-      const opacity = Math.min(Math.max(p[2] / this._max, minOpacity), 1);
+      const opacity = p.length > 4 && p[4] != null
+        ? p[4]
+        : Math.min(Math.max(p[2] / this._max, minOpacity), 1);
       circle.setAttribute('opacity', opacity);
 
       this._heatGroup.appendChild(circle);

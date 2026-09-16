@@ -35,18 +35,24 @@ writeFileSync(join(AQUI, 'LaborRules.mjs'), leer('LaborRules.js'));
 writeFileSync(join(AQUI, 'Workload.mjs'), leer('Workload.js'));
 writeFileSync(join(AQUI, 'DataAudit.mjs'), leer('DataAudit.js'));
 
+// HeatmapScale monta la escala de color sobre los formateadores, asi que su
+// import tambien se reescribe.
+writeFileSync(join(AQUI, 'HeatmapScale.mjs'),
+  leer('HeatmapScale.js').replace("from './util'", "from './util.mjs'"));
+
 // ModelUtil: `is` mira el $type del stub.
 writeFileSync(join(AQUI, 'ModelUtil.mjs'),
   'export const is = (el, tipo) => Boolean(el) && el.$type === tipo;\n');
 
-// util.mjs: stubs de las fronteras (nada de bpmn-js) + la estadistica REAL, que
-// se extrae de util.js para no tener dos copias de la misma formula.
+// util.mjs: stubs de las fronteras (nada de bpmn-js) + lo que SI es puro y real
+// —los formateadores, que usa la escala del mapa de calor, y la estadistica—,
+// extraido de util.js para no tener dos copias de la misma formula.
 const utilSrc = leer('util.js');
-const estadistica = utilSrc.slice(utilSrc.indexOf('export const percentil'));
+const puro = utilSrc.slice(utilSrc.indexOf('export const formatMilliseconds'));
 writeFileSync(join(AQUI, 'util.mjs'), `
 export const isLabel = (el) => Boolean(el && el.labelTarget);
 export const getSimulationData = (el) => (el && el._datos) || null;
-${estadistica}
+${puro}
 `);
 
 console.log('Código del plugin preparado en verificacion/');

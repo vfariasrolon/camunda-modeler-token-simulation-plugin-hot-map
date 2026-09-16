@@ -235,6 +235,49 @@
     opacity: 0.7;
 }
 
+/* Leyenda del mapa de calor.
+   Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo
+   de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no
+   «critico». Va arriba a la derecha (la paleta esta a la izquierda y el panel de
+   graficos abajo) y lleva pointer-events: none porque es informativa: no debe
+   interceptar el zoom ni los clics del lienzo. */
+.heatmap-legend {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 210px;
+    padding: 8px 10px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .15);
+    font-size: 11.5px;
+    color: #333;
+    z-index: 90;
+    pointer-events: none;
+}
+
+.heatmap-legend-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.heatmap-legend-bar {
+    height: 10px;
+    border-radius: 3px;
+    border: 1px solid #ddd;
+}
+
+.heatmap-legend-detail {
+    margin-top: 5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.heatmap-legend-note {
+    margin-top: 3px;
+    color: #777;
+}
+
 /* Chart Panel (panel de graficos) */
 .simulation-chart-panel {
   position: absolute;

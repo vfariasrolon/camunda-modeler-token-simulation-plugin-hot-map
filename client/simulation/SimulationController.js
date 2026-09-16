@@ -8,6 +8,7 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
 import { describeLabor } from './LaborRules.js';
+import { rangoDeValores, opacidadDe, textoDeEscala, gradienteCss, colorFrio, GRADIENTE_ESCALA } from './HeatmapScale.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -562,12 +563,19 @@ export default class SimulationController {
    * anterior (value > 0) hacia que toda tarea sin fallos, o de costo 0, no
    * dibujase nada: el diagrama parecia tener figuras "sin analizar" cuando en
    * realidad su valor era cero. Con valor 0 la mancha sale con la opacidad
-   * minima, que es informacion util (se ve que se contabilizo y dio cero).
+   * minima (o con la uniforme si todo el diagrama vale 0), que es informacion
+   * util: se ve que se contabilizo y dio cero.
    */
-  _pushPoint(dataPoints, element, value) {
+  _pushPoint(dataPoints, element, value, opacidad) {
     const cx = Math.round(element.x + (element.width || 0) / 2);
     const cy = Math.round(element.y + (element.height || 0) / 2);
-    dataPoints.push([ cx, cy, value, this._blobRadius(element) ]);
+    const punto = [ cx, cy, value, this._blobRadius(element) ];
+
+    // 5º elemento opcional: la opacidad ya resuelta (ver HeatmapScale). Solo se
+    // anade si viene, para no cambiar la forma del punto en el caso normal.
+    if (opacidad != null) punto[4] = opacidad;
+
+    dataPoints.push(punto);
   }
 
   /**
@@ -837,16 +845,18 @@ export default class SimulationController {
   showMetric(metric) {
     this.clearOverlaysAndHeatmap();
     this.lastMetric = metric;
-    const dataPoints = [];
-    let max = 0;
+
+    // Se recogen los pares (figura, valor) y el dibujo se aplaza hasta conocer
+    // el RANGO: la opacidad de cada mancha depende de si hay contraste o no, y
+    // eso no se sabe hasta haber visto todos los valores.
+    const pares = [];
 
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
         if (is(element, 'bpmn:Task') && !isLabel(element)) {
           const data = getSimulationData(element);
           const value = (data && data.resources && data.resources.quantityRequired) || 0;
-          if (value > max) max = value;
-          this._pushPoint(dataPoints, element, value);
+          pares.push({ element, value });
         }
       });
     } else {
@@ -870,15 +880,58 @@ export default class SimulationController {
           else if (metric === 'reworkTime') value = result.totalReworkTime;
           else if (metric === 'waitTimeCost') value = result.totalWaitTimeCost;
 
-
-          if (value > max) max = value;
-          this._pushPoint(dataPoints, element, value);
+          pares.push({ element, value });
       });
     }
 
+    const rango = rangoDeValores(pares.map((p) => p.value));
+
+    const dataPoints = [];
+    pares.forEach(({ element, value }) => {
+      // La opacidad se resuelve aqui (funcion pura, comprobable fuera del
+      // navegador) y viaja CON el punto. Si todos los valores son iguales,
+      // HeatmapScale devuelve el extremo FRIO: sin esto, `valor / max` vale 1
+      // en todas y el mapa sale entero rojo aunque no haya diferencias.
+      this._pushPoint(dataPoints, element, value, opacidadDe(value, rango.max, rango.uniforme));
+    });
+
     this.createHeatmap();
-    this._heatmap.data(dataPoints).max(max || 1).radius(this._radius, this._blur).draw();
+    // El degradado se fija desde HeatmapScale para que la leyenda y el filtro
+    // SVG no puedan divergir.
+    this._heatmap.gradient(GRADIENTE_ESCALA);
+    this._heatmap.data(dataPoints).max(rango.max || 1).radius(this._radius, this._blur).draw();
+    if (rango.n > 0) this._renderLegend(metric, rango);
     this.showOverlays(metric);
+  }
+
+  /**
+   * Pinta la leyenda que da sentido al color.
+   *
+   * Sin ella, el rojo y el azul no significan nada: la escala es relativa al
+   * maximo de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE
+   * diagrama», no «critico». La leyenda enseña el rango real (o el valor unico
+   * cuando no hay diferencias).
+   *
+   * Va con `pointer-events: none` en CSS: es informativa y no debe interceptar
+   * el zoom ni los clics del lienzo.
+   */
+  _renderLegend(metric, rango) {
+    const contenedor = this._canvas.getContainer();
+    let leyenda = contenedor.querySelector('.heatmap-legend');
+    if (!leyenda) {
+      leyenda = domify('<div class="heatmap-legend"></div>');
+      contenedor.appendChild(leyenda);
+    }
+
+    const texto = textoDeEscala(metric, rango);
+    const barra = texto.uniforme ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA);
+
+    leyenda.innerHTML = `
+      <div class="heatmap-legend-title">${texto.titulo}</div>
+      <div class="heatmap-legend-bar" style="background: ${barra};"></div>
+      <div class="heatmap-legend-detail">${texto.detalle}</div>
+      <div class="heatmap-legend-note">${texto.nota}</div>
+    `;
   }
 
   showOverlays(metric) {
@@ -2363,7 +2416,10 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       this._heatmap.destroy();
       this._heatmap = null;
     }
-    domClasses(this._canvas.getContainer()).remove('heatmap-shown');
+    const contenedor = this._canvas.getContainer();
+    domClasses(contenedor).remove('heatmap-shown');
+    const leyenda = contenedor.querySelector('.heatmap-legend');
+    if (leyenda) leyenda.remove();
     this._overlays.remove({ type: 'simulation-overlay' });
   }
 

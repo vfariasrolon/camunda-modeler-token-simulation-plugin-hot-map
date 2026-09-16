@@ -349,9 +349,15 @@ SimpleHeatSVG.prototype = {
   /**
    * Dibuja las manchas.
    *
-   * Cada punto es [cx, cy, valor] y opcionalmente [cx, cy, valor, radio].
-   * El cuarto elemento permite que una figura grande reciba una mancha mas
-   * grande que una pequena. Si falta, se usa el radio global (this._r).
+   * Cada punto es [cx, cy, valor] y, opcionalmente, [cx, cy, valor, radio] y
+   * [cx, cy, valor, radio, opacidad].
+   *
+   * - El cuarto elemento permite que una figura grande reciba una mancha mas
+   *   grande que una pequena. Si falta, se usa el radio global (this._r).
+   * - El quinto es la opacidad YA resuelta por quien llama. Quien conoce el
+   *   sentido del dato (aqui, el controlador via HeatmapScale) decide la
+   *   opacidad; esta libreria solo la pinta. Si falta, se cae a `valor / max`,
+   *   que es el comportamiento de siempre para quien use la libreria suelta.
    *
    * El degradado del borde esta definido en porcentajes del radio, asi que al
    * variar el radio el desvanecido se escala en la misma proporcion: no hace
@@ -379,7 +385,9 @@ SimpleHeatSVG.prototype = {
       circle.setAttribute('r', r);
       circle.setAttribute('fill', 'url(#heatmap-blur-gradient)');
 
-      const opacity = Math.min(Math.max(p[2] / this._max, minOpacity), 1);
+      const opacity = p.length > 4 && p[4] != null
+        ? p[4]
+        : Math.min(Math.max(p[2] / this._max, minOpacity), 1);
       circle.setAttribute('opacity', opacity);
 
       this._heatGroup.appendChild(circle);
@@ -4914,6 +4922,193 @@ DataTablePanel.$inject = [
 
 /***/ }),
 
+/***/ "./client/simulation/HeatmapScale.js":
+/*!*******************************************!*\
+  !*** ./client/simulation/HeatmapScale.js ***!
+  \*******************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   ESCALA_POR_METRICA: () => (/* binding */ ESCALA_POR_METRICA),
+/* harmony export */   GRADIENTE_ESCALA: () => (/* binding */ GRADIENTE_ESCALA),
+/* harmony export */   OPACIDAD_MINIMA: () => (/* binding */ OPACIDAD_MINIMA),
+/* harmony export */   OPACIDAD_UNIFORME: () => (/* binding */ OPACIDAD_UNIFORME),
+/* harmony export */   colorCalido: () => (/* binding */ colorCalido),
+/* harmony export */   colorFrio: () => (/* binding */ colorFrio),
+/* harmony export */   escalaDeMetrica: () => (/* binding */ escalaDeMetrica),
+/* harmony export */   gradienteCss: () => (/* binding */ gradienteCss),
+/* harmony export */   opacidadDe: () => (/* binding */ opacidadDe),
+/* harmony export */   rangoDeValores: () => (/* binding */ rangoDeValores),
+/* harmony export */   textoDeEscala: () => (/* binding */ textoDeEscala)
+/* harmony export */ });
+/* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
+/**
+ * La escala de color del mapa de calor, en un solo sitio.
+ *
+ * Por qué existe: la regla de color estaba partida entre `simpleheat-svg.js`
+ * (que normaliza `valor / max`) y el controlador (que calcula ese `max`). Así no
+ * se puede comprobar sin un navegador, porque `draw()` necesita el DOM y un
+ * canvas. Al extraer la decisión —qué opacidad recibe cada mancha y qué texto
+ * lleva la leyenda— a funciones puras, el arnés `13-mapa-de-calor.mjs` ejecuta
+ * las MISMAS que usa el plugin, no una copia.
+ *
+ * El problema que resuelve: la escala es RELATIVA al máximo de la corrida, y el
+ * máximo cae siempre en la última parada (rojo). Cuando todas las tareas tienen
+ * el mismo valor —el caso de «cantidad de recursos»: todas con 1— cada mancha
+ * recibe `valor / max = 1` y el mapa sale ENTERO ROJO, como si todo fuese
+ * crítico, cuando en realidad solo significa «no hay diferencias».
+ *
+ * Ojo: esto NO cambia el color de cada valor. Un mismo dato sigue pintándose
+ * distinto según el resto del diagrama (1 recurso es azul si otra tarea pide 5,
+ * y rojo si el máximo es 1). Eso es inherente a una escala relativa; por eso el
+ * mapa lleva leyenda con el rango real.
+ */
+
+
+// Opacidad mínima de una mancha: por debajo de esto un valor 0 se vuelve
+// invisible y el diagrama parece «sin analizar».
+const OPACIDAD_MINIMA = 0.10;
+
+// Opacidad cuando NO hay contraste (min === max), es decir cuando el mapa debe
+// ser uniforme.
+//
+// NO se usa el extremo caliente: con un valor único, `valor / max = 1` en todas
+// y el mapa saldría entero rojo. Se usa el extremo FRÍO (azul), que es lo que de
+// verdad significa «sin diferencias». `OPACIDAD_MINIMA` (0.10) se ve demasiado
+// poco; 0.35 cae holgadamente dentro de la banda azul (la escala es azul hasta
+// 0.4) y se lee sin llegar a teñir el diagrama.
+const OPACIDAD_UNIFORME = 0.35;
+
+// Paradas del degradado. Vive aquí, y no en `simpleheat-svg.js`, para que la
+// leyenda (CSS) y el filtro SVG no puedan divergir: `simpleheat-svg.js` las
+// conserva solo como valor por defecto de la librería suelta y el controlador le
+// pasa estas con `.gradient()`.
+const GRADIENTE_ESCALA = {
+  0.4: 'blue',
+  0.6: 'cyan',
+  0.7: 'lime',
+  0.8: 'yellow',
+  1.0: 'red'
+};
+
+/**
+ * Opacidad (0..1) de una mancha.
+ *
+ * `uniforme` fuerza el extremo frío (ver OPACIDAD_UNIFORME). En el caso normal
+ * es `valor / max` acotado, exactamente el comportamiento de siempre.
+ */
+function opacidadDe(valor, max, uniforme = false, minOpacidad = OPACIDAD_MINIMA) {
+  if (uniforme) return Math.min(Math.max(OPACIDAD_UNIFORME, minOpacidad), 1);
+  return Math.min(Math.max(valor / (max || 1), minOpacidad), 1);
+}
+
+/**
+ * Rango de los valores dibujados, con la marca de «todos iguales».
+ *
+ * Se calcula el rango en vez de ir tomando el máximo a medida que se dibuja
+ * porque la decisión de uniformidad necesita el MÍNIMO: sin él no se puede
+ * distinguir «todos 1» (uniforme) de «uno 1 y otro 5» (con contraste).
+ */
+function rangoDeValores(valores) {
+  if (!valores || !valores.length) return { min: 0, max: 0, uniforme: true, n: 0 };
+
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of valores) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+
+  return { min, max, uniforme: min === max, n: valores.length };
+}
+
+/** Paradas del degradado ordenadas de frío a cálido. */
+function paradasOrdenadas(gradiente) {
+  return Object.keys(gradiente).map(Number).sort((a, b) => a - b);
+}
+
+/** Color del extremo frío del degradado (el que usa el caso uniforme). */
+function colorFrio(gradiente = GRADIENTE_ESCALA) {
+  return gradiente[paradasOrdenadas(gradiente)[0]];
+}
+
+/**
+ * Color del extremo cálido del degradado: donde cae SIEMPRE el máximo de la
+ * corrida. Es el que hace que un mapa sin diferencias salga entero rojo.
+ */
+function colorCalido(gradiente = GRADIENTE_ESCALA) {
+  const paradas = paradasOrdenadas(gradiente);
+  return gradiente[paradas[paradas.length - 1]];
+}
+
+/**
+ * CSS del degradado de la leyenda, derivado de GRADIENTE_ESCALA.
+ *
+ * La primera parada se repite en 0% porque la escala deja el extremo frío plano
+ * hasta 0.4 (todo azul): la barra debe verse igual que el mapa, no estirada.
+ */
+function gradienteCss(gradiente = GRADIENTE_ESCALA) {
+  const partes = [ `${colorFrio(gradiente)} 0%` ];
+  for (const t of paradasOrdenadas(gradiente)) partes.push(`${gradiente[t]} ${Math.round(t * 100)}%`);
+  return `linear-gradient(to right, ${partes.join(', ')})`;
+}
+
+// Etiqueta y formato de cada métrica del mapa de calor.
+//
+// Cubre TODAS las que ofrece la paleta. El arnés comprueba que no falte ninguna:
+// una métrica sin escala dejaría la leyenda sin unidad, que es justo el fallo que
+// se está corrigiendo.
+const ESCALA_POR_METRICA = {
+  cost: { etiqueta: 'Costo acumulado', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatCurrency)(v) },
+  waitTime: { etiqueta: 'Espera promedio', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMinutes)(v) },
+  totalWaitTime: { etiqueta: 'Espera total', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMinutes)(v) },
+  cycleTime: { etiqueta: 'Tiempo de ciclo', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMinutes)(v) },
+  processTime: { etiqueta: 'Tiempo de proceso', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMinutes)(v) },
+  frequency: { etiqueta: 'Frecuencia', formatea: (v) => `${Math.round(v)} veces` },
+  // El motor guarda un COCIENTE (fallos / ejecuciones), así que se muestra en %.
+  failureRate: { etiqueta: 'Tasa de fallos', formatea: (v) => `${(v * 100).toFixed(1)}%` },
+  reworkTime: { etiqueta: 'Tiempo de reparación', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMilliseconds)(v) },
+  overtime: { etiqueta: 'Horas extras', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMilliseconds)(v) },
+  waitTimeCost: { etiqueta: 'Costo de tiempos muertos', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatCurrency)(v) },
+  resourceQuantity: { etiqueta: 'Cantidad de recursos', formatea: (v) => String(Math.round(v)) }
+};
+
+/** Escala de una métrica. Cae a una genérica si algún día se añade una nueva. */
+function escalaDeMetrica(metric) {
+  return ESCALA_POR_METRICA[metric] || { etiqueta: metric || 'Métrica', formatea: (v) => String(v) };
+}
+
+/**
+ * Texto de la leyenda para un rango.
+ *
+ * En el caso uniforme no hay rango que enseñar: se dice el valor único, que es
+ * la información útil («todos 1»), en vez de un «1 → 1» que no explica nada.
+ */
+function textoDeEscala(metric, rango) {
+  const escala = escalaDeMetrica(metric);
+
+  if (rango.uniforme) {
+    return {
+      titulo: escala.etiqueta,
+      uniforme: true,
+      detalle: `Uniforme: todos ${escala.formatea(rango.min)}`,
+      nota: 'Sin diferencias entre tareas: se pinta en frío, no en rojo.'
+    };
+  }
+
+  return {
+    titulo: escala.etiqueta,
+    uniforme: false,
+    detalle: `${escala.formatea(rango.min)} → ${escala.formatea(rango.max)}`,
+    nota: 'Azul = menor · Rojo = mayor'
+  };
+}
+
+
+/***/ }),
+
 /***/ "./client/simulation/LaborRules.js":
 /*!*****************************************!*\
   !*** ./client/simulation/LaborRules.js ***!
@@ -6656,13 +6851,15 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationController)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var chart_js_auto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! chart.js/auto */ "./node_modules/.pnpm/chart.js@4.5.0/node_modules/chart.js/auto/auto.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
+/* harmony import */ var _HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./HeatmapScale.js */ "./client/simulation/HeatmapScale.js");
+
 
 
 
@@ -6795,7 +6992,7 @@ const limpiarNombre = (s) => String(s || '')
 // pasarian cualquier comprobacion de tipo.
 const isSimulatedElement = (element) => {
   if ((0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) return false;
-  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, type));
+  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, type));
 };
 
 class SimulationController {
@@ -6831,24 +7028,24 @@ class SimulationController {
     // data-tip alimenta el tooltip CSS (ver simulation.css). Se mantiene tambien
     // el atributo title por accesibilidad: los lectores de pantalla lo anuncian,
     // y sirve como respaldo si el CSS no carga.
-    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
-    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
-    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
-    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
-    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
-    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
+    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
+    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
+    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
+    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
+    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
+    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
 
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(runButton, 'click', () => this.runSimulation());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(runButton, 'click', () => this.runSimulation());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
     // Por evento y no llamando al panel: el modulo del informe se registra
     // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
     // Mismo motivo: el panel de diagnostico se registra despues.
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
 
-    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
@@ -6880,9 +7077,9 @@ class SimulationController {
     return {
       normal: this.normalReport,
       overtime: this.overtimeReport,
-      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task')),
+      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task')),
       flujos: this._elementRegistry.filter(
-        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el.source, 'bpmn:ExclusiveGateway')
+        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el.source, 'bpmn:ExclusiveGateway')
       )
     };
   }
@@ -7208,7 +7405,7 @@ class SimulationController {
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:FlowNode')) return base;
+    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:FlowNode')) return base;
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
     if (!half || half <= this._radius) return base;
@@ -7223,12 +7420,19 @@ class SimulationController {
    * anterior (value > 0) hacia que toda tarea sin fallos, o de costo 0, no
    * dibujase nada: el diagrama parecia tener figuras "sin analizar" cuando en
    * realidad su valor era cero. Con valor 0 la mancha sale con la opacidad
-   * minima, que es informacion util (se ve que se contabilizo y dio cero).
+   * minima (o con la uniforme si todo el diagrama vale 0), que es informacion
+   * util: se ve que se contabilizo y dio cero.
    */
-  _pushPoint(dataPoints, element, value) {
+  _pushPoint(dataPoints, element, value, opacidad) {
     const cx = Math.round(element.x + (element.width || 0) / 2);
     const cy = Math.round(element.y + (element.height || 0) / 2);
-    dataPoints.push([ cx, cy, value, this._blobRadius(element) ]);
+    const punto = [ cx, cy, value, this._blobRadius(element) ];
+
+    // 5º elemento opcional: la opacidad ya resuelta (ver HeatmapScale). Solo se
+    // anade si viene, para no cambiar la forma del punto en el caso normal.
+    if (opacidad != null) punto[4] = opacidad;
+
+    dataPoints.push(punto);
   }
 
   /**
@@ -7498,16 +7702,18 @@ class SimulationController {
   showMetric(metric) {
     this.clearOverlaysAndHeatmap();
     this.lastMetric = metric;
-    const dataPoints = [];
-    let max = 0;
+
+    // Se recogen los pares (figura, valor) y el dibujo se aplaza hasta conocer
+    // el RANGO: la opacidad de cada mancha depende de si hay contraste o no, y
+    // eso no se sabe hasta haber visto todos los valores.
+    const pares = [];
 
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
-        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
           const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
           const value = (data && data.resources && data.resources.quantityRequired) || 0;
-          if (value > max) max = value;
-          this._pushPoint(dataPoints, element, value);
+          pares.push({ element, value });
         }
       });
     } else {
@@ -7531,20 +7737,63 @@ class SimulationController {
           else if (metric === 'reworkTime') value = result.totalReworkTime;
           else if (metric === 'waitTimeCost') value = result.totalWaitTimeCost;
 
-
-          if (value > max) max = value;
-          this._pushPoint(dataPoints, element, value);
+          pares.push({ element, value });
       });
     }
 
+    const rango = (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.rangoDeValores)(pares.map((p) => p.value));
+
+    const dataPoints = [];
+    pares.forEach(({ element, value }) => {
+      // La opacidad se resuelve aqui (funcion pura, comprobable fuera del
+      // navegador) y viaja CON el punto. Si todos los valores son iguales,
+      // HeatmapScale devuelve el extremo FRIO: sin esto, `valor / max` vale 1
+      // en todas y el mapa sale entero rojo aunque no haya diferencias.
+      this._pushPoint(dataPoints, element, value, (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.opacidadDe)(value, rango.max, rango.uniforme));
+    });
+
     this.createHeatmap();
-    this._heatmap.data(dataPoints).max(max || 1).radius(this._radius, this._blur).draw();
+    // El degradado se fija desde HeatmapScale para que la leyenda y el filtro
+    // SVG no puedan divergir.
+    this._heatmap.gradient(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.GRADIENTE_ESCALA);
+    this._heatmap.data(dataPoints).max(rango.max || 1).radius(this._radius, this._blur).draw();
+    if (rango.n > 0) this._renderLegend(metric, rango);
     this.showOverlays(metric);
+  }
+
+  /**
+   * Pinta la leyenda que da sentido al color.
+   *
+   * Sin ella, el rojo y el azul no significan nada: la escala es relativa al
+   * maximo de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE
+   * diagrama», no «critico». La leyenda enseña el rango real (o el valor unico
+   * cuando no hay diferencias).
+   *
+   * Va con `pointer-events: none` en CSS: es informativa y no debe interceptar
+   * el zoom ni los clics del lienzo.
+   */
+  _renderLegend(metric, rango) {
+    const contenedor = this._canvas.getContainer();
+    let leyenda = contenedor.querySelector('.heatmap-legend');
+    if (!leyenda) {
+      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)('<div class="heatmap-legend"></div>');
+      contenedor.appendChild(leyenda);
+    }
+
+    const texto = (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.textoDeEscala)(metric, rango);
+    const barra = texto.uniforme ? (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.colorFrio)(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.GRADIENTE_ESCALA) : (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.gradienteCss)(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.GRADIENTE_ESCALA);
+
+    leyenda.innerHTML = `
+      <div class="heatmap-legend-title">${texto.titulo}</div>
+      <div class="heatmap-legend-bar" style="background: ${barra};"></div>
+      <div class="heatmap-legend-detail">${texto.detalle}</div>
+      <div class="heatmap-legend-note">${texto.nota}</div>
+    `;
   }
 
   showOverlays(metric) {
     const elements = metric === 'resourceQuantity'
-      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task'))
+      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task'))
       : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
 
     elements.forEach(element => {
@@ -7557,7 +7806,7 @@ class SimulationController {
             const value = (data && data.resources && data.resources.quantityRequired) || 0;
             if (value > 0) overlayText = `Recursos: ${value}`;
         } else if (result) {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalCost, 'MXN')}`;
                 else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime / (result.executionCount || 1))}`;
                 else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime)}`;
@@ -7570,7 +7819,7 @@ class SimulationController {
                 else if (metric === 'overtime') overlayText = `H. Extras: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalOvertime)}`;
                 else if (metric === 'reworkTime') overlayText = `T. Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalReworkTime)}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalWaitTimeCost, 'MXN')}`;
-            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
@@ -7580,7 +7829,7 @@ class SimulationController {
         // El guard !isLabel es imprescindible: una etiqueta de compuerta pasa
         // is(el, 'bpmn:ExclusiveGateway'), pero NO tiene `outgoing`, asi que
         // element.outgoing.forEach lanzaria TypeError.
-        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
             element.outgoing.forEach(flow => {
                 const flowResult = this.simulationResults.get(flow.id);
                 if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
@@ -8203,7 +8452,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const allElements = this._elementRegistry.getAll();
     const elementsWithData = [];
     allElements.forEach(element => {
-      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
+      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
         if (data && Object.keys(data).length > 0) {
           elementsWithData.push({
@@ -8507,7 +8756,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const tareas = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task')) return;
 
       const operacion = r.totalOperationCost || 0;
       const doble = r.totalDoubleOvertimeCost || 0;
@@ -8530,7 +8779,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const caminos = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:SequenceFlow')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:SequenceFlow')) return;
       if (!r.executionCount) return;
 
       caminos.push({
@@ -8684,7 +8933,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
 
     if (metric === 'resourceQuantity') {
         this._elementRegistry.forEach(element => {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
                 const value = (data && data.resources && data.resources.quantityRequired) || 0;
                 tasks.push({ name: element.businessObject.name || element.id, value: value });
@@ -8693,7 +8942,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     } else {
         this.simulationResults.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
-            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
@@ -9024,14 +9273,17 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       this._heatmap.destroy();
       this._heatmap = null;
     }
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
+    const contenedor = this._canvas.getContainer();
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(contenedor).remove('heatmap-shown');
+    const leyenda = contenedor.querySelector('.heatmap-legend');
+    if (leyenda) leyenda.remove();
     this._overlays.remove({ type: 'simulation-overlay' });
   }
 
   createHeatmap() {
     if (this._heatmap) return;
     this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   showPlanBreakdown() {
@@ -23090,6 +23342,49 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
     opacity: 0.7;
 }
 
+/* Leyenda del mapa de calor.
+   Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo
+   de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no
+   «critico». Va arriba a la derecha (la paleta esta a la izquierda y el panel de
+   graficos abajo) y lleva pointer-events: none porque es informativa: no debe
+   interceptar el zoom ni los clics del lienzo. */
+.heatmap-legend {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 210px;
+    padding: 8px 10px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .15);
+    font-size: 11.5px;
+    color: #333;
+    z-index: 90;
+    pointer-events: none;
+}
+
+.heatmap-legend-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.heatmap-legend-bar {
+    height: 10px;
+    border-radius: 3px;
+    border: 1px solid #ddd;
+}
+
+.heatmap-legend-detail {
+    margin-top: 5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.heatmap-legend-note {
+    margin-top: 3px;
+    color: #777;
+}
+
 /* Chart Panel (panel de graficos) */
 .simulation-chart-panel {
   position: absolute;
@@ -23639,7 +23934,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
   border: 1px solid #d6e4f5;
   border-radius: 5px;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"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","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado y con margen a los lados, igual que el panel de tabla.\n     `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. */\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* Sin border-box, el `width` seria el del CONTENIDO y el padding de 20px se\n     sumaria por fuera: el panel acababa midiendo 40px mas de lo previsto y los\n     margenes laterales se quedaban en 5px en vez de 24. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 16px 20px 20px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n/* Altura DEFINIDA solo cuando se muestra un grafico.\n   Hace falta para que los hijos flex (`.content` -> `.canvas-wrap`) repartan el\n   alto disponible: sin una altura definida en el panel, `flex: 1` no tiene contra\n   que repartir y el grafico se queda en su minimo (200 px). Las vistas de tabla\n   no llevan esta clase, asi que siguen ajustandose a su contenido. */\n.simulation-chart-panel.chart-mode {\n  height: min(700px, calc(100% - 32px));\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n/* La ayuda es texto largo: se limita la medida de linea para que sea legible y\n   se le da jerarquia a los apartados. */\n.simulation-chart-panel .help-content h4 {\n  margin: 0 0 10px;\n  color: #1565c0;\n}\n\n.simulation-chart-panel .help-content h5 {\n  margin: 16px 0 6px;\n  font-size: 13px;\n  color: #333;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 3px;\n}\n\n.simulation-chart-panel .help-content p,\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  max-width: 88ch;\n  line-height: 1.55;\n}\n\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  margin: 6px 0;\n  padding-left: 22px;\n}\n\n.simulation-chart-panel .help-content li {\n  margin-bottom: 5px;\n}\n\n.simulation-chart-panel .help-content code {\n  padding: 1px 4px;\n  font-size: 12px;\n  background: #eef;\n  border-radius: 3px;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  /* Columna flex: deja que el envoltorio del canvas (o la tabla) ocupen\n     EXACTAMENTE el hueco que sobra en el panel, sin desbordarlo. Antes el\n     canvas tenia una altura fija en vh y, con el panel ya limitado por su\n     max-height, se salia y obligaba a desplazarse para ver el grafico entero. */\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.simulation-chart-panel .html-content {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n}\n\n/* Envoltorio del canvas: ocupa el hueco disponible y nada mas. Chart.js, con\n   maintainAspectRatio:false, ajusta el canvas a su contenedor, asi que el\n   grafico se ve entero y con las mismas proporciones sea cual sea el panel. */\n.simulation-chart-panel .canvas-wrap {\n  position: relative;\n  width: 100%;\n  flex: 1;\n  min-height: 220px;\n}\n\n.simulation-chart-panel .canvas-wrap.hidden {\n  display: none;\n}\n\n/* El canvas ocupa exactamente su envoltorio.\n   Se posiciona en absoluto y no con height:100% porque el envoltorio es un item\n   flex de altura computada `auto`: un porcentaje contra `auto` no resuelve en\n   Chrome, y el canvas se quedaba con su altura de atributo (520), desbordando el\n   panel y recortando el grafico. Con `inset: 0` el canvas llena la caja real.\n   `!important` porque Chart.js fija width/height en linea al redimensionar. */\n.simulation-chart-panel .canvas-wrap canvas {\n  position: absolute;\n  inset: 0;\n  width: 100% !important;\n  height: 100% !important;\n  display: block;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1400px, 100%);\n  max-height: 100%;\n  box-sizing: border-box;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    /* Margen de seguridad: sin el, el modal toca los bordes de la ventana en\n       pantallas bajas. */\n    padding: 24px;\n    box-sizing: border-box;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: min(760px, 100%);\n    /* Centrado por el flex del overlay; el alto se limita al hueco disponible\n       (menos el padding del overlay) para no tocar los bordes verticales. */\n    max-height: 100%;\n    overflow-y: auto;\n    box-sizing: border-box;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n/* El resumen se pinta en DOS sitios: en el modal (que ya tiene su propio\n   titulo en la cabecera) y en linea dentro del panel de graficos. El <h2> por\n   defecto salia enorme y descompensado en ambos, asi que se limita. */\n.sim-summary-container h2 {\n  margin: 0 0 12px;\n  font-size: 16px;\n  color: #1565c0;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n\n/* --- ventana de tiempo del resumen --- */\n/* Va ARRIBA del todo y con fondo propio: es la respuesta a «¿cuándo termino?»,\n   que es la primera pregunta del usuario. Se separa visualmente de la rejilla de\n   KPI para que no se lea como una tarjeta mas. */\n.sim-ventana {\n  margin: 0 0 18px;\n  padding: 14px 16px;\n  background: #f4f8fd;\n  border: 1px solid #d5e3f5;\n  border-radius: 8px;\n}\n\n.sim-ventana h3 {\n  margin: 0 0 10px;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-ventana-tabla {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-ventana-tabla th {\n  width: 190px;\n  text-align: left;\n  vertical-align: top;\n  padding: 7px 10px 7px 0;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #555;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla td {\n  padding: 7px 0;\n  font-size: 13px;\n  color: #222;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla tr:last-child th,\n.sim-ventana-tabla tr:last-child td {\n  border-bottom: none;\n}\n\n/* Las dos cifras que importan (dias laborables y naturales) se destacan: son la\n   respuesta, y el resto son el contexto que la explica. */\n.sim-ventana-tabla tr.destacado th {\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla tr.destacado strong {\n  font-size: 1.25em;\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla .sub {\n  display: block;\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: #6b7a8d;\n  line-height: 1.4;\n  font-weight: 400;\n}\n\n.sim-ventana .sim-nota {\n  margin: 12px 0 0;\n  padding-top: 10px;\n  border-top: 1px solid #e3ebf5;\n  font-size: 11.5px;\n  color: #555;\n  line-height: 1.5;\n}\n\n.sim-ventana .sim-nota strong {\n  color: #0d47a1;\n}\n\n/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.\n   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de\n   Intl.NumberFormat); el propio texto indica si coincide o no. */\n.sim-summary-note {\n  margin: 12px 0 0;\n  padding: 9px 12px;\n  font-size: 0.9em;\n  color: #444;\n  background: #f2f7fd;\n  border: 1px solid #d6e4f5;\n  border-radius: 5px;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"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","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Leyenda del mapa de calor.\n   Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo\n   de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no\n   «critico». Va arriba a la derecha (la paleta esta a la izquierda y el panel de\n   graficos abajo) y lleva pointer-events: none porque es informativa: no debe\n   interceptar el zoom ni los clics del lienzo. */\n.heatmap-legend {\n    position: absolute;\n    top: 16px;\n    right: 16px;\n    width: 210px;\n    padding: 8px 10px;\n    background: #fff;\n    border: 1px solid #ccc;\n    border-radius: 6px;\n    box-shadow: 0 3px 10px rgba(0, 0, 0, .15);\n    font-size: 11.5px;\n    color: #333;\n    z-index: 90;\n    pointer-events: none;\n}\n\n.heatmap-legend-title {\n    font-weight: 700;\n    margin-bottom: 6px;\n}\n\n.heatmap-legend-bar {\n    height: 10px;\n    border-radius: 3px;\n    border: 1px solid #ddd;\n}\n\n.heatmap-legend-detail {\n    margin-top: 5px;\n    font-variant-numeric: tabular-nums;\n}\n\n.heatmap-legend-note {\n    margin-top: 3px;\n    color: #777;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado y con margen a los lados, igual que el panel de tabla.\n     `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. */\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* Sin border-box, el `width` seria el del CONTENIDO y el padding de 20px se\n     sumaria por fuera: el panel acababa midiendo 40px mas de lo previsto y los\n     margenes laterales se quedaban en 5px en vez de 24. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 16px 20px 20px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n/* Altura DEFINIDA solo cuando se muestra un grafico.\n   Hace falta para que los hijos flex (`.content` -> `.canvas-wrap`) repartan el\n   alto disponible: sin una altura definida en el panel, `flex: 1` no tiene contra\n   que repartir y el grafico se queda en su minimo (200 px). Las vistas de tabla\n   no llevan esta clase, asi que siguen ajustandose a su contenido. */\n.simulation-chart-panel.chart-mode {\n  height: min(700px, calc(100% - 32px));\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n/* La ayuda es texto largo: se limita la medida de linea para que sea legible y\n   se le da jerarquia a los apartados. */\n.simulation-chart-panel .help-content h4 {\n  margin: 0 0 10px;\n  color: #1565c0;\n}\n\n.simulation-chart-panel .help-content h5 {\n  margin: 16px 0 6px;\n  font-size: 13px;\n  color: #333;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 3px;\n}\n\n.simulation-chart-panel .help-content p,\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  max-width: 88ch;\n  line-height: 1.55;\n}\n\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  margin: 6px 0;\n  padding-left: 22px;\n}\n\n.simulation-chart-panel .help-content li {\n  margin-bottom: 5px;\n}\n\n.simulation-chart-panel .help-content code {\n  padding: 1px 4px;\n  font-size: 12px;\n  background: #eef;\n  border-radius: 3px;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  /* Columna flex: deja que el envoltorio del canvas (o la tabla) ocupen\n     EXACTAMENTE el hueco que sobra en el panel, sin desbordarlo. Antes el\n     canvas tenia una altura fija en vh y, con el panel ya limitado por su\n     max-height, se salia y obligaba a desplazarse para ver el grafico entero. */\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.simulation-chart-panel .html-content {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n}\n\n/* Envoltorio del canvas: ocupa el hueco disponible y nada mas. Chart.js, con\n   maintainAspectRatio:false, ajusta el canvas a su contenedor, asi que el\n   grafico se ve entero y con las mismas proporciones sea cual sea el panel. */\n.simulation-chart-panel .canvas-wrap {\n  position: relative;\n  width: 100%;\n  flex: 1;\n  min-height: 220px;\n}\n\n.simulation-chart-panel .canvas-wrap.hidden {\n  display: none;\n}\n\n/* El canvas ocupa exactamente su envoltorio.\n   Se posiciona en absoluto y no con height:100% porque el envoltorio es un item\n   flex de altura computada `auto`: un porcentaje contra `auto` no resuelve en\n   Chrome, y el canvas se quedaba con su altura de atributo (520), desbordando el\n   panel y recortando el grafico. Con `inset: 0` el canvas llena la caja real.\n   `!important` porque Chart.js fija width/height en linea al redimensionar. */\n.simulation-chart-panel .canvas-wrap canvas {\n  position: absolute;\n  inset: 0;\n  width: 100% !important;\n  height: 100% !important;\n  display: block;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1400px, 100%);\n  max-height: 100%;\n  box-sizing: border-box;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    /* Margen de seguridad: sin el, el modal toca los bordes de la ventana en\n       pantallas bajas. */\n    padding: 24px;\n    box-sizing: border-box;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: min(760px, 100%);\n    /* Centrado por el flex del overlay; el alto se limita al hueco disponible\n       (menos el padding del overlay) para no tocar los bordes verticales. */\n    max-height: 100%;\n    overflow-y: auto;\n    box-sizing: border-box;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n/* El resumen se pinta en DOS sitios: en el modal (que ya tiene su propio\n   titulo en la cabecera) y en linea dentro del panel de graficos. El <h2> por\n   defecto salia enorme y descompensado en ambos, asi que se limita. */\n.sim-summary-container h2 {\n  margin: 0 0 12px;\n  font-size: 16px;\n  color: #1565c0;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n\n/* --- ventana de tiempo del resumen --- */\n/* Va ARRIBA del todo y con fondo propio: es la respuesta a «¿cuándo termino?»,\n   que es la primera pregunta del usuario. Se separa visualmente de la rejilla de\n   KPI para que no se lea como una tarjeta mas. */\n.sim-ventana {\n  margin: 0 0 18px;\n  padding: 14px 16px;\n  background: #f4f8fd;\n  border: 1px solid #d5e3f5;\n  border-radius: 8px;\n}\n\n.sim-ventana h3 {\n  margin: 0 0 10px;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-ventana-tabla {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-ventana-tabla th {\n  width: 190px;\n  text-align: left;\n  vertical-align: top;\n  padding: 7px 10px 7px 0;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #555;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla td {\n  padding: 7px 0;\n  font-size: 13px;\n  color: #222;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla tr:last-child th,\n.sim-ventana-tabla tr:last-child td {\n  border-bottom: none;\n}\n\n/* Las dos cifras que importan (dias laborables y naturales) se destacan: son la\n   respuesta, y el resto son el contexto que la explica. */\n.sim-ventana-tabla tr.destacado th {\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla tr.destacado strong {\n  font-size: 1.25em;\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla .sub {\n  display: block;\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: #6b7a8d;\n  line-height: 1.4;\n  font-weight: 400;\n}\n\n.sim-ventana .sim-nota {\n  margin: 12px 0 0;\n  padding-top: 10px;\n  border-top: 1px solid #e3ebf5;\n  font-size: 11.5px;\n  color: #555;\n  line-height: 1.5;\n}\n\n.sim-ventana .sim-nota strong {\n  color: #0d47a1;\n}\n\n/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.\n   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de\n   Intl.NumberFormat); el propio texto indica si coincide o no. */\n.sim-summary-note {\n  margin: 12px 0 0;\n  padding: 9px 12px;\n  font-size: 0.9em;\n  color: #444;\n  background: #f2f7fd;\n  border: 1px solid #d6e4f5;\n  border-radius: 5px;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 

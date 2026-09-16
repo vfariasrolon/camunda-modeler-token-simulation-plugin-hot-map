@@ -712,6 +712,18 @@ Fórmulas tal como las evalúa `SimulationController.js`. `n` = ejecuciones del 
 | Costo de tiempos muertos | `totalWaitTimeCost` | moneda |
 | Cantidad de recursos | `resources.quantityRequired` | conteo |
 
+**Cómo leer el color.** La escala es **relativa al máximo de la corrida**: rojo quiere
+decir «el más alto de *este* diagrama», no «crítico» en términos absolutos. Por eso hay
+una **leyenda** (arriba a la derecha) con el rango real y su unidad. Consecuencia útil:
+un mismo dato cambia de color según el resto del diagrama — una tarea con 1 recurso sale
+azul si otra pide 5, y roja si el máximo es 1.
+
+**Cuando todas las tareas valen lo mismo** (el caso típico de *Cantidad de recursos*: todas
+con 1), no hay nada que comparar: el mapa se pinta **uniforme en frío** y la leyenda lo
+dice («Uniforme: todos 1»). Antes salía **entero rojo**, porque el valor único coincidía con
+el máximo y el máximo cae siempre en el extremo caliente; eso daba a entender que todo
+estaba al límite cuando solo significaba «sin diferencias».
+
 Los rangos de los ejes de los gráficos están **normalizados a minutos** y así se
 rotulan; antes decían `(s)` sobre valores en milisegundos, y el tiempo de espera —que
 viene en minutos— se formateaba como si fueran milisegundos (error de 60 000×).
