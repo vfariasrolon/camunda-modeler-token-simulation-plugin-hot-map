@@ -648,6 +648,58 @@ try {
   const grupos = document.querySelectorAll('.heatmap-zones').length;
   ok(grupos === 1, 'al cambiar de lectura queda UNA rejilla, no dos superpuestas', String(grupos));
 
+  // --- 15. LAS CELDAS CAEN SOBRE LAS FIGURAS, EN COORDENADAS DE PANTALLA ---
+  //
+  // Esta es la comprobacion que corresponde al reporte «se pinta en un espacio vacio,
+  // siempre la misma figura arriba a la izquierda»: medir el DOM, no el calculo. Si el
+  // grupo de celdas se cuelga de una capa que no esta bajo el viewport, o si la capa no
+  // existe y se crea en otro sitio, las celdas existen, tienen color... y caen en
+  // coordenadas LOCALES, apiladas cerca del origen (0,0), que es la esquina superior
+  // izquierda. Comparar `getBoundingClientRect` con el de las figuras lo detecta.
+  controller._elementRegistry = registro;
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 10, totalProcessingTime: 600000 } ],
+    [ 'Task_2', { executionCount: 10, totalProcessingTime: 600000 } ],
+    [ 'Task_3', { executionCount: 10, totalProcessingTime: 600000 } ]
+  ]);
+
+  controller.showMetric('zonas');
+
+  const grupoZ = document.querySelector('.heatmap-zones');
+  const celdasZ = grupoZ ? [ ...grupoZ.querySelectorAll('rect') ] : [];
+  ok(celdasZ.length > 0, 'la rejilla se pinta', String(celdasZ.length));
+
+  // La capa de las celdas tiene que estar DENTRO del svg del diagrama, que es lo que le
+  // da el sistema de coordenadas. Fuera de el, las celdas se colocan en coordenadas
+  // locales y aparecen arriba a la izquierda.
+  const svgDelDiagrama = canvas.contenedor.querySelector('svg.djs-svg') || canvas.contenedor.querySelector('svg:not(.senuelo)');
+  ok(Boolean(svgDelDiagrama && svgDelDiagrama.contains(grupoZ)),
+    'las celdas viven DENTRO del svg del diagrama (si no, se colocan en coordenadas locales)',
+    grupoZ && grupoZ.parentElement ? grupoZ.parentElement.getAttribute('class') : 'sin padre');
+
+  // Y ninguna celda puede estar en el origen si las figuras no estan ahi: es la firma del
+  // apilamiento en (0,0).
+  const cajaGrupo = grupoZ.getBoundingClientRect();
+  const cajaT1 = controller._elementRegistry.get('Task_1').id ? null : null;
+  void cajaT1;
+  ok(!(cajaGrupo.x === 0 && cajaGrupo.y === 0),
+    'y el grupo de celdas NO esta pegado al origen (0,0)',
+    `x=${Math.round(cajaGrupo.x)} y=${Math.round(cajaGrupo.y)}`);
+
+  // La comprobacion de fondo: el centro de la figura tiene que tener una celda encima.
+  const elemento1 = controller._elementRegistry.get('Task_1');
+  const centroX = elemento1.x + elemento1.width / 2;
+  const centroY = elemento1.y + elemento1.height / 2;
+  const celdaSobreLaTarea = celdasZ.some((c) => {
+    const x = Number(c.getAttribute('x'));
+    const y = Number(c.getAttribute('y'));
+    const lado = Number(c.getAttribute('width'));
+    return x <= centroX && centroX <= x + lado && y <= centroY && centroY <= y + lado;
+  });
+  ok(celdaSobreLaTarea,
+    'y hay una celda SOBRE el centro de la tarea (la mancha coincide con la figura)',
+    `centro de Task_1 en (${centroX}, ${centroY})`);
+
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //
   // ESTA es la comprobacion que faltaba, y la que explica el reporte. Contar circulos

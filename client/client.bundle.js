@@ -9826,9 +9826,12 @@ class SimulationController {
   _pintarFlujos(pares, rango) {
     this._limpiarFlujos();
 
+    const capa = this._capaOverlays();
+    if (!capa) return;
+
     const grupo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     grupo.setAttribute('class', 'heatmap-flows');
-    this._canvas.getLayer('overlays').appendChild(grupo);
+    capa.appendChild(grupo);
     this._flujosGrupo = grupo;
 
     const valores = new Map(pares.map((p) => [ p.element.id, p.value ]));
@@ -9862,6 +9865,34 @@ class SimulationController {
 
       grupo.appendChild(trazo);
     });
+  }
+
+  /**
+   * La capa donde se dibujan los overlays del mapa.
+   *
+   * POR QUE NO SE LLAMA A `getLayer('overlays')` DIRECTO: `getLayer` CREA la capa si no
+   * existe, con el indice por defecto, y LANZA si luego se pide con otro indice. Como esta
+   * capa no existia antes de estas vistas -el mapa por tareas usa `SimpleHeatSVG`, que
+   * tambien la pide-, dos vistas podian crearla/ pedirla con indices distintos y la
+   * segunda se caia a medias. Aqui se pide UNA vez, se recuerda, y si algo falla se cae al
+   * viewport en vez de dejar la vista sin pintar.
+   */
+  _capaOverlays() {
+    if (this._overlaysLayer && this._overlaysLayer.parentNode) return this._overlaysLayer;
+
+    try {
+      this._overlaysLayer = this._canvas.getLayer('overlays');
+    } catch (err) {
+      // Ya existe con otro indice (u otra vista la creo): se usa el viewport, que es el
+      // <g> que CONTIENE todas las capas y por tanto esta en coordenadas del diagrama.
+      // Se avisa en consola porque es un caso raro: si aparece, hay dos vistas peleandose
+      // por la misma capa.
+      console.warn('[mapa] no se pudo obtener la capa de overlays, se usa el viewport', err);
+      const svg = this._canvas.getContainer().querySelector('svg');
+      this._overlaysLayer = (svg && svg.querySelector(':scope > g')) || null;
+    }
+
+    return this._overlaysLayer;
   }
 
   /** Quita los trazos de la vista de estructura, si los hubiera. */
@@ -9979,6 +10010,11 @@ class SimulationController {
     // mentiria sobre donde se trabajo.
     const lado = (0,_HeatmapZones_js__WEBPACK_IMPORTED_MODULE_7__.ladoQueCabe)(conMasa, _HeatmapZones_js__WEBPACK_IMPORTED_MODULE_7__.LADO_CELDA);
 
+    // El contenedor tiene que estar en el modo «mapa»: la clase hace visibles las
+    // celdas que se salgan de la caja del SVG (`overflow: visible`). Sin ella, parte de
+    // la mancha se RECORTA y parece que faltan zonas.
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+
     const zonas = (0,_HeatmapZones_js__WEBPACK_IMPORTED_MODULE_7__.calcularZonas)(conMasa, {
       lado,
       // Los puntos del trazo de una conexion, muestreados del `path` REAL. Sin esto la
@@ -9989,9 +10025,18 @@ class SimulationController {
 
     if (!zonas.n) return { pintadas: 0 };
 
+    const capa = this._capaOverlays();
+    if (!capa) {
+      this._notifications.showNotification({
+        text: 'No se encontró la capa del diagrama donde dibujar el mapa.',
+        type: 'error', duration: 6000
+      });
+      return { pintadas: 0 };
+    }
+
     const grupo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     grupo.setAttribute('class', 'heatmap-zones');
-    this._canvas.getLayer('overlays').appendChild(grupo);
+    capa.appendChild(grupo);
     this._zonasGrupo = grupo;
 
     zonas.celdas.forEach((celda) => {
@@ -10045,6 +10090,11 @@ class SimulationController {
       this._zonasGrupo.parentNode.removeChild(this._zonasGrupo);
     }
     this._zonasGrupo = null;
+    // Se quita tambien la clase del contenedor: si no, el siguiente mapa (el de tareas)
+    // heredaria el `overflow: visible` de esta vista sin necesitarlo.
+    if (this._canvas && this._canvas.getContainer) {
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._canvas.getContainer()).remove('heatmap-shown');
+    }
   }
 
   /** Leyenda de la vista de zonas: la unidad dicha, y el aviso de la resolucion. */
