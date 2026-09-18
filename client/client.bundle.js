@@ -6466,7 +6466,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   centroDe: () => (/* binding */ centroDe),
 /* harmony export */   ladoQueCabe: () => (/* binding */ ladoQueCabe),
 /* harmony export */   radioDe: () => (/* binding */ radioDe),
-/* harmony export */   repartirMasa: () => (/* binding */ repartirMasa)
+/* harmony export */   repartirMasa: () => (/* binding */ repartirMasa),
+/* harmony export */   tieneCaja: () => (/* binding */ tieneCaja)
 /* harmony export */ });
 /**
  * Mapa de ZONAS: reparte el trabajo que pasa por el diagrama en celdas, para pintar
@@ -6554,6 +6555,26 @@ const pesoPorDistancia = (dx, dy, radioCeldas) => {
 
 /** Clave de una celda. Enteros, para que dos figuras cercanas caigan en la misma. */
 const clave = (cx, cy) => `${cx}|${cy}`;
+
+/**
+ * ¿El elemento tiene una CAJA de verdad?
+ *
+ * Una CONEXION de bpmn-js NO tiene `width`/`height`: su `x`/`y` son los de su caja
+ * envolvente, y si el elemento llega sin geometria -lo normal fuera de un diagrama
+ * pintado- valen 0. Tratarla como una figura la mandaba al origen (0,0) con toda su masa,
+ * y ahi pasaban dos cosas feas: aparecia una mancha ROJA en una esquina donde no hay
+ * ninguna figura, y como la escala es RELATIVA AL MAXIMO, todo el diagrama de verdad salia
+ * AZUL. El reporte lo describia asi: «se pintan las demas secciones pero en azul, lo unico
+ * rojo es 0,0».
+ *
+ * Una conexion sin caja no aporta: su masa va por su trazo, y sin trazo no hay donde
+ * ponerla. Mejor no pintarla que pintarla en un sitio inventado.
+ */
+const tieneCaja = (element) => {
+  const ancho = Number(element && element.width) || 0;
+  const alto = Number(element && element.height) || 0;
+  return ancho > 0 || alto > 0;
+};
 
 /**
  * Centro de una figura en px de diagrama.
@@ -6656,6 +6677,12 @@ const calcularZonas = (elementos, { lado = LADO_CELDA, radio, puntosDeFlujo } = 
     // leer un `path` del SVG no es cosa de un modulo puro.
     const puntos = puntosDeFlujo && puntosDeFlujo(element);
 
+    // SIN CAJA Y SIN TRAZO NO APORTA NADA. Es el arreglo del reporte: una conexion de
+    // bpmn-js no tiene width/height, asi que `centroDe` daba (0,0) y su masa entera caia
+    // en el origen. Ademas de la mancha roja en una esquina vacia, se llevaba el MAXIMO de
+    // la escala y todo el diagrama real salia azul.
+    if (!tieneCaja(element) && !(puntos && puntos.length)) return;
+
     if (puntos && puntos.length) {
       // Se reparte entre los puntos, no entero en cada uno: si no, una linea larga
       // sumaria su masa tantas veces como puntos tenga y se comeria la escala.
@@ -6735,6 +6762,9 @@ const celdasQueOcupa = (elementos, lado = LADO_CELDA) => {
 
   (elementos || []).forEach(({ element }) => {
     if (!element) return;
+    // Un elemento sin caja (una conexion) no ocupa celdas: contarlo estiraba el area
+    // hasta el origen y disparaba el ajuste de resolucion sin motivo.
+    if (!tieneCaja(element)) return;
     const x = Number(element.x) || 0;
     const y = Number(element.y) || 0;
     const w = Number(element.width) || 0;
@@ -10009,7 +10039,29 @@ class SimulationController {
         ? ejecuciones
         : (esFlujo ? ejecuciones : ejecuciones * (result.totalProcessingTime || 0));
 
-      if (masa > 0) conMasa.push({ element, masa });
+      if (!(masa > 0)) return;
+
+      // UNA CONEXION APORTA POR SU TRAZO O NO APORTA. Y no es una optimizacion: es el
+      // arreglo del reporte «se pintan las demas secciones pero en azul, lo unico rojo es
+      // 0,0, y no hay figuras en esa zona».
+      //
+      // La condicion NO puede ser «no tiene caja» -que es lo que puse primero, y no
+      // atrapaba el caso-: una conexion de bpmn-js no tiene width/height, pero el registro
+      // puede entregarla de cualquiera de las dos formas, y el caso que ROMPE es
+      // justamente el contrario, una conexion CON caja y sin trazo utilizable.
+      //
+      // Lo que decide es si su masa TIENE DONDE IR:
+      //
+      //   con trazo -> va repartida por la linea, que es el dibujo correcto;
+      //   sin trazo -> caeria al centro de su caja, y si esa caja esta en el origen su
+      //                masa entera termina en la esquina. Con la escala RELATIVA AL MAXIMO
+      //                se lleva el rojo y todo el diagrama real sale azul.
+      //
+      // Una FIGURA nunca se queda fuera: su caja es su sitio y ahi si hay algo que pintar.
+
+      if (esFlujo && !(this._puntosDelTrazo(element) || []).length) return;
+
+      conMasa.push({ element, masa });
     });
 
     if (!conMasa.length) return { pintadas: 0 };

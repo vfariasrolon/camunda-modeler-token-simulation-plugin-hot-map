@@ -1473,7 +1473,29 @@ export default class SimulationController {
         ? ejecuciones
         : (esFlujo ? ejecuciones : ejecuciones * (result.totalProcessingTime || 0));
 
-      if (masa > 0) conMasa.push({ element, masa });
+      if (!(masa > 0)) return;
+
+      // UNA CONEXION APORTA POR SU TRAZO O NO APORTA. Y no es una optimizacion: es el
+      // arreglo del reporte «se pintan las demas secciones pero en azul, lo unico rojo es
+      // 0,0, y no hay figuras en esa zona».
+      //
+      // La condicion NO puede ser «no tiene caja» -que es lo que puse primero, y no
+      // atrapaba el caso-: una conexion de bpmn-js no tiene width/height, pero el registro
+      // puede entregarla de cualquiera de las dos formas, y el caso que ROMPE es
+      // justamente el contrario, una conexion CON caja y sin trazo utilizable.
+      //
+      // Lo que decide es si su masa TIENE DONDE IR:
+      //
+      //   con trazo -> va repartida por la linea, que es el dibujo correcto;
+      //   sin trazo -> caeria al centro de su caja, y si esa caja esta en el origen su
+      //                masa entera termina en la esquina. Con la escala RELATIVA AL MAXIMO
+      //                se lleva el rojo y todo el diagrama real sale azul.
+      //
+      // Una FIGURA nunca se queda fuera: su caja es su sitio y ahi si hay algo que pintar.
+
+      if (esFlujo && !(this._puntosDelTrazo(element) || []).length) return;
+
+      conMasa.push({ element, masa });
     });
 
     if (!conMasa.length) return { pintadas: 0 };

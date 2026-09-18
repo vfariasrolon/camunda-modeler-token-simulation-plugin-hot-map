@@ -149,8 +149,11 @@ try {
   // CONEXIONES. `F2` es la rama que NO se recorre: existe en el diagrama y no tiene
   // entrada en los resultados, que es justo el caso que la vista de estructura tiene
   // que enseñar en gris en vez de dejar desaparecer.
+  // LAS CONEXIONES NO TIENEN CAJA, y el doble tiene que parecerse: `elemento()` da
+  // 100x80 a todo, asi que un flujo saldria con caja y el caso «conexion sin geometria»
+  // -que es el del reporte- no existiria en el arnes. Se les quita el tamaño.
   const flujosDePrueba = [ 'F1', 'F2', 'F3' ].map((id) => Object.assign(
-    elemento(id, 'bpmn:SequenceFlow', 0, 0), { __esFlujo: true }
+    elemento(id, 'bpmn:SequenceFlow', 0, 0), { __esFlujo: true, width: 0, height: 0 }
   ));
 
   const elementos = [ t1, t2, t3, gw, fin, ...flujosDePrueba ];
@@ -759,6 +762,91 @@ try {
   controller.showMetric('cost');
   ok(Boolean(document.querySelector('.heatmap-layer circle')),
     'y volver al mapa por tareas sigue pintando circulos');
+
+  // --- 17. UNA CONEXION SIN GEOMETRIA NO PUEDE ROBARLE EL ROJO AL DIAGRAMA ---
+  //
+  // Este es el reporte exacto: «se pintan las demas secciones pero en azul, lo unico rojo
+  // es 0,0, y no hay figuras en esa zona». Una conexion de bpmn-js NO tiene width/height;
+  // si su trazo no se puede muestrear, su masa caia en el centro de su caja, que sin caja
+  // es (0,0). Y como la escala es RELATIVA AL MAXIMO, esa celda inventada se llevaba el
+  // rojo y el diagrama de verdad -que si tiene valor- salia azul entero.
+  controller._elementRegistry = registro;
+  // Las tareas tienen su caja; el flujo NO, y ademas no tiene `d` en su grafico.
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 10, totalProcessingTime: 600000 } ],
+    [ 'Task_2', { executionCount: 10, totalProcessingTime: 600000 } ],
+    [ 'F3', { executionCount: 900 } ]   // una conexion sin trazo utilizable, con MUCHO trafico
+  ]);
+
+  // Se anula el trazo de los flujos para reproducir el caso: sin `d`, no hay donde poner
+  // su masa.
+  const originalPuntos = controller._puntosDelTrazo;
+  controller._puntosDelTrazo = () => null;
+
+  controller.showMetric('zonas');
+
+  const rects17 = [ ...document.querySelectorAll('.heatmap-zones rect') ];
+  ok(rects17.length > 0, 'la rejilla se pinta aunque haya una conexion sin trazo', String(rects17.length));
+
+  // NINGUNA celda en el origen: es la firma del fallo.
+  const enOrigen = rects17.filter((r) => Number(r.getAttribute('x')) === 0 && Number(r.getAttribute('y')) === 0);
+  ok(enOrigen.length === 0,
+    'y NO hay ninguna celda en (0,0): la conexion sin trazo no aporta ahi',
+    enOrigen.length ? `${enOrigen.length} celdas en el origen` : 'ninguna en el origen');
+
+  // Y el rojo esta DONDE HAY FIGURAS, no en una esquina vacia. Se comprueba que la celda
+  // mas opaca cae dentro de la caja de alguna tarea.
+  const cajas = [ 'Task_1', 'Task_2', 'Task_3' ]
+    .map((id) => controller._elementRegistry.get(id))
+    .filter(Boolean)
+    .map((el) => ({ x: el.x, y: el.y, w: el.width, h: el.height }));
+
+  const masCaliente = rects17.slice().sort((a, b) =>
+    Number(b.getAttribute('opacity')) - Number(a.getAttribute('opacity')))[0];
+  const cx17 = Number(masCaliente.getAttribute('x'));
+  const cy17 = Number(masCaliente.getAttribute('y'));
+  const lado17 = Number(masCaliente.getAttribute('width'));
+
+  const sobreAlgunaFigura = cajas.some((c) =>
+    cx17 + lado17 >= c.x && cx17 <= c.x + c.w && cy17 + lado17 >= c.y && cy17 <= c.y + c.h);
+
+  ok(sobreAlgunaFigura,
+    'y la celda MAS CALIENTE cae sobre una figura, no en una esquina vacia',
+    `la mas caliente en (${cx17}, ${cy17})`);
+
+  // Y EL CASO QUE DE VERDAD ROMPE: una conexion CON caja y sin trazo. El recorte por la
+  // caja no la elimina -tiene una caja de verdad donde caer-, asi que sin el filtro su
+  // masa entera se va a su caja, y si esa caja esta en el origen se lleva el rojo.
+  //
+  // Es lo que el usuario describe: «lo unico rojo es 0,0 y no hay figuras en esa zona».
+  const flujoConCaja = controller._elementRegistry.get('F3');
+  flujoConCaja.width = 100;
+  flujoConCaja.height = 80;
+  flujoConCaja.x = 0;
+  flujoConCaja.y = 0;
+
+  controller._puntosDelTrazo = () => null;
+  controller.showMetric('zonas');
+
+  const rects17b = [ ...document.querySelectorAll('.heatmap-zones rect') ];
+
+  // El umbral importa: las tareas del modelo de prueba estan en (100, 100), asi que su
+  // mancha LEGITIMA llega cerca del origen. Lo que se mide es que no haya celdas DENTRO
+  // de la caja de la conexion inventada -0..100-, que es donde caeria su masa entera.
+  const dentroDeLaCajaInventada = rects17b.filter((r) => {
+    const x = Number(r.getAttribute('x'));
+    const y = Number(r.getAttribute('y'));
+    const lado = Number(r.getAttribute('width'));
+    // El centro de la celda dentro de la caja 0..100: ahi no hay ninguna figura.
+    return (x + lado / 2) < 100 && (y + lado / 2) < 100;
+  });
+  ok(dentroDeLaCajaInventada.length === 0,
+    'y una conexion CON caja en el origen y SIN trazo no pinta dentro de esa caja',
+    dentroDeLaCajaInventada.length
+      ? `${dentroDeLaCajaInventada.length} celdas dentro de 0..100`
+      : 'ninguna dentro de la caja inventada');
+
+  controller._puntosDelTrazo = originalPuntos;
 
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //

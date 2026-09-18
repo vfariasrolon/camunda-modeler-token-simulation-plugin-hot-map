@@ -86,6 +86,26 @@ const pesoPorDistancia = (dx, dy, radioCeldas) => {
 const clave = (cx, cy) => `${cx}|${cy}`;
 
 /**
+ * ¿El elemento tiene una CAJA de verdad?
+ *
+ * Una CONEXION de bpmn-js NO tiene `width`/`height`: su `x`/`y` son los de su caja
+ * envolvente, y si el elemento llega sin geometria -lo normal fuera de un diagrama
+ * pintado- valen 0. Tratarla como una figura la mandaba al origen (0,0) con toda su masa,
+ * y ahi pasaban dos cosas feas: aparecia una mancha ROJA en una esquina donde no hay
+ * ninguna figura, y como la escala es RELATIVA AL MAXIMO, todo el diagrama de verdad salia
+ * AZUL. El reporte lo describia asi: «se pintan las demas secciones pero en azul, lo unico
+ * rojo es 0,0».
+ *
+ * Una conexion sin caja no aporta: su masa va por su trazo, y sin trazo no hay donde
+ * ponerla. Mejor no pintarla que pintarla en un sitio inventado.
+ */
+export const tieneCaja = (element) => {
+  const ancho = Number(element && element.width) || 0;
+  const alto = Number(element && element.height) || 0;
+  return ancho > 0 || alto > 0;
+};
+
+/**
  * Centro de una figura en px de diagrama.
  *
  * Se usa la caja de la figura, no su `x`/`y`: una conexion viene con coordenadas de
@@ -186,6 +206,12 @@ export const calcularZonas = (elementos, { lado = LADO_CELDA, radio, puntosDeFlu
     // leer un `path` del SVG no es cosa de un modulo puro.
     const puntos = puntosDeFlujo && puntosDeFlujo(element);
 
+    // SIN CAJA Y SIN TRAZO NO APORTA NADA. Es el arreglo del reporte: una conexion de
+    // bpmn-js no tiene width/height, asi que `centroDe` daba (0,0) y su masa entera caia
+    // en el origen. Ademas de la mancha roja en una esquina vacia, se llevaba el MAXIMO de
+    // la escala y todo el diagrama real salia azul.
+    if (!tieneCaja(element) && !(puntos && puntos.length)) return;
+
     if (puntos && puntos.length) {
       // Se reparte entre los puntos, no entero en cada uno: si no, una linea larga
       // sumaria su masa tantas veces como puntos tenga y se comeria la escala.
@@ -265,6 +291,9 @@ export const celdasQueOcupa = (elementos, lado = LADO_CELDA) => {
 
   (elementos || []).forEach(({ element }) => {
     if (!element) return;
+    // Un elemento sin caja (una conexion) no ocupa celdas: contarlo estiraba el area
+    // hasta el origen y disparaba el ajuste de resolucion sin motivo.
+    if (!tieneCaja(element)) return;
     const x = Number(element.x) || 0;
     const y = Number(element.y) || 0;
     const w = Number(element.width) || 0;
