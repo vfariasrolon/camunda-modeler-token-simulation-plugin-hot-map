@@ -43,6 +43,9 @@ writeFileSync(join(AQUI, 'HeatmapScale.mjs'),
 // TaskIds es puro (no importa nada del plugin), se copia tal cual.
 writeFileSync(join(AQUI, 'TaskIds.mjs'), leer('TaskIds.js'));
 
+// HeatmapZones es puro: reparte masa en celdas y no toca el DOM ni bpmn-js.
+writeFileSync(join(AQUI, 'HeatmapZones.mjs'), leer('HeatmapZones.js'));
+
 // ComparativaPlanes importa formatCurrency de util, asi que su import tambien se
 // reescribe (es puro por lo demas: ni DOM ni Chart.js).
 writeFileSync(join(AQUI, 'ComparativaPlanes.mjs'),

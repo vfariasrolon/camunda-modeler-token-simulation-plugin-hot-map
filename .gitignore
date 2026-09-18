@@ -16,5 +16,6 @@ verificacion/DataAudit.mjs
 verificacion/HeatmapScale.mjs
 verificacion/TaskIds.mjs
 verificacion/ComparativaPlanes.mjs
+verificacion/HeatmapZones.mjs
 verificacion/ModelUtil.mjs
 verificacion/util.mjs
