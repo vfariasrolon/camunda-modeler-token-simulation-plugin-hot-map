@@ -169,10 +169,29 @@ function SimpleHeatSVG(canvas) {
 
   this._canvas = canvas;
 
-  // Robustly find the <defs> element within the canvas's SVG container.
-  const svg = canvas.getContainer().querySelector('svg');
+  // La capa donde se dibujan los circulos.
+  this._layer = canvas.getLayer('overlays');
+
+  if (!this._layer) {
+    throw new Error('Could not get overlays layer from canvas.');
+  }
+
+  // LOS DEFS VAN EN EL MISMO SVG QUE LOS CIRCULOS, y esto no es un detalle.
+  //
+  // Antes se cogia el PRIMER <svg> del contenedor (`querySelector('svg')`) y se le
+  // metian los filtros. Mientras ese svg sea el del diagrama, funciona; pero los
+  // circulos llevan `filter="url(#heatmap-colorize)"` y esa referencia se resuelve
+  // A NIVEL DE DOCUMENTO, asi que si los defs acaban en otro svg -o en uno que se
+  // reemplaza- la pantalla se queda sin filtro y los circulos NO SE VEN, mientras
+  // el EXPORT si los pinta (porque reune los defs por id y los mete en el SVG que
+  // serializa). Esa asimetria -pantalla no, PNG si- es la firma de este fallo.
+  //
+  // Subiendo por el arbol desde la CAPA se garantiza que los defs y los circulos
+  // compartan svg: la referencia se resuelve en el mismo documento y deja de
+  // depender de que el navegador la busque en todo el documento.
+  const svg = this._layer.closest('svg') || canvas.getContainer().querySelector('svg');
   if (!svg) {
-    throw new Error('Could not find SVG element in canvas container.');
+    throw new Error('Could not find SVG element for the overlays layer.');
   }
 
   let defs = svg.querySelector('defs');
@@ -182,12 +201,6 @@ function SimpleHeatSVG(canvas) {
     svg.prepend(defs);
   }
   this._defs = defs;
-
-  this._layer = canvas.getLayer('overlays');
-
-  if (!this._layer) {
-    throw new Error('Could not get overlays layer from canvas.');
-  }
 
   this._max = 1;
   this._data = [];

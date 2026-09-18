@@ -13,6 +13,10 @@
  */
 import SimulationController from '@plugin/simulation/SimulationController.js';
 import SimulationEngine from '@plugin/simulation/SimulationEngine.js';
+// El CSS del plugin se importa en client.js, NO en el controlador: sin esta linea el
+// arnes mediria «se ve» SIN las hojas de estilo del plugin, y esa es justo la
+// diferencia entre la pantalla y el PNG exportado (el export no lleva el CSS).
+import '@plugin/simulation/simulation.css';
 
 let fallos = 0;
 const lineas = [];
@@ -35,16 +39,34 @@ const opacidades = () =>
 
 function crearCanvasFalso() {
   const contenedor = document.createElement('div');
+
+  // SEÑUELO A PROPOSITO: un <svg> con <defs> DELANTE del svg del diagrama, que es
+  // como se cuela el fallo. El codigo cogia `container.querySelector('svg')`, el
+  // PRIMERO, asi que con un señuelo delante los filtros del calor acababan en un svg
+  // que no es el de los circulos: la pantalla se queda sin filtro (los circulos
+  // existen y no se ven) y el EXPORT si los pinta, porque reune los defs por id.
+  // Ese es exactamente el sintoma que se reporto, y sin este señuelo el arnes no lo
+  // podria distinguir de un arreglo.
+  const senuelo = document.createElementNS(NS, 'svg');
+  senuelo.setAttribute('class', 'senuelo');
+  senuelo.appendChild(document.createElementNS(NS, 'defs'));
+  contenedor.appendChild(senuelo);
+
   const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'djs-svg');
   svg.appendChild(document.createElementNS(NS, 'defs'));
-  svg.appendChild(document.createElementNS(NS, 'g')); // capa de overlays
+  const viewport = document.createElementNS(NS, 'g');
+  viewport.setAttribute('class', 'viewport');
+  const capa = document.createElementNS(NS, 'g');
+  capa.setAttribute('class', 'layer-overlays');
+  viewport.appendChild(capa);
+  svg.appendChild(viewport);
   contenedor.appendChild(svg);
   document.body.appendChild(contenedor);
-  const overlays = svg.querySelector('g');
   return {
     contenedor,
     getContainer: () => contenedor,
-    getLayer: (name) => (name === 'overlays' ? overlays : null)
+    getLayer: (name) => (name === 'overlays' ? capa : null)
   };
 }
 
@@ -266,12 +288,147 @@ try {
   } finally {
     Object.assign(console, guardar);
   }
+  // --- 9. QUE SE VEA: el pixel, no el atributo ---
+  //
+  // ESTA es la comprobacion que faltaba, y la que explica el reporte. Contar circulos
+  // -que es lo que hacian todas las anteriores- dice que estan CREADOS, no que se VEAN:
+  // si el filtro de color no pinta, los circulos existen, la leyenda sale y el mapa no
+  // se ve. Aqui se rasteriza el SVG REAL (con su filtro y su degradado) y se cuentan
+  // los pixeles con color. Si el filtro no pinta, el SVG sale blanco y aqui se ve.
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 10, totalCost: 1000 } ],
+    [ 'Task_2', { executionCount: 10, totalCost: 5000 } ]
+  ]);
+  controller.showMetric('cost');
+
+  // --- 9a. El estilo CALCULADO de la capa, EN VIVO ---
+  //
+  // Esta es la diferencia entre «se pinta en la pantalla» y «sale en el PNG
+  // exportado», que es justo lo que se reporto: el export rasteriza el SVG SIN las
+  // hojas de estilo del documento, asi que un CSS que oculte la capa se ve en la
+  // pantalla y NO en el PNG. Mirar el atributo no basta: hay que mirar el calculado.
+  const capaCalor = document.querySelector('.heatmap-layer');
+  const circuloCalor = capaCalor ? capaCalor.querySelector('circle') : null;
+  ok(Boolean(capaCalor), 'existe la capa del calor en el documento vivo');
+
+  if (capaCalor && circuloCalor) {
+    // Se recorre la CADENA de ancestros: basta con que UNO este oculto para que no
+    // se vea nada, aunque el circulo este perfecto.
+    const cadena = [];
+    let nodo = circuloCalor;
+    while (nodo && nodo !== document.documentElement) {
+      const cs = getComputedStyle(nodo);
+      cadena.push({ clase: nodo.getAttribute('class') || nodo.nodeName, display: cs.display,
+        visibility: cs.visibility, opacity: cs.opacity, mixBlendMode: cs.mixBlendMode,
+        filter: cs.filter });
+      nodo = nodo.parentElement;
+    }
+
+    const oculto = cadena.find((n) => n.display === 'none' || n.visibility === 'hidden'
+      || Number(n.opacity) === 0);
+    ok(!oculto, 'ningun ancestro del circulo esta oculto (display/visibility/opacity)',
+      oculto ? JSON.stringify(oculto) : `${cadena.length} niveles, todos visibles`);
+
+    const csCirculo = getComputedStyle(circuloCalor);
+    ok(csCirculo.display !== 'none' && csCirculo.visibility !== 'hidden' && Number(csCirculo.opacity) > 0,
+      'el circulo resuelve visible por si mismo',
+      `display=${csCirculo.display} visibility=${csCirculo.visibility} opacity=${csCirculo.opacity}`);
+    ok(csCirculo.fill !== 'none' && csCirculo.fill !== 'rgba(0, 0, 0, 0)',
+      'y tiene relleno (la gradiente del desvanecido resuelve)', csCirculo.fill);
+
+    // --- 9b. LOS DEFS VIVEN EN EL MISMO SVG QUE LOS CIRCULOS ---
+    //
+    // Es la invariante de la que dependen las DOS cosas a la vez, y la que explica
+    // la asimetria que se reporto: la pantalla no pinta y el PNG exportado si. Los
+    // circulos llevan `filter="url(#heatmap-colorize)"`; si los defs acaban en OTRO
+    // svg del contenedor, la pantalla depende de que el navegador resuelva la
+    // referencia a nivel de documento -y cuando eso falla, los circulos se quedan
+    // sin filtro y no se ven-, mientras el export los reune por id y por eso si los
+    // pinta. Se comprueba subiendo desde el circulo: el filtro tiene que estar
+    // dentro de SU svg.
+    const svgDelCirculo = circuloCalor.closest('svg');
+    const filtroDelCirculo = svgDelCirculo && svgDelCirculo.querySelector('defs #heatmap-colorize');
+    ok(Boolean(filtroDelCirculo),
+      'el filtro del calor esta en el <defs> del MISMO svg que los circulos',
+      filtroDelCirculo ? 'mismo svg' : 'EN OTRO SITIO: la pantalla depende del documento entero');
+
+    const gradienteDelCirculo = svgDelCirculo && svgDelCirculo.querySelector('defs #heatmap-blur-gradient');
+    ok(Boolean(gradienteDelCirculo),
+      'y la gradiente del desvanecido tambien (el relleno de cada circulo)');
+
+    // El otro lado de la invariante: los defs del calor NO pueden estar repetidos por
+    // el documento. Repetir ids «funciona» pero es fragil: el navegador resuelve el
+    // primero que encuentre, y basta con que uno se quede sin la tabla de color para
+    // que el mapa salga en blanco.
+    ok(document.querySelectorAll('#heatmap-colorize').length === 1,
+      'y el filtro no esta duplicado en el documento',
+      String(document.querySelectorAll('#heatmap-colorize').length));
+  }
+
+  // Se rasteriza el svg DE LA CAPA (el del diagrama), no «el primero del
+  // contenedor»: ese primero puede ser un señuelo, y entonces se estaria midiendo el
+  // svg equivocado en vez de lo que se ve.
+  const svgEl = (document.querySelector('.heatmap-layer') || {}).closest
+    ? document.querySelector('.heatmap-layer').closest('svg')
+    : canvas.contenedor.querySelector('svg');
+  // El SVG del diagrama no lleva tamano propio (lo tiene el contenedor). Para
+  // rasterizarlo hay que darselo, y tiene que cubrir donde caen las manchas.
+  svgEl.setAttribute('width', '1000');
+  svgEl.setAttribute('height', '300');
+  svgEl.setAttribute('viewBox', '0 0 1000 300');
+  svgEl.setAttribute('xmlns', NS);
+
+  const url = 'data:image/svg+xml;charset=utf-8,'
+    + encodeURIComponent(new XMLSerializer().serializeToString(svgEl));
+
+  const volcarFinal = () => {
+    lineas.push('');
+    lineas.push(fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : `${fallos} FALLO(S)`);
+    document.getElementById('informe').textContent = lineas.join('\n');
+  };
+
+  const imagen = new Image();
+  imagen.onload = () => {
+    try {
+      const lienzo = document.createElement('canvas');
+      lienzo.width = 1000;
+      lienzo.height = 300;
+      const ctx = lienzo.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 1000, 300);
+      ctx.drawImage(imagen, 0, 0);
+
+      const px = ctx.getImageData(0, 0, 1000, 300).data;
+      let conColor = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        // «Con color» = se separa del blanco. Es la definicion de «se ve algo».
+        if (Math.abs(px[i] - 255) > 6 || Math.abs(px[i + 1] - 255) > 6 || Math.abs(px[i + 2] - 255) > 6) {
+          conColor++;
+        }
+      }
+
+      const circulos = document.querySelectorAll('.heatmap-layer circle').length;
+      ok(circulos > 0, 'el mapa tiene sus circulos creados', String(circulos));
+      ok(conColor > 500,
+        'Y SE VEN: el SVG rasterizado tiene pixeles con color (no sale blanco)',
+        `${conColor} pixeles con color de 300000`);
+    } catch (e) {
+      ok(false, 'la rasterizacion del SVG no se pudo medir', String(e && e.message));
+    }
+    volcarFinal();
+  };
+  imagen.onerror = () => {
+    ok(false, 'el SVG no se pudo cargar como imagen para medir sus pixeles');
+    volcarFinal();
+  };
+  imagen.src = url;
+  // El informe se escribe al terminar la carga (arriba). Si algo la dejara colgada,
+  // este respaldo escribe lo que ya hay, para no perder el informe entero.
+  setTimeout(volcarFinal, 3000);
 } catch (e) {
   lineas.push('EXCEPCIÓN: ' + (e && e.stack ? e.stack : e));
   fallos++;
+  lineas.push('');
+  lineas.push(fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : `${fallos} FALLO(S)`);
+  document.getElementById('informe').textContent = lineas.join('\n');
 }
-
-lineas.push('');
-lineas.push(fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : `${fallos} FALLO(S)`);
-
-document.getElementById('informe').textContent = lineas.join('\n');
