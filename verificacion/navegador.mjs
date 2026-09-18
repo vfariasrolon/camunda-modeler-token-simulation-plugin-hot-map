@@ -39,6 +39,9 @@ mkdirSync(join(TRABAJO, 'dist'), { recursive: true });
 
 const casos = [
   { nombre: 'mapa de calor (color y opacidad)', entry: 'mapa-de-calor.js' },
+  // El camino del CONTROLADOR, que es el que pinta de verdad en el Modeler: el otro
+  // arnes conduce la libreria directa y por eso no cubria la orquestacion.
+  { nombre: 'mapa de calor (las once metricas)', entry: 'mapa-de-calor-controlador.js' },
   { nombre: 'IDs de tarea (overlay y zoom)', entry: 'ids-de-tarea.js' },
   // El editor de datos es el archivo mas GRANDE del plugin (3000+ lineas) y hasta
   // ahora su unico arnes vivia en /tmp, asi que se perdia al reiniciar. Aqui queda
