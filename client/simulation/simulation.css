@@ -848,3 +848,150 @@
   border: 1px solid #d6e4f5;
   border-radius: 5px;
 }
+
+/* ---------------------------------------------------------------------------
+   Los DOS planes, frente a frente (plan normal contra horas extra).
+   Va ANTES de la rejilla de KPI a proposito: la comparacion es la pregunta
+   -«¿cuanto mas pago y cuanto antes entrego?»- y la rejilla es su desglose.
+   --------------------------------------------------------------------------- */
+
+.sim-planes {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: #fbfaf6;
+  border: 1px solid #e8e2d4;
+  border-radius: 8px;
+}
+
+.sim-planes h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #7c4a03;
+}
+
+.sim-planes-intro,
+.sim-graficos-intro {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+.sim-planes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 13px;
+  background: #fff;
+  border-radius: 6px;
+  border-left: 4px solid #9aa5b1;
+}
+
+/* El color de cada tarjeta es el MISMO que el de su grafico, y no es adorno:
+   es lo que enlaza la tarjeta con su curva sin repetir el nombre en los dos sitios. */
+.plan-card.plan-normal { border-left-color: #1d4ed8; }
+.plan-card.plan-extra { border-left-color: #b45309; }
+.plan-card.plan-delta {
+  border-left-color: #166534;
+  background: #f6faf7;
+}
+
+.plan-card .plan-nombre {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #6b7280;
+}
+
+.plan-card .plan-dato {
+  font-size: 1.35em;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.plan-card .plan-sub {
+  font-size: 11.5px;
+  color: #6b7280;
+}
+
+/* Notas de eficiencia: frases ya redactadas, elegidas por los numeros. El color
+   distingue la conclusion (aviso / mal) de los datos de apoyo (info). */
+.sim-planes .sim-notas {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sim-planes .sim-notas li {
+  padding: 8px 11px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #f3f4f6;
+  border-left: 3px solid #9aa5b1;
+  color: #374151;
+}
+
+.sim-planes .sim-notas li.nota-aviso {
+  background: #fff8ec;
+  border-left-color: #b45309;
+  color: #7c4a03;
+}
+
+.sim-planes .sim-notas li.nota-mal {
+  background: #fdeceb;
+  border-left-color: #b91c1c;
+  color: #8f1d1d;
+}
+
+.sim-planes .sim-notas li.nota-ok {
+  background: #f2f9f3;
+  border-left-color: #166534;
+  color: #14532d;
+}
+
+/* ---------------------------------------------------------------------------
+   Los dos graficos de produccion acumulada.
+   Lado a lado y con la MISMA escala: comparar es el proposito, y en columna se
+   pierde la comparacion al tener que bajar la vista.
+   --------------------------------------------------------------------------- */
+
+.sim-graficos {
+  margin: 0 0 18px;
+}
+
+.sim-graficos h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #1565c0;
+}
+
+.sim-graficos-par {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.sim-graficos-par > div {
+  background: #fff;
+  border: 1px solid #e3ebf5;
+  border-radius: 6px;
+  padding: 6px 8px 0;
+}
+
+/* La rejilla de KPI es el DESGLOSE del plan con horas extra, y se dice: sin el
+   titulo, las cifras parecian la comparacion y no lo son. */
+.sim-detalle-titulo {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #555;
+}

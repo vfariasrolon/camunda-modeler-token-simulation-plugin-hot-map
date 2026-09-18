@@ -43,6 +43,11 @@ writeFileSync(join(AQUI, 'HeatmapScale.mjs'),
 // TaskIds es puro (no importa nada del plugin), se copia tal cual.
 writeFileSync(join(AQUI, 'TaskIds.mjs'), leer('TaskIds.js'));
 
+// ComparativaPlanes importa formatCurrency de util, asi que su import tambien se
+// reescribe (es puro por lo demas: ni DOM ni Chart.js).
+writeFileSync(join(AQUI, 'ComparativaPlanes.mjs'),
+  leer('ComparativaPlanes.js').replace("from './util'", "from './util.mjs'"));
+
 // ModelUtil: `is` mira el $type del stub.
 writeFileSync(join(AQUI, 'ModelUtil.mjs'),
   'export const is = (el, tipo) => Boolean(el) && el.$type === tipo;\n');

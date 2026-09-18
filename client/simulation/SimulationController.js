@@ -10,6 +10,10 @@ import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinu
 import { describeLabor } from './LaborRules.js';
 import { rangoDeValores, opacidadDe, textoDeEscala, gradienteCss, colorFrio, GRADIENTE_ESCALA } from './HeatmapScale.js';
 import { numerarTareas, etiquetaDe } from './TaskIds.js';
+import {
+  COLOR_PLAN, compararPlanes, notasDeEficiencia, fechasUnidas,
+  serieAcumulada, techoComun, svgAcumulada, enPorcentaje
+} from './ComparativaPlanes.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -1991,10 +1995,78 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       </div>
     `;
 
+    // --- los DOS planes, frente a frente -------------------------------------
+    //
+    // El informe del plan normal se calculaba y se tiraba: llegaba a este metodo como
+    // parametro y no se usaba para nada. Aqui se le da salida, porque la comparacion es
+    // la pregunta de verdad: «si abro horas extra, ¿cuanto mas pago y cuanto antes
+    // entrego?». Las dos mitades juntas o el resumen empuja a decidir a medias.
+    const cmp = compararPlanes(normalReport, report);
+    const notas = notasDeEficiencia(cmp);
+
+    const fechas = fechasUnidas(normalReport, report);
+    const serieNormal = serieAcumulada(normalReport, fechas);
+    const serieExtra = serieAcumulada(report, fechas);
+    const techo = techoComun(serieNormal, serieExtra);
+
+    const dias = (n) => `${n} ${n === 1 ? 'día' : 'días'}`;
+    const bloquePlanes = `
+      <div class="sim-planes">
+        <h3>Los dos planes, frente a frente</h3>
+        <p class="sim-planes-intro">
+          Las dos simulaciones son <strong>una sola corrida con el mismo azar</strong>, así que la diferencia
+          entre estos dos escenarios se debe al plan y no a la suerte. No hay que ejecutar nada dos veces.
+        </p>
+        <div class="sim-planes-grid">
+          <div class="plan-card plan-normal">
+            <span class="plan-nombre">Plan normal (sin extras)</span>
+            <span class="plan-dato">${dias(cmp.plazo.normalDias)}</span>
+            <span class="plan-sub">${cmp.piezas.normal} piezas · ${formatCurrency(cmp.coste.normal, 'MXN')}</span>
+          </div>
+          <div class="plan-card plan-extra">
+            <span class="plan-nombre">Plan con horas extra</span>
+            <span class="plan-dato">${dias(cmp.plazo.extraDias)}</span>
+            <span class="plan-sub">${cmp.piezas.extra} piezas · ${formatCurrency(cmp.coste.extra, 'MXN')}</span>
+          </div>
+          <div class="plan-card plan-delta">
+            <span class="plan-nombre">Diferencia</span>
+            <span class="plan-dato">${cmp.coste.delta >= 0 ? '+' : '−'}${enPorcentaje(cmp.coste.deltaPct)} coste</span>
+            <span class="plan-sub">${cmp.plazo.adelanta ? '−' : '+'}${enPorcentaje(cmp.plazo.ahorroPct)} plazo</span>
+          </div>
+        </div>
+        <ul class="sim-notas">
+          ${notas.map((n) => `<li class="nota-${n.nivel}">${n.texto}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+
+    const bloqueGraficos = fechas.length > 1 ? `
+      <div class="sim-graficos">
+        <h3>Producción acumulada: cuándo se entrega cada plan</h3>
+        <p class="sim-graficos-intro">
+          Los dos gráficos comparten <strong>fechas y escala</strong>. Es lo que permite compararlos de un
+          vistazo: con un eje ajustado a cada uno, el plan lento se dibujaría igual de alto que el rápido.
+        </p>
+        <div class="sim-graficos-par">
+          <div>${svgAcumulada({
+            titulo: `Plan normal — ${cmp.piezas.normal} piezas en ${dias(cmp.plazo.normalDias)}`,
+            series: serieNormal, fechas, techo, color: COLOR_PLAN.normal
+          })}</div>
+          <div>${svgAcumulada({
+            titulo: `Plan con horas extra — ${cmp.piezas.extra} piezas en ${dias(cmp.plazo.extraDias)}`,
+            series: serieExtra, fechas, techo, color: COLOR_PLAN.extra
+          })}</div>
+        </div>
+      </div>
+    ` : '';
+
     return `
       <div class="sim-summary-container">
         <h2>Resumen General</h2>
         ${bloqueTiempo}
+        ${bloquePlanes}
+        ${bloqueGraficos}
+        <h3 class="sim-detalle-titulo">Detalle del plan con horas extra</h3>
         <div class="sim-summary-grid">
           <div class="sim-summary-item">
             <span class="label">Piezas Producidas:</span>

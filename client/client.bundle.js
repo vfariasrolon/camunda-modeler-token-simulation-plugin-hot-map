@@ -1240,6 +1240,401 @@ ChartPanel.$inject = [ 'canvas', 'eventBus' ];
 
 /***/ }),
 
+/***/ "./client/simulation/ComparativaPlanes.js":
+/*!************************************************!*\
+  !*** ./client/simulation/ComparativaPlanes.js ***!
+  \************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   COLOR_PLAN: () => (/* binding */ COLOR_PLAN),
+/* harmony export */   UMBRAL_PCT: () => (/* binding */ UMBRAL_PCT),
+/* harmony export */   compararPlanes: () => (/* binding */ compararPlanes),
+/* harmony export */   deltaPct: () => (/* binding */ deltaPct),
+/* harmony export */   enPorcentaje: () => (/* binding */ enPorcentaje),
+/* harmony export */   etiquetaDeFecha: () => (/* binding */ etiquetaDeFecha),
+/* harmony export */   fechasDe: () => (/* binding */ fechasDe),
+/* harmony export */   fechasUnidas: () => (/* binding */ fechasUnidas),
+/* harmony export */   notasDeEficiencia: () => (/* binding */ notasDeEficiencia),
+/* harmony export */   serieAcumulada: () => (/* binding */ serieAcumulada),
+/* harmony export */   svgAcumulada: () => (/* binding */ svgAcumulada),
+/* harmony export */   techoComun: () => (/* binding */ techoComun),
+/* harmony export */   techoRedondo: () => (/* binding */ techoRedondo)
+/* harmony export */ });
+/* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
+/**
+ * Comparativa de los DOS planes: el normal y el de horas extra.
+ *
+ * Para que sirve: en planta las dos preguntas van juntas y a menudo se contestan por
+ * separado. «Si abro horas extra, entrego antes» es cierto; «y me cuesta mas» tambien.
+ * Ensenar solo una de las dos empuja a decidir a medias, asi que aqui se calculan las
+ * dos y se redactan juntas.
+ *
+ * TRES REGLAS DE DISENO, y las tres importan:
+ *
+ *   1. LOS DOS INFORMES YA EXISTEN. El controlador los corre en la misma corrida
+ *      -misma semilla, numeros aleatorios comunes-, asi que la diferencia entre ellos
+ *      se debe AL PLAN y no a la suerte. Esto solo compara: no simula nada.
+ *
+ *   2. LOS DOS GRAFICOS COMPARTEN ESCALA Y FECHAS, y eso no es estetica. Dos graficos
+ *      con el eje ajustado a sus propios datos se ven iguales aunque uno tarde el
+ *      doble: la escala miente sin que se note. Por eso el techo y las fechas se
+ *      calculan UNA vez para los dos (`fechasUnidas`, `techoComun`).
+ *
+ *   3. LAS NOTAS SON PREDISENADAS, y por eso llevan umbrales. Una diferencia de 0,2 %
+ *      es redondeo, no un hallazgo: sin umbral la nota diria «las horas extra suben el
+ *      coste un 0,0 %», que es ruido presentado como conclusion.
+ *
+ * Este modulo es PURO (no toca el DOM ni Chart.js) para que el arnes lo pueda probar:
+ * lo que se puede equivocar aqui son los deltas y el techo comun, y eso se comprueba
+ * con numeros, no mirando un dibujo.
+ */
+
+
+
+/**
+ * Los dos colores de los planes.
+ *
+ * Salen de la paleta categorica validada por contraste y por daltonismo (el par que
+ * usaba la comparativa de produccion -azul claro y naranja claro- NO pasaba: el naranja
+ * se quedaba en 2,04:1 y se perdia con el rojo-verde, que es el daltonismo comun).
+ */
+const COLOR_PLAN = {
+  normal: '#1d4ed8',
+  extra: '#b45309'
+};
+
+/**
+ * A partir de que diferencia una nota deja de ser ruido (en %).
+ *
+ * 1 %: por debajo de eso, la diferencia entre planes es redondeo de la simulacion, y
+ * una nota que dijera «sube un 0,3 %» ensenaria a desconfiar de todas las demas.
+ */
+const UMBRAL_PCT = 1;
+
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+/** Diferencia relativa en % de `valor` frente a `base`. 0 si la base no es util. */
+const deltaPct = (valor, base) => (base > 0 ? ((valor - base) / base) * 100 : 0);
+
+const redondear = (v, dec = 1) => {
+  const f = Math.pow(10, dec);
+  return Math.round(v * f) / f;
+};
+
+/** Total de un campo del informe sumando sus resultados por elemento. */
+const totalDe = (report, campo) => {
+  if (!report || !Array.isArray(report.results)) return 0;
+  return report.results.reduce((acc, r) => acc + num(r && r[campo]), 0);
+};
+
+// ---------------------------------------------------------------------------
+// Series para los graficos
+// ---------------------------------------------------------------------------
+
+/** Las fechas con produccion de un informe, sin ordenar. */
+const fechasDe = (report) =>
+  (report && report.dailyCompletions && typeof report.dailyCompletions.keys === 'function')
+    ? Array.from(report.dailyCompletions.keys())
+    : [];
+
+/**
+ * Las fechas de los DOS planes juntas y ordenadas.
+ *
+ * La union y no la de uno: si el plan normal tarda mas dias, su ultimo dia no existe
+ * en el otro, y con un eje por plan los dos graficos no se podrian superponer al
+ * mirarlos. Se ordena por la fecha real y no por el texto, para que un cambio de mes
+ * no altere el orden.
+ */
+const fechasUnidas = (...reports) =>
+  [ ...new Set(reports.reduce((todas, r) => todas.concat(fechasDe(r)), [])) ]
+    .sort((a, b) => new Date(a) - new Date(b));
+
+/**
+ * Produccion ACUMULADA por fecha: la curva que dice cuando se entrega.
+ *
+ * Acumulada y no diaria porque la pregunta es de plazo («cuando termino»), y una
+ * barra diaria no contesta eso: obliga a sumar mentalmente para saber la fecha.
+ */
+const serieAcumulada = (report, fechas) => {
+  let acumulado = 0;
+  const mapa = (report && report.dailyCompletions) || new Map();
+  return fechas.map((f) => {
+    acumulado += num(mapa.get ? mapa.get(f) : 0);
+    return acumulado;
+  });
+};
+
+/**
+ * Techo redondo para un eje, para que las lineas de referencia caigan en numeros
+ * legibles (100, 150, 200...) y no en 87 o 213.
+ */
+const techoRedondo = (v) => {
+  if (!(v > 0)) return 1;
+  const magnitud = Math.pow(10, Math.floor(Math.log10(v)));
+  const pasos = [ 1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10 ];
+  const paso = pasos.find((p) => p * magnitud >= v);
+  return magnitud * (paso === undefined ? 10 : paso);
+};
+
+/**
+ * El techo COMUN de los dos graficos.
+ *
+ * Es la mitad de la regla 2 del encabezado: con un techo por grafico, el plan que tarda
+ * mas se dibuja igual de alto que el que tarda menos, y la comparacion visual miente.
+ */
+const techoComun = (...series) =>
+  techoRedondo(Math.max(1, ...series.reduce((todas, s) => todas.concat(s || []), [ 0 ])));
+
+/** Etiqueta corta de una fecha `AAAA-MM-DD` («18 sep») sin pasar por el huso horario. */
+const etiquetaDeFecha = (iso) => {
+  const MESES = [ 'ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic' ];
+  // Se parten las partes a mano y NO se hace `new Date(iso)`: una fecha sin hora se
+  // interpreta como UTC, y en Mexico eso adelanta el dia (el 18 se dibuja como 17).
+  const partes = String(iso).split('-');
+  if (partes.length !== 3) return String(iso);
+  const mes = MESES[Number(partes[1]) - 1] || partes[1];
+  return `${Number(partes[2])} ${mes}`;
+};
+
+// ---------------------------------------------------------------------------
+// Los numeros de la comparacion
+// ---------------------------------------------------------------------------
+
+/**
+ * Los dos planes con sus diferencias.
+ *
+ * El coste se desglosa en las tres componentes que el motor SI escribe (operacion,
+ * primas y espera) para que la diferencia se pueda explicar: con horas extra suben las
+ * primas, pero la espera puede BAJAR, y si baja mas de lo que suben las primas el plan
+ * con extras sale mas barato. Ese caso existe y es contraintuitivo, asi que se calcula.
+ */
+const compararPlanes = (normal, extra) => {
+  const piezas = {
+    normal: num(normal && normal.completedInstances),
+    extra: num(extra && extra.completedInstances)
+  };
+  piezas.iguales = piezas.normal === piezas.extra;
+
+  const coste = {
+    normal: num(normal && normal.totalCost),
+    extra: num(extra && extra.totalCost)
+  };
+  coste.delta = coste.extra - coste.normal;
+  coste.deltaPct = deltaPct(coste.extra, coste.normal);
+
+  const espera = { normal: totalDe(normal, 'totalWaitTimeCost'), extra: totalDe(extra, 'totalWaitTimeCost') };
+  espera.delta = espera.extra - espera.normal;
+
+  const primas = {
+    normal: totalDe(normal, 'totalDoubleOvertimeCost') + totalDe(normal, 'totalTripleOvertimeCost'),
+    extra: totalDe(extra, 'totalDoubleOvertimeCost') + totalDe(extra, 'totalTripleOvertimeCost')
+  };
+  primas.delta = primas.extra - primas.normal;
+
+  const plazo = {
+    normalDias: num(normal && normal.diasNaturales),
+    extraDias: num(extra && extra.diasNaturales),
+    normalLaborables: num(normal && normal.totalWorkingDays),
+    extraLaborables: num(extra && extra.totalWorkingDays)
+  };
+  plazo.deltaDias = plazo.extraDias - plazo.normalDias;
+  // El plazo se mide sobre el plan que MAS tarda (el normal, casi siempre): «con horas
+  // extra adelantas un X % de lo que tardarias sin ellas» es la frase util. Calculado
+  // al reves -sobre el plan corto- el porcentaje saldria mayor y diria otra cosa.
+  plazo.baseDias = Math.max(plazo.normalDias, plazo.extraDias);
+  plazo.ahorroPct = plazo.baseDias > 0
+    ? ((plazo.baseDias - Math.min(plazo.normalDias, plazo.extraDias)) / plazo.baseDias) * 100
+    : 0;
+  plazo.adelanta = plazo.deltaDias < 0;
+
+  const horasExtraMs = { normal: totalDe(normal, 'totalOvertime'), extra: totalDe(extra, 'totalOvertime') };
+
+  const porPieza = {
+    normal: piezas.normal > 0 ? coste.normal / piezas.normal : 0,
+    extra: piezas.extra > 0 ? coste.extra / piezas.extra : 0
+  };
+  porPieza.deltaPct = deltaPct(porPieza.extra, porPieza.normal);
+
+  return { piezas, coste, espera, primas, plazo, horasExtraMs, porPieza };
+};
+
+/** El signo explicito: un delta de 0 sin signo se lee como «no hay dato». */
+
+/** Importe con separador de miles y moneda: un «31200» suelto no se lee. */
+const importe = (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatCurrency)(num(v), 'MXN');
+
+/**
+ * Porcentaje con UN decimal, siempre igual.
+ *
+ * Existe porque mezclar formatos en la misma frase se lee mal: «pagas 20 % más y
+ * adelantas 33.3 % del plazo» parece que una cifra es mas precisa que la otra.
+ */
+const enPorcentaje = (v) => `${redondear(num(v), 1).toFixed(1)} %`;
+
+/** «3 dias» / «1 dia»: el «dia(s)» de antes se leia como un formulario sin rellenar. */
+const enDias = (n) => `${num(n)} ${num(n) === 1 ? 'día' : 'días'}`;
+
+/**
+ * Las NOTAS prediseñadas de eficiencia.
+ *
+ * Una lista de frases ya escritas, elegidas segun lo que digan los numeros. El sentido
+ * de tenerlas preescritas es que la conclusion no dependa de como la redacte quien
+ * ejecuta: el programa dice lo mismo siempre ante los mismos datos, y no puede
+ * «olvidarse» de decir que el plan barato tarda mas.
+ *
+ * LOS CUATRO CUADRANTES ESTAN CUBIERTOS, y no es lo mismo que cubrir dos:
+ *
+ *   extra mas caro  + mas rapido   -> la disyuntiva de siempre (pagar o esperar)
+ *   extra mas caro  + plazo igual  -> no hay nada que ganar: solo factura
+ *   extra mas barato + mas rapido  -> gana en las dos (la espera ahorrada manda)
+ *   extra mas barato + plazo igual -> sale mas barato sin mover el plazo
+ *
+ * El cuadrante «mas barato» es el que se cuela: cuando la nota de «sin extras es mas
+ * barato» se escribia SIEMPRE que el plazo adelantaba, en ese caso decia exactamente lo
+ * contrario de lo que pasa.
+ *
+ * `nivel` no es decoracion: 'aviso' y 'mal' pintan la nota de otro color, y lo que se
+ * pinta es lo que se lee primero.
+ */
+const notasDeEficiencia = (cmp) => {
+  const notas = [];
+  const { coste, plazo, piezas, primas, espera } = cmp;
+
+  const subeCoste = coste.deltaPct > UMBRAL_PCT;
+  const bajaCoste = coste.deltaPct < -UMBRAL_PCT;
+  const adelanta = plazo.ahorroPct > UMBRAL_PCT;
+  const mismoPlazo = !adelanta;
+
+  // Sin signo: el verbo de la frase ya dice la direccion, y «BAJA +14,1 %» se lee mal
+  // porque parece que sube.
+  const costePct = enPorcentaje(Math.abs(coste.deltaPct));
+  const plazoPct = enPorcentaje(Math.abs(plazo.ahorroPct));
+
+  if (bajaCoste) {
+    // Contraintuitivo pero real: si la espera cuesta mas que la prima, trabajar fuera
+    // de jornada sale mas barato. Callarlo seria esconder el unico caso en el que la
+    // intuicion normal esta al reves.
+    notas.push({ nivel: 'ok', texto: adelanta
+      ? `Con horas extra el coste BAJA ${costePct} Y se entrega ${plazoPct} antes: `
+        + 'aquí no hay disyuntiva, el plan con extras gana en las dos. Es el caso en el que la '
+        + 'intuición falla, porque la espera que se ahorra cuesta más que la prima.'
+      : `Con horas extra el coste BAJA ${costePct} sin mover el plazo: abrirlas sale más barato. `
+        + 'Es el caso en el que la intuición falla.' });
+  } else if (subeCoste && mismoPlazo) {
+    notas.push({ nivel: 'mal',
+      texto: `Con horas extra el coste sube ${costePct} y el plazo NO cambia: `
+        + 'el trabajo cabe en la jornada. Abrirlas solo añade factura.' });
+  } else if (subeCoste && adelanta) {
+    notas.push({ nivel: 'aviso',
+      texto: `Con horas extra pagas ${costePct} más y adelantas ${plazoPct} del plazo `
+        + `(${enDias(Math.abs(plazo.deltaDias))}): ${enDias(plazo.normalDias)} frente a ${enDias(plazo.extraDias)}.` });
+  } else {
+    notas.push({ nivel: 'ok',
+      texto: 'Los dos planes coinciden en coste y plazo: el trabajo cabe en la jornada '
+        + 'y las horas extra no cambian nada. Esta corrida no justifica ninguna de las dos.' });
+  }
+
+  // La otra cara, SOLO cuando de verdad es la otra cara: si el plan barato tambien es
+  // el rapido, ya lo dijo la nota de arriba y repetirlo al reves seria mentir.
+  if (adelanta && subeCoste) {
+    notas.push({ nivel: 'info',
+      texto: `Sin horas extra el coste es ${costePct} menor `
+        + `(${importe(Math.abs(coste.delta))} menos) pero tardas ${plazoPct} más.` });
+  }
+
+  // Que produzcan lo mismo no es un detalle: es lo que hace que comparar los totales
+  // sea legítimo en vez de una trampa.
+  if (piezas.iguales && piezas.normal > 0) {
+    notas.push({
+      nivel: 'info',
+      texto: `Los dos planes entregan las mismas ${piezas.normal} piezas: la diferencia `
+        + 'es de plazo y de dinero, no de producción, así que los totales se pueden comparar directamente.'
+    });
+  } else if (!piezas.iguales) {
+    notas.push({
+      nivel: 'mal',
+      texto: `Los planes NO entregan lo mismo (${piezas.normal} frente a ${piezas.extra}): `
+        + 'comparar el coste total sería engañoso. Usa el coste por pieza.'
+    });
+  }
+
+  // El desglose de la prima solo cuando hay prima: si el plan extra no abrio ninguna,
+  // este dato no aporta nada.
+  if (primas.delta > 0) {
+    const parte = espera.delta < 0
+      ? ` De ese aumento, la prima doble y triple son ${redondear(primas.delta)}, y la espera baja ${redondear(Math.abs(espera.delta))}.`
+      : '';
+    notas.push({ nivel: 'info', texto: `Primas de horas extra: ${importe(primas.normal)} → ${importe(primas.extra)}.${parte}` });
+  }
+
+  return notas;
+};
+
+// ---------------------------------------------------------------------------
+// El grafico, en SVG
+// ---------------------------------------------------------------------------
+
+/**
+ * Curva de produccion acumulada, en SVG.
+ *
+ * SVG y no un lienzo de Chart.js por tres motivos concretos: el resumen se INYECTA como
+ * HTML (y un <script> dentro de innerHTML no se ejecuta, asi que un grafico de Chart.js
+ * no llegaria a dibujarse), se imprime (y un SVG sale nitido en papel), y se puede
+ * comprobar en un arnes de Node, porque el SVG es texto.
+ *
+ * `techo` y `fechas` llegan de fuera y son LOS MISMOS para los dos planes: es lo que
+ * hace que los dos graficos se puedan comparar de un vistazo.
+ */
+const svgAcumulada = ({ titulo, series, fechas, techo, color, alto = 200 }) => {
+  const ancho = 640;
+  const izq = 52, der = ancho - 18, arriba = 34, abajo = alto - 26;
+  const n = fechas.length;
+
+  const x = (i) => (n <= 1 ? (izq + der) / 2 : izq + (i / (n - 1)) * (der - izq));
+  const y = (v) => abajo - (Math.min(v, techo) / techo) * (abajo - arriba);
+
+  // Lineas de referencia: cuatro tramos, siempre menos lineas que datos (una rejilla
+  // mas tupida que los datos tapa lo que se quiere leer).
+  const rejilla = [ 0, 0.25, 0.5, 0.75, 1 ].map((f) => {
+    const valor = techo * f;
+    return `<line x1="${izq}" y1="${y(valor)}" x2="${der}" y2="${y(valor)}" stroke="#e6e8eb" stroke-width="1"></line>`
+      + `<text x="${izq - 6}" y="${y(valor) + 3.5}" text-anchor="end" font-size="10" fill="#6b7280">${Math.round(valor)}</text>`;
+  }).join('');
+
+  // Etiquetas del eje X: la primera, la ultima y unas pocas en medio. Con 30 dias,
+  // ponerlas todas las convierte en una mancha gris.
+  const salto = Math.max(1, Math.ceil(n / 5));
+  const etiquetasX = fechas.map((f, i) => (
+    (i === 0 || i === n - 1 || i % salto === 0)
+      ? `<text x="${x(i)}" y="${abajo + 14}" text-anchor="middle" font-size="10" fill="#6b7280">${etiquetaDeFecha(f)}</text>`
+      : ''
+  )).join('');
+
+  const puntos = series.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+  const area = `${izq},${abajo} ${puntos} ${x(n - 1)},${abajo}`;
+  const ultimo = series.length ? series[series.length - 1] : 0;
+
+  return `
+    <svg viewBox="0 0 ${ancho} ${alto}" width="100%" height="${alto}" role="img"
+         aria-label="${titulo}. Producción acumulada por día, hasta ${ultimo} piezas.">
+      <text x="${izq}" y="16" font-size="12.5" font-weight="600" fill="#334155">${titulo}</text>
+      <text x="${izq}" y="29" font-size="10.5" fill="#6b7280">Misma escala y mismas fechas que el otro plan</text>
+      ${rejilla}
+      <polygon points="${area}" fill="${color}" opacity="0.10"></polygon>
+      <polyline points="${puntos}" fill="none" stroke="${color}" stroke-width="2.2"
+        stroke-linejoin="round" stroke-linecap="round"></polyline>
+      ${n ? `<circle cx="${x(n - 1)}" cy="${y(ultimo)}" r="3.4" fill="${color}"></circle>` : ''}
+      <text x="${der}" y="${y(ultimo) - 8}" text-anchor="end" font-size="11.5" font-weight="700" fill="${color}">${ultimo}</text>
+      ${etiquetasX}
+    </svg>`;
+};
+
+
+/***/ }),
+
 /***/ "./client/simulation/DataAudit.js":
 /*!****************************************!*\
   !*** ./client/simulation/DataAudit.js ***!
@@ -7537,8 +7932,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationController)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var chart_js_auto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! chart.js/auto */ "./node_modules/.pnpm/chart.js@4.5.0/node_modules/chart.js/auto/auto.js");
@@ -7546,6 +7941,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
 /* harmony import */ var _HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./HeatmapScale.js */ "./client/simulation/HeatmapScale.js");
 /* harmony import */ var _TaskIds_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./TaskIds.js */ "./client/simulation/TaskIds.js");
+/* harmony import */ var _ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./ComparativaPlanes.js */ "./client/simulation/ComparativaPlanes.js");
+
 
 
 
@@ -7690,7 +8087,7 @@ const limpiarNombre = (s) => String(s || '')
 // pasarian cualquier comprobacion de tipo.
 const isSimulatedElement = (element) => {
   if ((0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) return false;
-  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, type));
+  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, type));
 };
 
 class SimulationController {
@@ -7729,26 +8126,26 @@ class SimulationController {
     // data-tip alimenta el tooltip CSS (ver simulation.css). Se mantiene tambien
     // el atributo title por accesibilidad: los lectores de pantalla lo anuncian,
     // y sirve como respaldo si el CSS no carga.
-    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
-    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
-    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
-    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
-    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
-    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
-    const idsButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Mostrar IDs" data-tip="Muestra u oculta el ID de cada tarea (círculo azul). El número sigue el orden del flujo y se reasigna al añadir o borrar tareas: la clave para medir es el id del XML, no el número">${IdsIcon}</div>`);
+    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
+    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
+    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
+    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
+    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
+    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
+    const idsButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`<div class="bts-entry" title="Mostrar IDs" data-tip="Muestra u oculta el ID de cada tarea (círculo azul). El número sigue el orden del flujo y se reasigna al añadir o borrar tareas: la clave para medir es el id del XML, no el número">${IdsIcon}</div>`);
 
-    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(runButton, 'click', () => this.runSimulation());
-    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(runButton, 'click', () => this.runSimulation());
+    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
     // Por evento y no llamando al panel: el modulo del informe se registra
     // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
-    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
     // Mismo motivo: el panel de diagnostico se registra despues.
-    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
-    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(idsButton, 'click', () => (this.idsVisibles ? this.ocultarIds() : this.mostrarIds()));
+    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(idsButton, 'click', () => (this.idsVisibles ? this.ocultarIds() : this.mostrarIds()));
 
-    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
@@ -7792,9 +8189,9 @@ class SimulationController {
     return {
       normal: this.normalReport,
       overtime: this.overtimeReport,
-      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task')),
+      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Task')),
       flujos: this._elementRegistry.filter(
-        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el.source, 'bpmn:ExclusiveGateway')
+        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el.source, 'bpmn:ExclusiveGateway')
       )
     };
   }
@@ -8120,7 +8517,7 @@ class SimulationController {
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:FlowNode')) return base;
+    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:FlowNode')) return base;
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
     if (!half || half <= this._radius) return base;
@@ -8439,7 +8836,7 @@ class SimulationController {
 
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
-        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
           const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
           const value = (data && data.resources && data.resources.quantityRequired) || 0;
           pares.push({ element, value });
@@ -8591,7 +8988,7 @@ class SimulationController {
       };
     });
 
-    const raiz = this._elementRegistry.find((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent') && ((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(el) || {}).isRoot);
+    const raiz = this._elementRegistry.find((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:StartEvent') && ((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(el) || {}).isRoot);
     const archivo = this._nombreDelArchivo();
 
     return {
@@ -8650,7 +9047,7 @@ class SimulationController {
 
   /** Tareas que reciben numero: solo tareas, igual que el mapa de calor. */
   _tareasNumerables() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Task'));
   }
 
   /**
@@ -8684,7 +9081,7 @@ class SimulationController {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
-      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)('<div class="heatmap-legend"></div>');
+      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)('<div class="heatmap-legend"></div>');
       contenedor.appendChild(leyenda);
     }
 
@@ -8701,7 +9098,7 @@ class SimulationController {
 
   showOverlays(metric) {
     const elements = metric === 'resourceQuantity'
-      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task'))
+      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Task'))
       : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
 
     elements.forEach(element => {
@@ -8714,7 +9111,7 @@ class SimulationController {
             const value = (data && data.resources && data.resources.quantityRequired) || 0;
             if (value > 0) overlayText = `Recursos: ${value}`;
         } else if (result) {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalCost, 'MXN')}`;
                 else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime / (result.executionCount || 1))}`;
                 else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime)}`;
@@ -8727,7 +9124,7 @@ class SimulationController {
                 else if (metric === 'overtime') overlayText = `H. Extras: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalOvertime)}`;
                 else if (metric === 'reworkTime') overlayText = `T. Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalReworkTime)}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalWaitTimeCost, 'MXN')}`;
-            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
@@ -8737,7 +9134,7 @@ class SimulationController {
         // El guard !isLabel es imprescindible: una etiqueta de compuerta pasa
         // is(el, 'bpmn:ExclusiveGateway'), pero NO tiene `outgoing`, asi que
         // element.outgoing.forEach lanzaria TypeError.
-        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
             element.outgoing.forEach(flow => {
                 const flowResult = this.simulationResults.get(flow.id);
                 if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
@@ -9360,7 +9757,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const allElements = this._elementRegistry.getAll();
     const elementsWithData = [];
     allElements.forEach(element => {
-      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
+      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
         if (data && Object.keys(data).length > 0) {
           elementsWithData.push({
@@ -9535,10 +9932,78 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       </div>
     `;
 
+    // --- los DOS planes, frente a frente -------------------------------------
+    //
+    // El informe del plan normal se calculaba y se tiraba: llegaba a este metodo como
+    // parametro y no se usaba para nada. Aqui se le da salida, porque la comparacion es
+    // la pregunta de verdad: «si abro horas extra, ¿cuanto mas pago y cuanto antes
+    // entrego?». Las dos mitades juntas o el resumen empuja a decidir a medias.
+    const cmp = (0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.compararPlanes)(normalReport, report);
+    const notas = (0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.notasDeEficiencia)(cmp);
+
+    const fechas = (0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.fechasUnidas)(normalReport, report);
+    const serieNormal = (0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.serieAcumulada)(normalReport, fechas);
+    const serieExtra = (0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.serieAcumulada)(report, fechas);
+    const techo = (0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.techoComun)(serieNormal, serieExtra);
+
+    const dias = (n) => `${n} ${n === 1 ? 'día' : 'días'}`;
+    const bloquePlanes = `
+      <div class="sim-planes">
+        <h3>Los dos planes, frente a frente</h3>
+        <p class="sim-planes-intro">
+          Las dos simulaciones son <strong>una sola corrida con el mismo azar</strong>, así que la diferencia
+          entre estos dos escenarios se debe al plan y no a la suerte. No hay que ejecutar nada dos veces.
+        </p>
+        <div class="sim-planes-grid">
+          <div class="plan-card plan-normal">
+            <span class="plan-nombre">Plan normal (sin extras)</span>
+            <span class="plan-dato">${dias(cmp.plazo.normalDias)}</span>
+            <span class="plan-sub">${cmp.piezas.normal} piezas · ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(cmp.coste.normal, 'MXN')}</span>
+          </div>
+          <div class="plan-card plan-extra">
+            <span class="plan-nombre">Plan con horas extra</span>
+            <span class="plan-dato">${dias(cmp.plazo.extraDias)}</span>
+            <span class="plan-sub">${cmp.piezas.extra} piezas · ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(cmp.coste.extra, 'MXN')}</span>
+          </div>
+          <div class="plan-card plan-delta">
+            <span class="plan-nombre">Diferencia</span>
+            <span class="plan-dato">${cmp.coste.delta >= 0 ? '+' : '−'}${(0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.enPorcentaje)(cmp.coste.deltaPct)} coste</span>
+            <span class="plan-sub">${cmp.plazo.adelanta ? '−' : '+'}${(0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.enPorcentaje)(cmp.plazo.ahorroPct)} plazo</span>
+          </div>
+        </div>
+        <ul class="sim-notas">
+          ${notas.map((n) => `<li class="nota-${n.nivel}">${n.texto}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+
+    const bloqueGraficos = fechas.length > 1 ? `
+      <div class="sim-graficos">
+        <h3>Producción acumulada: cuándo se entrega cada plan</h3>
+        <p class="sim-graficos-intro">
+          Los dos gráficos comparten <strong>fechas y escala</strong>. Es lo que permite compararlos de un
+          vistazo: con un eje ajustado a cada uno, el plan lento se dibujaría igual de alto que el rápido.
+        </p>
+        <div class="sim-graficos-par">
+          <div>${(0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.svgAcumulada)({
+            titulo: `Plan normal — ${cmp.piezas.normal} piezas en ${dias(cmp.plazo.normalDias)}`,
+            series: serieNormal, fechas, techo, color: _ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.COLOR_PLAN.normal
+          })}</div>
+          <div>${(0,_ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.svgAcumulada)({
+            titulo: `Plan con horas extra — ${cmp.piezas.extra} piezas en ${dias(cmp.plazo.extraDias)}`,
+            series: serieExtra, fechas, techo, color: _ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__.COLOR_PLAN.extra
+          })}</div>
+        </div>
+      </div>
+    ` : '';
+
     return `
       <div class="sim-summary-container">
         <h2>Resumen General</h2>
         ${bloqueTiempo}
+        ${bloquePlanes}
+        ${bloqueGraficos}
+        <h3 class="sim-detalle-titulo">Detalle del plan con horas extra</h3>
         <div class="sim-summary-grid">
           <div class="sim-summary-item">
             <span class="label">Piezas Producidas:</span>
@@ -9664,7 +10129,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const tareas = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Task')) return;
 
       const operacion = r.totalOperationCost || 0;
       const doble = r.totalDoubleOvertimeCost || 0;
@@ -9687,7 +10152,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const caminos = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:SequenceFlow')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:SequenceFlow')) return;
       if (!r.executionCount) return;
 
       caminos.push({
@@ -9841,7 +10306,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
 
     if (metric === 'resourceQuantity') {
         this._elementRegistry.forEach(element => {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
                 const value = (data && data.resources && data.resources.quantityRequired) || 0;
                 tasks.push({ name: element.businessObject.name || element.id, value: value });
@@ -9850,7 +10315,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     } else {
         this.simulationResults.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
-            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
@@ -10182,7 +10647,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       this._heatmap = null;
     }
     const contenedor = this._canvas.getContainer();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(contenedor).remove('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(contenedor).remove('heatmap-shown');
     const leyenda = contenedor.querySelector('.heatmap-legend');
     if (leyenda) leyenda.remove();
     this._overlays.remove({ type: 'simulation-overlay' });
@@ -10191,7 +10656,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
   createHeatmap() {
     if (this._heatmap) return;
     this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   showPlanBreakdown() {
@@ -25189,7 +25654,154 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
   border: 1px solid #d6e4f5;
   border-radius: 5px;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"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","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* ID visible de una tarea: el circulo azul con el numero corto.\n   Se dibuja DENTRO de la figura (position top/right, sin offset) para no solaparse\n   con la vecina ni girar sobre el borde. El azul distingue del token de la libreria\n   -verde- cuando la simulacion esta corriendo.\n   `pointer-events: none` para que no intercepte la seleccion ni el zoom. */\n.task-id-badge {\n    width: 22px;\n    height: 22px;\n    line-height: 22px;\n    border-radius: 100%;\n    text-align: center;\n    font-size: 12px;\n    font-weight: 700;\n    font-family: 'Arial', sans-serif;\n    color: #fff;\n    background: #1565c0;\n    box-shadow: 0 1px 3px rgba(0, 0, 0, .35);\n    user-select: none;\n    pointer-events: none;\n}\n\n/* Leyenda del mapa de calor.\n   Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo\n   de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no\n   «critico». Va arriba a la derecha (la paleta esta a la izquierda y el panel de\n   graficos abajo) y lleva pointer-events: none porque es informativa: no debe\n   interceptar el zoom ni los clics del lienzo. */\n.heatmap-legend {\n    position: absolute;\n    top: 16px;\n    right: 16px;\n    width: 210px;\n    padding: 8px 10px;\n    background: #fff;\n    border: 1px solid #ccc;\n    border-radius: 6px;\n    box-shadow: 0 3px 10px rgba(0, 0, 0, .15);\n    font-size: 11.5px;\n    color: #333;\n    z-index: 90;\n    pointer-events: none;\n}\n\n.heatmap-legend-title {\n    font-weight: 700;\n    margin-bottom: 6px;\n}\n\n.heatmap-legend-bar {\n    height: 10px;\n    border-radius: 3px;\n    border: 1px solid #ddd;\n}\n\n.heatmap-legend-detail {\n    margin-top: 5px;\n    font-variant-numeric: tabular-nums;\n}\n\n.heatmap-legend-note {\n    margin-top: 3px;\n    color: #777;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado y con margen a los lados, igual que el panel de tabla.\n     `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. */\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* Sin border-box, el `width` seria el del CONTENIDO y el padding de 20px se\n     sumaria por fuera: el panel acababa midiendo 40px mas de lo previsto y los\n     margenes laterales se quedaban en 5px en vez de 24. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 16px 20px 20px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n/* Altura DEFINIDA solo cuando se muestra un grafico.\n   Hace falta para que los hijos flex (`.content` -> `.canvas-wrap`) repartan el\n   alto disponible: sin una altura definida en el panel, `flex: 1` no tiene contra\n   que repartir y el grafico se queda en su minimo (200 px). Las vistas de tabla\n   no llevan esta clase, asi que siguen ajustandose a su contenido. */\n.simulation-chart-panel.chart-mode {\n  height: min(700px, calc(100% - 32px));\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n/* La ayuda es texto largo: se limita la medida de linea para que sea legible y\n   se le da jerarquia a los apartados. */\n.simulation-chart-panel .help-content h4 {\n  margin: 0 0 10px;\n  color: #1565c0;\n}\n\n.simulation-chart-panel .help-content h5 {\n  margin: 16px 0 6px;\n  font-size: 13px;\n  color: #333;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 3px;\n}\n\n.simulation-chart-panel .help-content p,\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  max-width: 88ch;\n  line-height: 1.55;\n}\n\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  margin: 6px 0;\n  padding-left: 22px;\n}\n\n.simulation-chart-panel .help-content li {\n  margin-bottom: 5px;\n}\n\n.simulation-chart-panel .help-content code {\n  padding: 1px 4px;\n  font-size: 12px;\n  background: #eef;\n  border-radius: 3px;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  /* Columna flex: deja que el envoltorio del canvas (o la tabla) ocupen\n     EXACTAMENTE el hueco que sobra en el panel, sin desbordarlo. Antes el\n     canvas tenia una altura fija en vh y, con el panel ya limitado por su\n     max-height, se salia y obligaba a desplazarse para ver el grafico entero. */\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.simulation-chart-panel .html-content {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n}\n\n/* Envoltorio del canvas: ocupa el hueco disponible y nada mas. Chart.js, con\n   maintainAspectRatio:false, ajusta el canvas a su contenedor, asi que el\n   grafico se ve entero y con las mismas proporciones sea cual sea el panel. */\n.simulation-chart-panel .canvas-wrap {\n  position: relative;\n  width: 100%;\n  flex: 1;\n  min-height: 220px;\n}\n\n.simulation-chart-panel .canvas-wrap.hidden {\n  display: none;\n}\n\n/* El canvas ocupa exactamente su envoltorio.\n   Se posiciona en absoluto y no con height:100% porque el envoltorio es un item\n   flex de altura computada `auto`: un porcentaje contra `auto` no resuelve en\n   Chrome, y el canvas se quedaba con su altura de atributo (520), desbordando el\n   panel y recortando el grafico. Con `inset: 0` el canvas llena la caja real.\n   `!important` porque Chart.js fija width/height en linea al redimensionar. */\n.simulation-chart-panel .canvas-wrap canvas {\n  position: absolute;\n  inset: 0;\n  width: 100% !important;\n  height: 100% !important;\n  display: block;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1400px, 100%);\n  max-height: 100%;\n  box-sizing: border-box;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    /* Margen de seguridad: sin el, el modal toca los bordes de la ventana en\n       pantallas bajas. */\n    padding: 24px;\n    box-sizing: border-box;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: min(760px, 100%);\n    /* Centrado por el flex del overlay; el alto se limita al hueco disponible\n       (menos el padding del overlay) para no tocar los bordes verticales. */\n    max-height: 100%;\n    overflow-y: auto;\n    box-sizing: border-box;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n/* El resumen se pinta en DOS sitios: en el modal (que ya tiene su propio\n   titulo en la cabecera) y en linea dentro del panel de graficos. El <h2> por\n   defecto salia enorme y descompensado en ambos, asi que se limita. */\n.sim-summary-container h2 {\n  margin: 0 0 12px;\n  font-size: 16px;\n  color: #1565c0;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n\n/* --- ventana de tiempo del resumen --- */\n/* Va ARRIBA del todo y con fondo propio: es la respuesta a «¿cuándo termino?»,\n   que es la primera pregunta del usuario. Se separa visualmente de la rejilla de\n   KPI para que no se lea como una tarjeta mas. */\n.sim-ventana {\n  margin: 0 0 18px;\n  padding: 14px 16px;\n  background: #f4f8fd;\n  border: 1px solid #d5e3f5;\n  border-radius: 8px;\n}\n\n.sim-ventana h3 {\n  margin: 0 0 10px;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-ventana-tabla {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-ventana-tabla th {\n  width: 190px;\n  text-align: left;\n  vertical-align: top;\n  padding: 7px 10px 7px 0;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #555;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla td {\n  padding: 7px 0;\n  font-size: 13px;\n  color: #222;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla tr:last-child th,\n.sim-ventana-tabla tr:last-child td {\n  border-bottom: none;\n}\n\n/* Las dos cifras que importan (dias laborables y naturales) se destacan: son la\n   respuesta, y el resto son el contexto que la explica. */\n.sim-ventana-tabla tr.destacado th {\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla tr.destacado strong {\n  font-size: 1.25em;\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla .sub {\n  display: block;\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: #6b7a8d;\n  line-height: 1.4;\n  font-weight: 400;\n}\n\n.sim-ventana .sim-nota {\n  margin: 12px 0 0;\n  padding-top: 10px;\n  border-top: 1px solid #e3ebf5;\n  font-size: 11.5px;\n  color: #555;\n  line-height: 1.5;\n}\n\n.sim-ventana .sim-nota strong {\n  color: #0d47a1;\n}\n\n/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.\n   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de\n   Intl.NumberFormat); el propio texto indica si coincide o no. */\n.sim-summary-note {\n  margin: 12px 0 0;\n  padding: 9px 12px;\n  font-size: 0.9em;\n  color: #444;\n  background: #f2f7fd;\n  border: 1px solid #d6e4f5;\n  border-radius: 5px;\n}\n"],"sourceRoot":""}]);
+
+/* ---------------------------------------------------------------------------
+   Los DOS planes, frente a frente (plan normal contra horas extra).
+   Va ANTES de la rejilla de KPI a proposito: la comparacion es la pregunta
+   -«¿cuanto mas pago y cuanto antes entrego?»- y la rejilla es su desglose.
+   --------------------------------------------------------------------------- */
+
+.sim-planes {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: #fbfaf6;
+  border: 1px solid #e8e2d4;
+  border-radius: 8px;
+}
+
+.sim-planes h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #7c4a03;
+}
+
+.sim-planes-intro,
+.sim-graficos-intro {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+.sim-planes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 13px;
+  background: #fff;
+  border-radius: 6px;
+  border-left: 4px solid #9aa5b1;
+}
+
+/* El color de cada tarjeta es el MISMO que el de su grafico, y no es adorno:
+   es lo que enlaza la tarjeta con su curva sin repetir el nombre en los dos sitios. */
+.plan-card.plan-normal { border-left-color: #1d4ed8; }
+.plan-card.plan-extra { border-left-color: #b45309; }
+.plan-card.plan-delta {
+  border-left-color: #166534;
+  background: #f6faf7;
+}
+
+.plan-card .plan-nombre {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #6b7280;
+}
+
+.plan-card .plan-dato {
+  font-size: 1.35em;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.plan-card .plan-sub {
+  font-size: 11.5px;
+  color: #6b7280;
+}
+
+/* Notas de eficiencia: frases ya redactadas, elegidas por los numeros. El color
+   distingue la conclusion (aviso / mal) de los datos de apoyo (info). */
+.sim-planes .sim-notas {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sim-planes .sim-notas li {
+  padding: 8px 11px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #f3f4f6;
+  border-left: 3px solid #9aa5b1;
+  color: #374151;
+}
+
+.sim-planes .sim-notas li.nota-aviso {
+  background: #fff8ec;
+  border-left-color: #b45309;
+  color: #7c4a03;
+}
+
+.sim-planes .sim-notas li.nota-mal {
+  background: #fdeceb;
+  border-left-color: #b91c1c;
+  color: #8f1d1d;
+}
+
+.sim-planes .sim-notas li.nota-ok {
+  background: #f2f9f3;
+  border-left-color: #166534;
+  color: #14532d;
+}
+
+/* ---------------------------------------------------------------------------
+   Los dos graficos de produccion acumulada.
+   Lado a lado y con la MISMA escala: comparar es el proposito, y en columna se
+   pierde la comparacion al tener que bajar la vista.
+   --------------------------------------------------------------------------- */
+
+.sim-graficos {
+  margin: 0 0 18px;
+}
+
+.sim-graficos h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #1565c0;
+}
+
+.sim-graficos-par {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.sim-graficos-par > div {
+  background: #fff;
+  border: 1px solid #e3ebf5;
+  border-radius: 6px;
+  padding: 6px 8px 0;
+}
+
+/* La rejilla de KPI es el DESGLOSE del plan con horas extra, y se dice: sin el
+   titulo, las cifras parecian la comparacion y no lo son. */
+.sim-detalle-titulo {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #555;
+}
+`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"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","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* ID visible de una tarea: el circulo azul con el numero corto.\n   Se dibuja DENTRO de la figura (position top/right, sin offset) para no solaparse\n   con la vecina ni girar sobre el borde. El azul distingue del token de la libreria\n   -verde- cuando la simulacion esta corriendo.\n   `pointer-events: none` para que no intercepte la seleccion ni el zoom. */\n.task-id-badge {\n    width: 22px;\n    height: 22px;\n    line-height: 22px;\n    border-radius: 100%;\n    text-align: center;\n    font-size: 12px;\n    font-weight: 700;\n    font-family: 'Arial', sans-serif;\n    color: #fff;\n    background: #1565c0;\n    box-shadow: 0 1px 3px rgba(0, 0, 0, .35);\n    user-select: none;\n    pointer-events: none;\n}\n\n/* Leyenda del mapa de calor.\n   Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo\n   de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no\n   «critico». Va arriba a la derecha (la paleta esta a la izquierda y el panel de\n   graficos abajo) y lleva pointer-events: none porque es informativa: no debe\n   interceptar el zoom ni los clics del lienzo. */\n.heatmap-legend {\n    position: absolute;\n    top: 16px;\n    right: 16px;\n    width: 210px;\n    padding: 8px 10px;\n    background: #fff;\n    border: 1px solid #ccc;\n    border-radius: 6px;\n    box-shadow: 0 3px 10px rgba(0, 0, 0, .15);\n    font-size: 11.5px;\n    color: #333;\n    z-index: 90;\n    pointer-events: none;\n}\n\n.heatmap-legend-title {\n    font-weight: 700;\n    margin-bottom: 6px;\n}\n\n.heatmap-legend-bar {\n    height: 10px;\n    border-radius: 3px;\n    border: 1px solid #ddd;\n}\n\n.heatmap-legend-detail {\n    margin-top: 5px;\n    font-variant-numeric: tabular-nums;\n}\n\n.heatmap-legend-note {\n    margin-top: 3px;\n    color: #777;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado y con margen a los lados, igual que el panel de tabla.\n     `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. */\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* Sin border-box, el `width` seria el del CONTENIDO y el padding de 20px se\n     sumaria por fuera: el panel acababa midiendo 40px mas de lo previsto y los\n     margenes laterales se quedaban en 5px en vez de 24. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 16px 20px 20px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n/* Altura DEFINIDA solo cuando se muestra un grafico.\n   Hace falta para que los hijos flex (`.content` -> `.canvas-wrap`) repartan el\n   alto disponible: sin una altura definida en el panel, `flex: 1` no tiene contra\n   que repartir y el grafico se queda en su minimo (200 px). Las vistas de tabla\n   no llevan esta clase, asi que siguen ajustandose a su contenido. */\n.simulation-chart-panel.chart-mode {\n  height: min(700px, calc(100% - 32px));\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n/* La ayuda es texto largo: se limita la medida de linea para que sea legible y\n   se le da jerarquia a los apartados. */\n.simulation-chart-panel .help-content h4 {\n  margin: 0 0 10px;\n  color: #1565c0;\n}\n\n.simulation-chart-panel .help-content h5 {\n  margin: 16px 0 6px;\n  font-size: 13px;\n  color: #333;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 3px;\n}\n\n.simulation-chart-panel .help-content p,\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  max-width: 88ch;\n  line-height: 1.55;\n}\n\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  margin: 6px 0;\n  padding-left: 22px;\n}\n\n.simulation-chart-panel .help-content li {\n  margin-bottom: 5px;\n}\n\n.simulation-chart-panel .help-content code {\n  padding: 1px 4px;\n  font-size: 12px;\n  background: #eef;\n  border-radius: 3px;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  /* Columna flex: deja que el envoltorio del canvas (o la tabla) ocupen\n     EXACTAMENTE el hueco que sobra en el panel, sin desbordarlo. Antes el\n     canvas tenia una altura fija en vh y, con el panel ya limitado por su\n     max-height, se salia y obligaba a desplazarse para ver el grafico entero. */\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.simulation-chart-panel .html-content {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n}\n\n/* Envoltorio del canvas: ocupa el hueco disponible y nada mas. Chart.js, con\n   maintainAspectRatio:false, ajusta el canvas a su contenedor, asi que el\n   grafico se ve entero y con las mismas proporciones sea cual sea el panel. */\n.simulation-chart-panel .canvas-wrap {\n  position: relative;\n  width: 100%;\n  flex: 1;\n  min-height: 220px;\n}\n\n.simulation-chart-panel .canvas-wrap.hidden {\n  display: none;\n}\n\n/* El canvas ocupa exactamente su envoltorio.\n   Se posiciona en absoluto y no con height:100% porque el envoltorio es un item\n   flex de altura computada `auto`: un porcentaje contra `auto` no resuelve en\n   Chrome, y el canvas se quedaba con su altura de atributo (520), desbordando el\n   panel y recortando el grafico. Con `inset: 0` el canvas llena la caja real.\n   `!important` porque Chart.js fija width/height en linea al redimensionar. */\n.simulation-chart-panel .canvas-wrap canvas {\n  position: absolute;\n  inset: 0;\n  width: 100% !important;\n  height: 100% !important;\n  display: block;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1400px, 100%);\n  max-height: 100%;\n  box-sizing: border-box;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    /* Margen de seguridad: sin el, el modal toca los bordes de la ventana en\n       pantallas bajas. */\n    padding: 24px;\n    box-sizing: border-box;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: min(760px, 100%);\n    /* Centrado por el flex del overlay; el alto se limita al hueco disponible\n       (menos el padding del overlay) para no tocar los bordes verticales. */\n    max-height: 100%;\n    overflow-y: auto;\n    box-sizing: border-box;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n/* El resumen se pinta en DOS sitios: en el modal (que ya tiene su propio\n   titulo en la cabecera) y en linea dentro del panel de graficos. El <h2> por\n   defecto salia enorme y descompensado en ambos, asi que se limita. */\n.sim-summary-container h2 {\n  margin: 0 0 12px;\n  font-size: 16px;\n  color: #1565c0;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n\n/* --- ventana de tiempo del resumen --- */\n/* Va ARRIBA del todo y con fondo propio: es la respuesta a «¿cuándo termino?»,\n   que es la primera pregunta del usuario. Se separa visualmente de la rejilla de\n   KPI para que no se lea como una tarjeta mas. */\n.sim-ventana {\n  margin: 0 0 18px;\n  padding: 14px 16px;\n  background: #f4f8fd;\n  border: 1px solid #d5e3f5;\n  border-radius: 8px;\n}\n\n.sim-ventana h3 {\n  margin: 0 0 10px;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-ventana-tabla {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-ventana-tabla th {\n  width: 190px;\n  text-align: left;\n  vertical-align: top;\n  padding: 7px 10px 7px 0;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #555;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla td {\n  padding: 7px 0;\n  font-size: 13px;\n  color: #222;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla tr:last-child th,\n.sim-ventana-tabla tr:last-child td {\n  border-bottom: none;\n}\n\n/* Las dos cifras que importan (dias laborables y naturales) se destacan: son la\n   respuesta, y el resto son el contexto que la explica. */\n.sim-ventana-tabla tr.destacado th {\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla tr.destacado strong {\n  font-size: 1.25em;\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla .sub {\n  display: block;\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: #6b7a8d;\n  line-height: 1.4;\n  font-weight: 400;\n}\n\n.sim-ventana .sim-nota {\n  margin: 12px 0 0;\n  padding-top: 10px;\n  border-top: 1px solid #e3ebf5;\n  font-size: 11.5px;\n  color: #555;\n  line-height: 1.5;\n}\n\n.sim-ventana .sim-nota strong {\n  color: #0d47a1;\n}\n\n/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.\n   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de\n   Intl.NumberFormat); el propio texto indica si coincide o no. */\n.sim-summary-note {\n  margin: 12px 0 0;\n  padding: 9px 12px;\n  font-size: 0.9em;\n  color: #444;\n  background: #f2f7fd;\n  border: 1px solid #d6e4f5;\n  border-radius: 5px;\n}\n\n/* ---------------------------------------------------------------------------\n   Los DOS planes, frente a frente (plan normal contra horas extra).\n   Va ANTES de la rejilla de KPI a proposito: la comparacion es la pregunta\n   -«¿cuanto mas pago y cuanto antes entrego?»- y la rejilla es su desglose.\n   --------------------------------------------------------------------------- */\n\n.sim-planes {\n  margin: 0 0 18px;\n  padding: 14px 16px;\n  background: #fbfaf6;\n  border: 1px solid #e8e2d4;\n  border-radius: 8px;\n}\n\n.sim-planes h3 {\n  margin: 0 0 6px;\n  font-size: 14px;\n  color: #7c4a03;\n}\n\n.sim-planes-intro,\n.sim-graficos-intro {\n  margin: 0 0 12px;\n  font-size: 11.5px;\n  color: #6b7280;\n  line-height: 1.5;\n}\n\n.sim-planes-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));\n  gap: 12px;\n}\n\n.plan-card {\n  display: flex;\n  flex-direction: column;\n  gap: 3px;\n  padding: 11px 13px;\n  background: #fff;\n  border-radius: 6px;\n  border-left: 4px solid #9aa5b1;\n}\n\n/* El color de cada tarjeta es el MISMO que el de su grafico, y no es adorno:\n   es lo que enlaza la tarjeta con su curva sin repetir el nombre en los dos sitios. */\n.plan-card.plan-normal { border-left-color: #1d4ed8; }\n.plan-card.plan-extra { border-left-color: #b45309; }\n.plan-card.plan-delta {\n  border-left-color: #166534;\n  background: #f6faf7;\n}\n\n.plan-card .plan-nombre {\n  font-size: 11px;\n  text-transform: uppercase;\n  letter-spacing: .04em;\n  color: #6b7280;\n}\n\n.plan-card .plan-dato {\n  font-size: 1.35em;\n  font-weight: 700;\n  color: #1f2937;\n}\n\n.plan-card .plan-sub {\n  font-size: 11.5px;\n  color: #6b7280;\n}\n\n/* Notas de eficiencia: frases ya redactadas, elegidas por los numeros. El color\n   distingue la conclusion (aviso / mal) de los datos de apoyo (info). */\n.sim-planes .sim-notas {\n  margin: 12px 0 0;\n  padding: 0;\n  list-style: none;\n  display: flex;\n  flex-direction: column;\n  gap: 7px;\n}\n\n.sim-planes .sim-notas li {\n  padding: 8px 11px;\n  border-radius: 5px;\n  font-size: 12px;\n  line-height: 1.5;\n  background: #f3f4f6;\n  border-left: 3px solid #9aa5b1;\n  color: #374151;\n}\n\n.sim-planes .sim-notas li.nota-aviso {\n  background: #fff8ec;\n  border-left-color: #b45309;\n  color: #7c4a03;\n}\n\n.sim-planes .sim-notas li.nota-mal {\n  background: #fdeceb;\n  border-left-color: #b91c1c;\n  color: #8f1d1d;\n}\n\n.sim-planes .sim-notas li.nota-ok {\n  background: #f2f9f3;\n  border-left-color: #166534;\n  color: #14532d;\n}\n\n/* ---------------------------------------------------------------------------\n   Los dos graficos de produccion acumulada.\n   Lado a lado y con la MISMA escala: comparar es el proposito, y en columna se\n   pierde la comparacion al tener que bajar la vista.\n   --------------------------------------------------------------------------- */\n\n.sim-graficos {\n  margin: 0 0 18px;\n}\n\n.sim-graficos h3 {\n  margin: 0 0 6px;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-graficos-par {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));\n  gap: 14px;\n}\n\n.sim-graficos-par > div {\n  background: #fff;\n  border: 1px solid #e3ebf5;\n  border-radius: 6px;\n  padding: 6px 8px 0;\n}\n\n/* La rejilla de KPI es el DESGLOSE del plan con horas extra, y se dice: sin el\n   titulo, las cifras parecian la comparacion y no lo son. */\n.sim-detalle-titulo {\n  margin: 0 0 4px;\n  font-size: 13px;\n  color: #555;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 
