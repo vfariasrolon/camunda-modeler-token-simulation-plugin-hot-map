@@ -197,6 +197,86 @@ check('Tareas: se pintan los valores de barrera guardados',
   && celda('Task_1', 'barrier.waitMax').value === '30'
   && celda('Task_1', 'barrier.toleranceMinutes').value === '10');
 
+// --- 1b. La ayuda de COLUMNA de Tareas (el «?» de la cabecera) --------------
+//
+// El «?» va en la cabecera y NO en cada celda: con 23 columnas por tarea, un boton
+// por celda serian cientos repitiendo el mismo texto. Se comprueba justo eso, porque
+// es lo que puede degradarse al tocar la tabla: que siga habiendo 16 botones y no 16
+// por fila.
+const COLUMNAS_CON_AYUDA = [
+  'tarea', 'distribucion', 'tiempo', 'unidad', 'tiempoMin', 'tiempoModa', 'tiempoMax',
+  'tasaFallo', 'retrabajo', 'unidadRetrabajo', 'recurso', 'cant', 'frecuencia',
+  'barrera', 'carga', 'habilidad'
+];
+
+const botonesCol = Array.from(document.querySelectorAll('.btn-ayuda-col'));
+check('Tareas: cada columna con ayuda tiene su «?» en la cabecera',
+  botonesCol.length === COLUMNAS_CON_AYUDA.length,
+  `${botonesCol.length} botones / ${COLUMNAS_CON_AYUDA.length} columnas`);
+
+check('Tareas: los «?» son SOLO de cabecera, no uno por celda',
+  document.querySelectorAll('tbody .btn-ayuda-col, tbody .btn-ayuda-campo').length === 0);
+
+const claveDeBoton = (b) => b.dataset.ayudaCol;
+check('Tareas: cada «?» apunta a una columna conocida, sin repetirse',
+  new Set(botonesCol.map(claveDeBoton)).size === COLUMNAS_CON_AYUDA.length
+  && COLUMNAS_CON_AYUDA.every((c) => botonesCol.some((b) => claveDeBoton(b) === c)),
+  botonesCol.map(claveDeBoton).join(', '));
+
+// La ayuda vive en UNA fila compartida dentro del <thead>, no en la celda de la
+// cabecera: expandir esa celda descuadraria el ancho de su columna y moveria la tabla.
+const filaAyuda = document.querySelector('thead .fila-ayuda-col');
+check('Tareas: la ayuda va en una fila compartida dentro de la cabecera',
+  Boolean(filaAyuda) && filaAyuda.querySelector('td').getAttribute('colspan') === '22',
+  filaAyuda ? filaAyuda.querySelector('td').getAttribute('colspan') : 'sin fila');
+
+check('Tareas: la ayuda arranca OCULTA', filaAyuda.classList.contains('hidden'));
+
+const celdaAyuda = filaAyuda.querySelector('td');
+const botonRecurso = botonesCol.find((b) => claveDeBoton(b) === 'recurso');
+
+botonRecurso.click();
+check('Tareas: al pulsar «?» la ayuda se despliega con el texto de SU columna',
+  !filaAyuda.classList.contains('hidden')
+  && celdaAyuda.textContent.trim().length > 20
+  && /piscina/i.test(celdaAyuda.textContent),
+  celdaAyuda.textContent.slice(0, 60));
+
+check('Tareas: el «?» pulsado queda marcado y los demás no',
+  botonRecurso.classList.contains('activo')
+  && botonesCol.filter((b) => b.classList.contains('activo')).length === 1);
+
+// Volver a pulsar el MISMO replega (asi se cierra sin buscar otra columna).
+botonRecurso.click();
+check('Tareas: al volver a pulsarlo se repliega',
+  filaAyuda.classList.contains('hidden') && !botonRecurso.classList.contains('activo'));
+
+// Pulsar OTRO la cambia: es lo que se hace al ir comparando columnas.
+const botonUnidad = botonesCol.find((b) => claveDeBoton(b) === 'unidad');
+botonUnidad.click();
+const textoUnidad = celdaAyuda.textContent;
+check('Tareas: pulsar otra columna CAMBIA el texto en el mismo sitio',
+  !filaAyuda.classList.contains('hidden')
+  && textoUnidad !== ''
+  && /plural/i.test(textoUnidad)
+  && !botonRecurso.classList.contains('activo')
+  && botonUnidad.classList.contains('activo'),
+  textoUnidad.slice(0, 60));
+
+// El texto de ayuda de la unidad tiene que ser DISTINTO al del retrabajo: son dos
+// columnas «Unidad» con el mismo encabezado, y un texto clonado no ayudaria a saber
+// cual se esta leyendo.
+const botonUnidadRetrabajo = botonesCol.find((b) => claveDeBoton(b) === 'unidadRetrabajo');
+botonUnidadRetrabajo.click();
+check('Tareas: las dos columnas «Unidad» explican cosas distintas',
+  celdaAyuda.textContent !== textoUnidad, celdaAyuda.textContent.slice(0, 60));
+
+// Y se replega al volver a pulsar el mismo para dejar la tabla limpia.
+botonUnidadRetrabajo.click();
+check('Tareas: la ayuda se puede cerrar del todo',
+  filaAyuda.classList.contains('hidden')
+  && botonesCol.every((b) => !b.classList.contains('activo')));
+
 // --- 2. guardar sin tocar nada --------------------------------------------
 
 let writes = recoger('tasks');
@@ -479,6 +559,43 @@ const porDebajo = camposSobreVigencias.filter((c) =>
 check('Global: los campos que las vigencias sobrescriben están POR ENCIMA de su tabla',
   porDebajo.length === 0,
   porDebajo.length ? `POR DEBAJO: ${porDebajo.join(', ')}` : `${camposSobreVigencias.length} campos`);
+
+// --- 7c. La ayuda por campo (el «?») ----------------------------------------
+const botonesAyuda = Array.from(document.querySelectorAll('.btn-ayuda-campo'));
+check('Global: cada campo tiene su botón «?» de ayuda',
+  botonesAyuda.length === CAMPOS_GLOBALES.length,
+  `${botonesAyuda.length} botones / ${CAMPOS_GLOBALES.length} campos`);
+
+// Cada boton apunta a SU campo (no a otro) y detras hay texto de verdad.
+const sinTexto = CAMPOS_GLOBALES.filter((c) => {
+  const boton = document.querySelector(`.btn-ayuda-campo[data-ayuda="${c}"]`);
+  const caja = document.querySelector(`[data-ayuda-de="${c}"]`);
+  return !boton || !caja || caja.textContent.trim().length < 20;
+});
+check('Global: cada «?» apunta a su campo y tiene un texto de verdad detrás',
+  sinTexto.length === 0,
+  sinTexto.length ? `SIN TEXTO: ${sinTexto.join(', ')}` : 'los 30 con texto');
+
+// Y los textos tienen que ser DISTINTOS: si todos dijeran lo mismo seria relleno.
+const textosAyuda = CAMPOS_GLOBALES.map((c) =>
+  (document.querySelector(`[data-ayuda-de="${c}"]`) || {}).textContent || '');
+const distintos = new Set(textosAyuda).size;
+check('Global: los textos de ayuda son distintos entre sí',
+  distintos === CAMPOS_GLOBALES.length,
+  `${distintos} distintos de ${CAMPOS_GLOBALES.length}`);
+
+// El «?» abre y cierra. Se prueba el ciclo completo, no solo que exista el boton.
+const botonUno = botonesAyuda[0];
+const cajaUno = document.querySelector(`[data-ayuda-de="${botonUno.dataset.ayuda}"]`);
+check('Global: la ayuda arranca OCULTA', cajaUno.classList.contains('hidden'));
+
+botonUno.click();
+check('Global: al pulsar «?» la ayuda se despliega',
+  !cajaUno.classList.contains('hidden') && botonUno.classList.contains('activo'));
+
+botonUno.click();
+check('Global: al volver a pulsarlo se repliega',
+  cajaUno.classList.contains('hidden') && !botonUno.classList.contains('activo'));
 
 check('Global: se pinta la tabla de tamaños de lote (aunque esté vacía)',
   Boolean(document.querySelector('.filas-lote')) && Boolean(document.querySelector('[data-accion="anadir-lote"]')));

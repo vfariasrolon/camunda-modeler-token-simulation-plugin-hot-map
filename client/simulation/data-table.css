@@ -763,3 +763,104 @@
   fill: currentColor;
   display: block;
 }
+
+/* ---------------------------------------------------------------------------
+ * La ayuda de un campo: el boton «?» y su caja.
+ *
+ * Va al lado de la etiqueta y no como texto fijo: con 30 campos, un parrafo por campo
+ * llena la pantalla y se acaba ignorando. El «?» se pulsa en el momento de la duda.
+ * ------------------------------------------------------------------------- */
+.sim-data-table-panel .campo-nombre {
+  vertical-align: middle;
+}
+
+.sim-data-table-panel .btn-ayuda-campo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0;
+  border: 1px solid #b9c2cb;
+  border-radius: 50%;
+  background: #fff;
+  color: #6b7785;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.sim-data-table-panel .btn-ayuda-campo:hover {
+  background: #eef4fb;
+  border-color: #7ba7d4;
+  color: #1565c0;
+}
+
+/* Marcado mientras su ayuda esta desplegada, para que se vea de donde salio el texto. */
+.sim-data-table-panel .btn-ayuda-campo.activo {
+  background: #1565c0;
+  border-color: #1565c0;
+  color: #fff;
+}
+
+.sim-data-table-panel .ayuda-campo {
+  margin-top: 5px;
+  padding: 6px 8px;
+  background: #eef4fb;
+  border-left: 3px solid #1565c0;
+  border-radius: 0 4px 4px 0;
+  color: #3b4753;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+.sim-data-table-panel .ayuda-campo.hidden {
+  display: none;
+}
+
+/* El «?» de una COLUMNA de la tabla de Tareas, y su fila de ayuda.
+   Mismo aspecto que el de los campos de Global, pero sobre la cabecera. */
+.sim-data-table-panel .btn-ayuda-col {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid #c3ccd5;
+  border-radius: 50%;
+  background: #fff;
+  color: #79858f;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.sim-data-table-panel .btn-ayuda-col:hover {
+  background: #eef4fb;
+  border-color: #7ba7d4;
+  color: #1565c0;
+}
+
+.sim-data-table-panel .btn-ayuda-col.activo {
+  background: #1565c0;
+  border-color: #1565c0;
+  color: #fff;
+}
+
+/* La fila compartida: el texto de la columna que se haya pulsado. */
+.sim-data-table-panel .fila-ayuda-col.hidden {
+  display: none;
+}
+
+.sim-data-table-panel .fila-ayuda-col td {
+  padding: 0;
+  border: none;
+}

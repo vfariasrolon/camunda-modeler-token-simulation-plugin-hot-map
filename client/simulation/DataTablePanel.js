@@ -153,6 +153,36 @@ const FLOW_DEFAULTS = () => ({ branchingProbability: 0.5 });
 const pad = (n) => String(n).padStart(2, '0');
 
 /**
+ * Ayuda de cada COLUMNA de la tabla de Tareas.
+ *
+ * Va en la CABECERA y no en cada celda: son 23 columnas por tarea, o sea cientos de
+ * botones repitiendo el mismo texto. En una tabla ancha el «?» pertenece a la columna,
+ * no al dato de una fila.
+ *
+ * Los textos dicen QUE VALOR ESPERA la columna, que es justo lo que no se deduce del
+ * encabezado: que la unidad va en plural, que «moda» es el mas probable y no la media,
+ * o que la carga se aplica segun la frecuencia.
+ */
+const AYUDA_COLUMNAS = {
+  tarea: 'El nombre de la tarea en el diagrama. Es solo lectura: se cambia en el diagrama, no aqui.',
+  distribucion: 'fija (un solo valor) o triangular (min/moda/max). Decide que columnas de tiempo se leen: con triangular, la columna «Tiempo» se IGNORA.',
+  tiempo: 'La duracion base. Con distribucion «fija» es el valor unico; con triangular no se lee.',
+  unidad: 'minutes, hours o seconds, siempre en PLURAL. Un «minute» en singular se interpretaria como milisegundos: un error de 60 000 veces y sin ningun aviso.',
+  tiempoMin: 'Solo con triangular: el tiempo mas corto observado. Tiene que ser menor o igual que la moda.',
+  tiempoModa: 'Solo con triangular: el tiempo MAS PROBABLE, no la media. Tiene que quedar entre el minimo y el maximo.',
+  tiempoMax: 'Solo con triangular: el tiempo mas largo observado. Tiene que ser mayor o igual que la moda.',
+  tasaFallo: 'Probabilidad de fallo por ejecucion, en PORCENTAJE: 5 significa que falla 5 de cada 100. El motor lo guarda como 0,05.',
+  retrabajo: 'Lo que se tarda en rehacer una pieza que fallo. Se suma al tiempo de ciclo.',
+  unidadRetrabajo: 'La unidad del retrabajo, en plural. Puede ser distinta de la del proceso.',
+  recurso: 'La piscina que consume la tarea. Tiene que existir en la pestaña Recursos: un nombre que no exista hace que el recurso se ignore EN SILENCIO.',
+  cant: 'Cuantas unidades de la piscina toma la tarea a la vez. Con 2, ocupa dos personas mientras dura.',
+  frecuencia: 'por token (una vez por pieza) o por lote (una sola vez por lote). Decide si el tiempo y la carga se aplican por pieza o por lote.',
+  barrera: 'Solo con «por lote»: quien firma el lote. disp. es la probabilidad de que atiendan; si no atienden, se espera una triangular min/moda/max; tol. es cuanto se tolera antes de marcarlo.',
+  carga: 'Opcional. Cargada es la masa que SOPORTA la persona; arrastrada, la que desliza. Se aplican segun la frecuencia: por pieza o una vez por lote.',
+  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Para varias, separadas por comas.'
+};
+
+/**
  * Los campos de la configuracion global, agrupados por FAMILIA.
  *
  * POR QUE POR FAMILIAS: antes eran 30 campos en UNA tabla plana, y cada familia
@@ -175,11 +205,11 @@ const GLOBAL_SECCIONES = [
     clave: 'simulacion',
     titulo: 'Simulación',
     campos: [
-      { key: 'startDate', label: 'Fecha de inicio de la simulación', kind: 'text', path: [ 'startDate' ] },
-      { key: 'simulationConfig.runValue', label: 'Instancias a simular', kind: 'number', path: [ 'simulationConfig', 'runValue' ], min: 1 },
-      { key: 'arrivalRate.value', label: 'Tasa de llegada: cuántas llegadas por unidad', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0 },
-      { key: 'arrivalRate.unit', label: 'Tasa de llegada: unidad de tiempo', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ] },
-      { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true }
+      { key: 'startDate', label: 'Fecha de inicio de la simulación', kind: 'text', path: [ 'startDate' ], ayuda: 'Formato AAAA-MM-DD. Es la fecha desde la que corre el reloj: de ella dependen los festivos, las vigencias laborales y en qué día de la semana cae cada jornada.' },
+      { key: 'simulationConfig.runValue', label: 'Instancias a simular', kind: 'number', path: [ 'simulationConfig', 'runValue' ], min: 1, ayuda: 'Un número entero: cuántos casos se simulan. Más instancias dan resultados más estables y tardan más.' },
+      { key: 'arrivalRate.value', label: 'Tasa de llegada: cuántas llegadas por unidad', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0, ayuda: 'Cuántas llegadas POR unidad de tiempo. Es una TASA, no un intervalo: con unidad hour, 1 es «una llegada cada hora»; con minute, 60 es «una por SEGUNDO», y las 1000 instancias entran en la primera jornada.' },
+      { key: 'arrivalRate.unit', label: 'Tasa de llegada: unidad de tiempo', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ], ayuda: 'La unidad de la tasa: minute, hour o second. Va en SINGULAR, al revés que las unidades de tiempo de las tareas, que van en plural (minutes).' },
+      { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true, ayuda: 'Déjala vacía para que se sortee una (y quede guardada en la corrida). Pon un número entero para repetir exactamente el mismo resultado.' }
     ],
     nota: `
       <strong>La tasa de llegada es una tasa, no un intervalo.</strong>
@@ -197,9 +227,9 @@ const GLOBAL_SECCIONES = [
     clave: 'jornada',
     titulo: 'Jornada y descansos',
     campos: [
-      { key: 'calendar.workingDays', label: 'Días laborables (0=Dom … 6=Sáb)', kind: 'days', path: [ 'calendar', 'workingDays' ] },
-      { key: 'calendar.workingHours.start', label: 'Hora de entrada', kind: 'time', path: [ 'calendar', 'workingHours', 'start' ] },
-      { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ] }
+      { key: 'calendar.workingDays', label: 'Días laborables (0=Dom … 6=Sáb)', kind: 'days', path: [ 'calendar', 'workingDays' ], ayuda: 'Marca los días en que la planta abre. Un festivo que caiga en un día NO laborable no cierra nada: ya estaba cerrado, así que no cuenta como festivo trabajado.' },
+      { key: 'calendar.workingHours.start', label: 'Hora de entrada', kind: 'time', path: [ 'calendar', 'workingHours', 'start' ], ayuda: 'Hora del reloj (HH:MM) a la que empieza la jornada. Tiene que ser anterior a la hora de salida.' },
+      { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ], ayuda: 'Hora del reloj (HH:MM) a la que termina la jornada. Lo que se trabaje después de esta hora se cuenta como tiempo extra.' }
     ],
     lista: 'descansos',
     nota: `
@@ -214,11 +244,11 @@ const GLOBAL_SECCIONES = [
     // se puede discutir y una curva si: se mueve el valor, se ve la forma, y se decide
     // si se parece a la planta.
     campos: [
-      { key: 'warmup.shape', label: 'Arranque: forma', kind: 'select', options: WARMUP_SHAPES, path: [ 'warmup', 'shape' ] },
-      { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1 },
-      { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1 },
-      { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ] },
-      { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] }
+      { key: 'warmup.shape', label: 'Arranque: forma', kind: 'select', options: WARMUP_SHAPES, path: [ 'warmup', 'shape' ], ayuda: 'Forma de la recuperación del ritmo: exponential, logarithmic o linear. Dice CÓMO se vuelve al 100 %, no cuánto se tarda.' },
+      { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1, ayuda: 'Entre 0,05 y 1. Eficiencia del primer minuto: 0,6 significa que arranca al 60 % del ritmo normal.' },
+      { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1, ayuda: 'Minutos que tarda en llegarse al 100 %. Con 45, a los 45 minutos la planta ya rinde como en régimen.' },
+      { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ], ayuda: 'Marcado: el arranque lento también ocurre al empezar la jornada de cada día.' },
+      { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ], ayuda: 'Marcado: el arranque lento también ocurre al volver de cada descanso.' }
     ],
     lista: 'curva',
     nota: `
@@ -235,13 +265,13 @@ const GLOBAL_SECCIONES = [
     // En modo lote las instancias llegan en GRUPOS y los grupos van en serie (uno
     // detras de otro): no hay dos lotes a la vez.
     campos: [
-      { key: 'lots.enabled', label: 'Llegadas por LOTES (en serie)', kind: 'checkbox', path: [ 'lots', 'enabled' ] },
-      { key: 'lots.sizeMode', label: 'Tamaño de lote: modo', kind: 'select', options: LOT_SIZE_MODES, path: [ 'lots', 'sizeMode' ] },
-      { key: 'lots.size', label: 'Tamaño de lote: fijo', kind: 'number', path: [ 'lots', 'size' ], min: 1 },
-      { key: 'lots.min', label: 'Tamaño de lote: mínimo (triangular)', kind: 'number', path: [ 'lots', 'min' ], min: 1 },
-      { key: 'lots.mode', label: 'Tamaño de lote: moda (triangular)', kind: 'number', path: [ 'lots', 'mode' ], min: 1 },
-      { key: 'lots.max', label: 'Tamaño de lote: máximo (triangular)', kind: 'number', path: [ 'lots', 'max' ], min: 1 },
-      { key: 'lots.stopMinutes', label: 'Parón de cambio entre lotes (min)', kind: 'number', path: [ 'lots', 'stopMinutes' ], min: 0 }
+      { key: 'lots.enabled', label: 'Llegadas por LOTES (en serie)', kind: 'checkbox', path: [ 'lots', 'enabled' ], ayuda: 'Con esto activo, las instancias llegan en grupos y los grupos van EN SERIE (uno detrás de otro), no solapados: no hay dos lotes a la vez.' },
+      { key: 'lots.sizeMode', label: 'Tamaño de lote: modo', kind: 'select', options: LOT_SIZE_MODES, path: [ 'lots', 'sizeMode' ], ayuda: 'fixed (siempre el mismo tamaño), triangular (mín/moda/máx) o empirical (tu propia tabla de frecuencias, más abajo).' },
+      { key: 'lots.size', label: 'Tamaño de lote: fijo', kind: 'number', path: [ 'lots', 'size' ], min: 1, ayuda: 'Tamaño de cada lote. Solo se lee con el modo fixed.' },
+      { key: 'lots.min', label: 'Tamaño de lote: mínimo (triangular)', kind: 'number', path: [ 'lots', 'min' ], min: 1, ayuda: 'Solo con el modo triangular. Tiene que cumplirse mínimo ≤ moda ≤ máximo, o el guardado lo rechaza.' },
+      { key: 'lots.mode', label: 'Tamaño de lote: moda (triangular)', kind: 'number', path: [ 'lots', 'mode' ], min: 1, ayuda: 'Solo con el modo triangular. Es el tamaño más probable, no la media.' },
+      { key: 'lots.max', label: 'Tamaño de lote: máximo (triangular)', kind: 'number', path: [ 'lots', 'max' ], min: 1, ayuda: 'Solo con el modo triangular. El tamaño mayor que se ha visto.' },
+      { key: 'lots.stopMinutes', label: 'Parón de cambio entre lotes (min)', kind: 'number', path: [ 'lots', 'stopMinutes' ], min: 0, ayuda: 'Parón de cambio: minutos que se pierden al cerrar un lote y preparar el siguiente.' }
     ],
     lista: 'loteEmpirico'
   },
@@ -253,14 +283,14 @@ const GLOBAL_SECCIONES = [
     // para no migrar nada, pero van en la MISMA seccion que `labor` porque la tabla de
     // vigencias los pisa a los dos.
     campos: [
-      { key: 'overtime.limitHours', label: 'Límite de horas antes de recargo', kind: 'number', path: [ 'overtime', 'limitHours' ], min: 0 },
-      { key: 'overtime.payMultiplier', label: 'Multiplicador de hora extra (x)', kind: 'number', path: [ 'overtime', 'payMultiplier' ], min: 1 },
-      { key: 'overtime.excessPayMultiplier', label: 'Multiplicador de exceso (x)', kind: 'number', path: [ 'overtime', 'excessPayMultiplier' ], min: 1 },
-      { key: 'labor.shiftType', label: 'Tipo de jornada (LFT art. 61)', kind: 'select', options: TURNOS, path: [ 'labor', 'shiftType' ] },
-      { key: 'labor.dailyOvertimeLimitHours', label: 'Tope de horas extra al día (art. 65)', kind: 'number', path: [ 'labor', 'dailyOvertimeLimitHours' ], min: 0 },
-      { key: 'labor.maxOvertimeDaysPerWeek', label: 'Máximo de días con extra por semana (art. 65)', kind: 'number', path: [ 'labor', 'maxOvertimeDaysPerWeek' ], min: 0 },
-      { key: 'labor.sundayPremiumPercent', label: 'Prima dominical en % (art. 73)', kind: 'number', path: [ 'labor', 'sundayPremiumPercent' ], min: 0 },
-      { key: 'labor.holidayPremiumPercent', label: 'Prima de día festivo en % (art. 74, 0 = no se paga)', kind: 'number', path: [ 'labor', 'holidayPremiumPercent' ], min: 0 }
+      { key: 'overtime.limitHours', label: 'Límite de horas antes de recargo', kind: 'number', path: [ 'overtime', 'limitHours' ], min: 0, ayuda: 'Horas de jornada antes de que empiece el recargo. Con una jornada de 09:00 a 17:00, aquí va 8.' },
+      { key: 'overtime.payMultiplier', label: 'Multiplicador de hora extra (x)', kind: 'number', path: [ 'overtime', 'payMultiplier' ], min: 1, ayuda: 'Cuánto se paga la hora extra, en veces. 2 = al doble. Es la columna «prima doble» de la tabla de vigencias.' },
+      { key: 'overtime.excessPayMultiplier', label: 'Multiplicador de exceso (x)', kind: 'number', path: [ 'overtime', 'excessPayMultiplier' ], min: 1, ayuda: 'Cuánto se paga lo que pasa del tope legal, en veces. 3 = al triple. Es la columna «prima triple».' },
+      { key: 'labor.shiftType', label: 'Tipo de jornada (LFT art. 61)', kind: 'select', options: TURNOS, path: [ 'labor', 'shiftType' ], ayuda: 'Turno declarado (LFT art. 61): diurna, mixta o nocturna. De aquí sale la jornada base ANTES de contar tiempo extra.' },
+      { key: 'labor.dailyOvertimeLimitHours', label: 'Tope de horas extra al día (art. 65)', kind: 'number', path: [ 'labor', 'dailyOvertimeLimitHours' ], min: 0, ayuda: 'Tope de horas extra AL DÍA (LFT art. 65). No cambia lo que se paga: marca a partir de cuándo el plan es ilegal.' },
+      { key: 'labor.maxOvertimeDaysPerWeek', label: 'Máximo de días con extra por semana (art. 65)', kind: 'number', path: [ 'labor', 'maxOvertimeDaysPerWeek' ], min: 0, ayuda: 'Cuántos días por semana pueden llevar tiempo extra (art. 65). Igual que el anterior: es de legalidad, no de pago.' },
+      { key: 'labor.sundayPremiumPercent', label: 'Prima dominical en % (art. 73)', kind: 'number', path: [ 'labor', 'sundayPremiumPercent' ], min: 0, ayuda: 'Porcentaje extra sobre el salario del domingo (art. 73). Pon 0 si en tu planta esa prima no se paga.' },
+      { key: 'labor.holidayPremiumPercent', label: 'Prima de día festivo en % (art. 74, 0 = no se paga)', kind: 'number', path: [ 'labor', 'holidayPremiumPercent' ], min: 0, ayuda: 'Porcentaje extra por trabajar un día festivo (art. 74). 0 = no se paga, y el informe lo deja dicho.' }
     ],
     lista: 'vigencias',
     nota: `
@@ -273,8 +303,8 @@ const GLOBAL_SECCIONES = [
     clave: 'costo',
     titulo: 'Costo',
     campos: [
-      { key: 'cost.baseRatePerHour', label: 'Tarifa base por hora', kind: 'number', path: [ 'cost', 'baseRatePerHour' ], min: 0 },
-      { key: 'cost.waitCostPerHour', label: 'Costo de espera por hora', kind: 'number', path: [ 'cost', 'waitCostPerHour' ], min: 0 }
+      { key: 'cost.baseRatePerHour', label: 'Tarifa base por hora', kind: 'number', path: [ 'cost', 'baseRatePerHour' ], min: 0, ayuda: 'Lo que cuesta una hora de trabajo en régimen normal. Es la base de todo el coste del proceso.' },
+      { key: 'cost.waitCostPerHour', label: 'Costo de espera por hora', kind: 'number', path: [ 'cost', 'waitCostPerHour' ], min: 0, ayuda: 'Lo que cuesta una hora de una unidad parada esperando. Pon 0 si la espera no se costea.' }
     ]
   }
 ];
@@ -884,26 +914,38 @@ export default class DataTablePanel {
 
     const nombresPool = this._getPools().map((p) => p.name).filter(Boolean);
 
+    // La ayuda de columna va en la CABECERA. Con 23 columnas por tarea, un «?» en cada
+    // celda serian cientos de botones repitiendo el mismo texto.
+    const th = (texto, clave, extra) => `<th${extra || ''}>${texto}${AYUDA_COLUMNAS[clave]
+      ? ` <button class="btn-ayuda-col" type="button" data-ayuda-col="${clave}"
+           title="Qué valor espera esta columna">?</button>` : ''}</th>`;
+
     this._body.innerHTML = `
       <table class="data-table">
         <thead>
           <tr>
-            <th class="col-name">Tarea</th>
-            <th>Distribución</th>
-            <th>Tiempo</th>
-            <th>Unidad</th>
-            <th>mín</th>
-            <th>moda</th>
-            <th>máx</th>
-            <th>Tasa de fallo</th>
-            <th>Retrabajo</th>
-            <th>Unidad</th>
-            <th>Recurso</th>
-            <th>Cant.</th>
-            <th>Frecuencia</th>
-            <th colspan="5" class="col-barrera">Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia</th>
-            <th colspan="3" class="col-carga">Carga física (opcional): cargada kg · arrastrada kg · distancia m</th>
-            <th>Habilidad</th>
+            ${th('Tarea', 'tarea', ' class="col-name"')}
+            ${th('Distribución', 'distribucion')}
+            ${th('Tiempo', 'tiempo')}
+            ${th('Unidad', 'unidad')}
+            ${th('mín', 'tiempoMin')}
+            ${th('moda', 'tiempoModa')}
+            ${th('máx', 'tiempoMax')}
+            ${th('Tasa de fallo', 'tasaFallo')}
+            ${th('Retrabajo', 'retrabajo')}
+            ${th('Unidad', 'unidadRetrabajo')}
+            ${th('Recurso', 'recurso')}
+            ${th('Cant.', 'cant')}
+            ${th('Frecuencia', 'frecuencia')}
+            ${th('Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia', 'barrera', ' colspan="5" class="col-barrera"')}
+            ${th('Carga física (opcional): cargada kg · arrastrada kg · distancia m', 'carga', ' colspan="3" class="col-carga"')}
+            ${th('Habilidad', 'habilidad')}
+          </tr>
+          <!-- Fila COMPARTIDA para la ayuda de columna. No se expande la celda de la
+               cabecera: eso descuadraria el ancho de esa columna y moveria toda la
+               tabla. Aqui el texto sale siempre en el mismo sitio y el ancho no cambia. -->
+          <tr class="fila-ayuda-col hidden">
+            <td colspan="22" class="ayuda-campo"></td>
           </tr>
         </thead>
         <tbody>
@@ -1023,6 +1065,50 @@ export default class DataTablePanel {
     `;
 
     this._bindBarrera();
+    this._bindAyudaDeColumnas();
+  }
+
+  /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
+  _bindAyudaDeColumnas() {
+    this._body.querySelectorAll('.btn-ayuda-col').forEach((btn) => {
+      domEvent.bind(btn, 'click', (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        this._mostrarAyudaColumna(btn.dataset.ayudaCol);
+      });
+    });
+  }
+
+  /**
+   * Pinta la ayuda de una columna en la fila compartida bajo la cabecera.
+   *
+   * Volver a pulsar el MISMO «?» la repliega, para que se pueda cerrar sin buscar otra
+   * columna. Pulsar otro la cambia, que es lo que se espera al ir comparando columnas.
+   */
+  _mostrarAyudaColumna(clave) {
+    const fila = this._body.querySelector('.fila-ayuda-col');
+    if (!fila) return;
+
+    const celda = fila.querySelector('td');
+    const texto = AYUDA_COLUMNAS[clave] || '';
+    const yaVisible = !domClasses(fila).has('hidden');
+
+    if (yaVisible && celda.textContent === texto) {
+      domClasses(fila).add('hidden');
+      this._marcarAyudaColumna(null);
+      return;
+    }
+
+    celda.textContent = texto;
+    domClasses(fila).remove('hidden');
+    this._marcarAyudaColumna(clave);
+  }
+
+  /** Deja marcado el «?» de la columna cuya ayuda esta a la vista. */
+  _marcarAyudaColumna(clave) {
+    this._body.querySelectorAll('.btn-ayuda-col').forEach((b) => {
+      if (b.dataset.ayudaCol === clave) domClasses(b).add('activo');
+      else domClasses(b).remove('activo');
+    });
   }
 
   /**
@@ -1479,7 +1565,12 @@ export default class DataTablePanel {
         <tbody>
           ${s.campos.map((f) => `
             <tr data-el-id="${element.id}">
-              <td class="col-campo" title="${esc(f.key)}">${esc(f.label)}</td>
+              <td class="col-campo" title="${esc(f.key)}">
+                <span class="campo-nombre">${esc(f.label)}</span>${f.ayuda
+                  ? ` <button class="btn-ayuda-campo" type="button" data-ayuda="${esc(f.key)}"
+                       title="Qué valor espera este campo">?</button>` : ''}
+                ${f.ayuda ? `<div class="ayuda-campo hidden" data-ayuda-de="${esc(f.key)}">${f.ayuda}</div>` : ''}
+              </td>
               <td>${cell(f)}</td>
             </tr>`).join('')}
         </tbody>
@@ -1739,6 +1830,38 @@ export default class DataTablePanel {
       if (!campo) return;
       domEvent.bind(campo, 'input', () => this._refrescarCurvaArranque());
       domEvent.bind(campo, 'change', () => this._refrescarCurvaArranque());
+    });
+
+    this._bindAyudaPorCampo(this._body);
+  }
+
+  /**
+   * El boton «?» que va al lado de cada campo.
+   *
+   * POR QUE AL LADO DEL CAMPO Y NO UN TEXTO FIJO: con 30 campos, un parrafo por campo
+   * llena la pantalla y se acaba ignorando. El «?» se pulsa en el momento de la duda,
+   * que es exactamente cuando se lee. Y va con clic y no con `data-tip` (que es hover)
+   * porque en un desplegable o en una casilla el hover no llega.
+   *
+   * El texto se saca del propio campo (`f.ayuda`), no de una lista aparte: anadir un
+   * campo sin ayuda es posible, pero no puede quedar desincronizada una ayuda de su
+   * campo.
+   */
+  _bindAyudaPorCampo(alcance) {
+    alcance.querySelectorAll('.btn-ayuda-campo').forEach((btn) => {
+      domEvent.bind(btn, 'click', (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        const caja = alcance.querySelector(`[data-ayuda-de="${btn.dataset.ayuda}"]`);
+        if (!caja) return;
+
+        if (domClasses(caja).has('hidden')) {
+          domClasses(caja).remove('hidden');
+          domClasses(btn).add('activo');
+        } else {
+          domClasses(caja).add('hidden');
+          domClasses(btn).remove('activo');
+        }
+      });
     });
   }
 
