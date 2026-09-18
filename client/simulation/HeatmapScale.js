@@ -194,7 +194,13 @@ export const ESCALA_POR_METRICA = {
   // una linea no tiene tiempo ni costo, solo paso. El motor ya lo cuenta para cada
   // flujo al elegir la salida (`findNextElements`), asi que la vista de estructura no
   // necesita tocar el motor.
-  trafico: { etiqueta: 'Tráfico (pasos por la conexión)', formatea: (v) => `${Math.round(v)} pasos` }
+  trafico: { etiqueta: 'Tráfico (pasos por la conexión)', formatea: (v) => `${Math.round(v)} pasos` },
+  // ZONAS: la unica metrica que no se mide POR ELEMENTO. Lo que se pinta es una rejilla
+  // y el numero de cada celda son minutos de trabajo que pasaron por ese trozo, asi que
+  // su formato es de tiempo. Va aqui y no en el modulo de zonas para que el guardian de
+  // la escala siga cubriendo TODAS las metricas de la paleta: una sin formato dejaria la
+  // leyenda sin unidad, que es justo lo que convierte el mapa en una medicion.
+  zonas: { etiqueta: 'Trabajo por zona', formatea: (v) => formatMinutes(v / 60000) }
 };
 
 /** Escala de una métrica. Cae a una genérica si algún día se añade una nueva. */

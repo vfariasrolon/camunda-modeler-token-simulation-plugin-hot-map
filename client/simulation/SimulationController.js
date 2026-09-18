@@ -14,6 +14,7 @@ import {
   COLOR_PLAN, compararPlanes, notasDeEficiencia, fechasUnidas,
   serieAcumulada, techoComun, svgAcumulada, enPorcentaje
 } from './ComparativaPlanes.js';
+import { LADO_CELDA, calcularZonas, ladoQueCabe } from './HeatmapZones.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -980,6 +981,31 @@ export default class SimulationController {
       return;
     }
 
+    // ZONAS: una rejilla sobre el diagrama con el trabajo que paso por cada trozo.
+    // Va aparte de las otras dos porque no comparte ni la forma de pintar (celdas, no
+    // circulos ni trazos) ni la unidad (minutos de trabajo, no costo ni pasos).
+    if (metric === 'zonas') {
+      if (!this.simulationResults) {
+        this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
+        return;
+      }
+
+      const resultado = this._pintarZonas();
+      if (!resultado.pintadas) {
+        this._notifications.showNotification({
+          text: 'No hay trabajo que dibujar: ninguna tarea se ejecutó en esta corrida.',
+          type: 'warning', duration: 5000
+        });
+        return;
+      }
+
+      const lado = resultado.zonas.lado;
+      this._leyendaZonas(resultado.zonas, lado, lado !== LADO_CELDA);
+      // Sin circulos ni trazos: esta vista ES la rejilla. Mezclarlas daria dos
+      // significados al mismo color sobre el mismo diagrama.
+      return;
+    }
+
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
         if (is(element, 'bpmn:Task') && !isLabel(element)) {
@@ -1363,6 +1389,151 @@ export default class SimulationController {
       <div class="heatmap-legend-bar" style="background: ${barra};"></div>
       <div class="heatmap-legend-detail">${texto.detalle}</div>
       <div class="heatmap-legend-note">Trazos = conexiones · Círculos = figuras. ${texto.nota}</div>
+      ${aviso}
+    `;
+  }
+
+  /**
+   * VISTA DE ZONAS: una rejilla de celdas sobre el diagrama, con el trabajo que paso
+   * por cada trozo.
+   *
+   * POR QUE HACIA FALTA, y por que no bastaba con lo de antes: un circulo esta centrado
+   * en su figura, asi que por construccion NUNCA puede formar una mancha; dice «esta
+   * tarea es cara», no «por aqui pasa el trabajo». La zona contesta lo otro, y para eso
+   * hay que SUMAR la masa de varias figuras cercanas en un mismo trozo de diagrama.
+   *
+   * Las celdas viven en COORDENADAS DEL DIAGRAMA y escalan con el zoom. Es lo que hace
+   * que una celda sea siempre el mismo trozo de planta y que el numero de la leyenda
+   * signifique lo mismo sin importar como se este mirando. Si la rejilla se anclara a la
+   * pantalla, «1.200 minutos en esta celda» cambiaria de significado al acercarse.
+   *
+   * Como lo normal es mirarlo SIN zoom, ese es el caso que se cuida: a zoom alto las
+   * celdas crecen, que es una esquina rara y no rompe nada.
+   */
+  _pintarZonas() {
+    this._limpiarZonas();
+
+    // La masa de cada figura es MINUTOS DE TRABAJO: ejecuciones x duracion. No el
+    // costo ni la espera, porque la pregunta de esta vista es por donde paso el
+    // trabajo, y eso es tiempo que estuvo ocupado, no dinero.
+    const conMasa = [];
+    this.simulationResults.forEach((result, elementId) => {
+      const element = this._elementRegistry.get(elementId);
+      if (!element || isLabel(element) || !this._esTrafizable(element)) return;
+
+      const ejecuciones = result.executionCount || 0;
+      const duracion = result.totalProcessingTime || 0;
+      // Una conexion no tiene duracion acumulada: su masa es su trafico. Sin esto, las
+      // lineas no aportarian nada y la mancha no seguiria el camino del trabajo.
+      const masa = is(element, 'bpmn:SequenceFlow') ? ejecuciones : ejecuciones * duracion;
+      if (masa > 0) conMasa.push({ element, masa });
+    });
+
+    if (!conMasa.length) return { pintadas: 0 };
+
+    // El lado de celda se ajusta si el diagrama es enorme: decenas de miles de nodos
+    // cuelgan el Modeler. Se sube la celda en vez de recortar zonas, porque recortar
+    // mentiria sobre donde se trabajo.
+    const lado = ladoQueCabe(conMasa, LADO_CELDA);
+
+    const zonas = calcularZonas(conMasa, {
+      lado,
+      // Los puntos del trazo de una conexion, muestreados del `path` REAL. Sin esto la
+      // masa de una linea caeria en el centro de su caja envolvente, que en una linea
+      // diagonal esta en el aire y la mancha saldria separada del trazo.
+      puntosDeFlujo: (flujo) => this._puntosDelTrazo(flujo)
+    });
+
+    if (!zonas.n) return { pintadas: 0 };
+
+    const grupo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    grupo.setAttribute('class', 'heatmap-zones');
+    this._canvas.getLayer('overlays').appendChild(grupo);
+    this._zonasGrupo = grupo;
+
+    zonas.celdas.forEach((celda) => {
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', celda.x);
+      rect.setAttribute('y', celda.y);
+      // Se solapa un pixel para que no queden rendijas blancas entre celdas contiguas:
+      // sin eso la mancha sale cuadriculada en vez de continua.
+      rect.setAttribute('width', zonas.lado + 1);
+      rect.setAttribute('height', zonas.lado + 1);
+      rect.setAttribute('fill', colorDeValor(zonas.max > 0 ? celda.valor / zonas.max : 0));
+      rect.setAttribute('opacity', String(opacidadDe(celda.valor, zonas.max, false)));
+      grupo.appendChild(rect);
+    });
+
+    return { pintadas: zonas.celdas.length, zonas };
+  }
+
+  /**
+   * Puntos de muestreo del trazo de una conexion.
+   *
+   * `getPointAtLength` da puntos SOBRE el trazo real, que es lo que hace que la mancha
+   * siga la linea y no su caja. Se muestrea cada 40 px: mas denso no cambia el dibujo
+   * (el reparto tiene radio de dos celdas) y multiplica el trabajo.
+   */
+  _puntosDelTrazo(flujo, cada = 40) {
+    const grafico = this._canvas.getGraphics(flujo);
+    if (!grafico || typeof grafico.getTotalLength !== 'function') return null;
+
+    let largo = 0;
+    try {
+      largo = grafico.getTotalLength();
+    } catch (err) {
+      return null;
+    }
+    // En el arnes y en un diagrama sin renderizar el largo puede ser 0: se cae al
+    // centro en vez de devolver una lista vacia, que dejaria la linea sin masa.
+    if (!(largo > 0)) return null;
+
+    const puntos = [];
+    for (let d = 0; d <= largo; d += cada) {
+      const p = grafico.getPointAtLength(d);
+      puntos.push({ x: p.x, y: p.y });
+    }
+    return puntos.length ? puntos : null;
+  }
+
+  /** Quita las celdas del mapa de zonas, si las hubiera. */
+  _limpiarZonas() {
+    if (this._zonasGrupo && this._zonasGrupo.parentNode) {
+      this._zonasGrupo.parentNode.removeChild(this._zonasGrupo);
+    }
+    this._zonasGrupo = null;
+  }
+
+  /** Leyenda de la vista de zonas: la unidad dicha, y el aviso de la resolucion. */
+  _leyendaZonas(zonas, lado, ajustado) {
+    const contenedor = this._canvas.getContainer();
+    let leyenda = contenedor.querySelector('.heatmap-legend');
+    if (!leyenda) {
+      leyenda = domify('<div class="heatmap-legend"></div>');
+      contenedor.appendChild(leyenda);
+    }
+
+    const minutos = (v) => formatMinutes(v / 60000);
+    const rango = rangoDeValores(zonas.celdas.map((c) => c.valor));
+    const barra = rango.uniforme ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA);
+
+    // La unidad va ESCRITA. Sin ella, «1.200» en una celda no dice nada, y una mancha
+    // que nadie sabe de donde sale es un adorno, no una medicion.
+    const detalle = rango.uniforme
+      ? `Uniforme: todas ${minutos(rango.min)} de trabajo`
+      : `${minutos(rango.min)} → ${minutos(rango.max)} de trabajo por celda`;
+
+    const aviso = ajustado
+      ? `<div class="heatmap-legend-warn">El diagrama es grande y se subió el tamaño de celda a`
+        + ` <strong>${lado} px</strong> para no colgar el navegador. La mancha se lee igual, con menos`
+        + ' resolución: cada celda cubre más zona.</div>'
+      : '';
+
+    leyenda.innerHTML = `
+      <div class="heatmap-legend-title">Zonas · trabajo que pasa por cada trozo del diagrama</div>
+      <div class="heatmap-legend-bar" style="background: ${barra};"></div>
+      <div class="heatmap-legend-detail">${detalle}</div>
+      <div class="heatmap-legend-note">${zonas.n} celdas de ${lado} px · la celda es un trozo fijo del diagrama, así que el número no cambia al acercarse. ${rango.uniforme ? '' : 'Azul = menos trabajo · Rojo = más'}</div>
       ${aviso}
     `;
   }
@@ -2939,6 +3110,8 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     // Los trazos de la vista de estructura se van con el mapa: si quedaran, cambiar
     // de metrica dejaria las lineas pintadas de una lectura que ya no es la activa.
     this._limpiarFlujos();
+    // Y las celdas del mapa de zonas, por lo mismo.
+    this._limpiarZonas();
     const contenedor = this._canvas.getContainer();
     domClasses(contenedor).remove('heatmap-shown');
     const leyenda = contenedor.querySelector('.heatmap-legend');

@@ -79,7 +79,19 @@ function crearCanvasFalso() {
         // Una conexion de verdad tiene su trazo; una figura (tarea) no lleva `d`, y
         // ese caso hay que conservarlo: si el arnes diera `d` a todo, la vista
         // pintaria tareas como si fuesen lineas y la prueba no lo notaria.
-        if (element.__esFlujo) p.setAttribute('d', 'M 0 0 L 100 100');
+        if (element.__esFlujo) {
+          // F2 es la conexion LARGA y AISLADA: es la unica con la que se puede medir si
+          // la masa sigue el trazo o cae en un punto. Las otras dos caen juntas y su
+          // reparto no cambia el resultado, asi que no sirven para comprobarlo.
+          // El largo se decide por el ID, y el cache de abajo es por ID: si F2 ya se
+          // pidio antes (el caso 12 usa los mismos flujos), su path quedaria con el largo
+          // viejo. Por eso el largo va en el ELEMENTO y no en el ID: cada vez que se pide
+          // un trazo se recalcula, y no se hereda el del caso anterior.
+          const largo = element.__largoTrazo || (element.id === 'F2' ? 2000 : 300);
+          p.setAttribute('d', `M 0 0 L ${largo} 0`);
+          p.getTotalLength = () => largo;
+          p.getPointAtLength = (d) => ({ x: d, y: 0 });
+        }
         graficos.set(element.id, p);
       }
       return graficos.get(element.id);
@@ -452,6 +464,109 @@ try {
   controller.showMetric('cost');
   ok(!document.querySelector('.heatmap-flows'),
     'al cambiar de métrica los trazos se van con el mapa');
+
+  // --- 13. EL MAPA DE ZONAS: la mancha continua ---
+  //
+  // Lo que el mapa por tareas NO puede dar por construccion: un circulo esta centrado en
+  // su figura, asi que no puede formar una mancha. Aqui la masa de varias figuras suma
+  // en celdas del diagrama, y lo que se reparte son MINUTOS DE TRABAJO.
+  controller._elementRegistry = registro;
+  controller.simulationResults = new Map([
+    // Una tarea con mucho trabajo (10 x 60s) y otra con poco (2 x 60s): el contraste
+    // tiene que verse en el color.
+    [ 'Task_1', { executionCount: 10, totalProcessingTime: 600000 } ],
+    [ 'Task_2', { executionCount: 2, totalProcessingTime: 120000 } ],
+    // LA CONEXION LARGA Y CON MASA: F2 es la unica con la que se puede medir si la masa
+    // sigue el trazo. Las anteriores comprobaciones de esta vista pasaban por las TAREAS
+    // -F2 no tenia masa, asi que su funcion de puntos no se llamaba nunca-, y por eso
+    // daban verde con la costura rota.
+    [ 'F2', { executionCount: 10 } ]
+  ]);
+
+  controller.showMetric('zonas');
+
+  const grupoZonas = document.querySelector('.heatmap-zones');
+  ok(Boolean(grupoZonas), 'el mapa de zonas crea su grupo de celdas');
+
+  const celdas = grupoZonas ? [ ...grupoZonas.querySelectorAll('rect') ] : [];
+  ok(celdas.length > 0, 'y pinta celdas', String(celdas.length));
+  ok(celdas.every((c) => Number(c.getAttribute('width')) > 0 && Number(c.getAttribute('height')) > 0),
+    'todas las celdas tienen tamaño');
+
+  // LA MANCHA: mas celdas que figuras. Con una celda por figura seguiriamos teniendo el
+  // mismo cuadro por tarea, que es lo que ya hacian los circulos.
+  // LA MANCHA, medida de forma DISCRIMINANTE: se compara con el numero de elementos que
+  // aportan masa. Con una celda por figura saldrian tantas celdas como figuras, que es
+  // exactamente el cuadro por tarea de los circulos. El reparto tiene que dar MAS.
+  //
+  // Ojo: no vale comparar contra un numero fijo. En este arnes entran tambien las
+  // conexiones del registro, y su numero cambia con la geometria del doble, asi que la
+  // comprobacion tiene que ser RELATIVA a los elementos con masa.
+  const aportantes = [ ...controller.simulationResults.entries() ].filter(([id, r]) => {
+    const el = controller._elementRegistry.get(id);
+    if (!el) return false;
+    const masa = el.__esFlujo ? (r.executionCount || 0) : (r.executionCount || 0) * (r.totalProcessingTime || 0);
+    return masa > 0;
+  }).length;
+  ok(celdas.length > aportantes,
+    'hay MAS celdas que elementos con masa (la mancha se extiende, no es un cuadro por elemento)',
+    `${celdas.length} celdas para ${aportantes} elementos con masa`);
+
+  // El color sigue la escala: no todas del mismo color.
+  const colores = new Set(celdas.map((c) => c.getAttribute('fill')));
+  ok(colores.size > 1, 'y las celdas se colorean por su valor, no todas igual', `${colores.size} colores`);
+
+  // LA MASA DE UNA CONEXION SIGUE SU TRAZO, y esto se mide con F2, que es larga y esta
+  // lejos de todo: si su masa cayera en el centro de su caja en vez de repartirse por la
+  // linea, aparecerian celdas al principio y al final del trazo que no existirian (y al
+  // reves). Se comprueba que hay celdas a lo LARGO de la conexion.
+  controller.showMetric('zonas');
+  const celdasTrazo = [ ...document.querySelectorAll('.heatmap-zones rect') ]
+    .map((r) => Number(r.getAttribute('x')))
+    .filter((x) => x >= 0 && x <= 2000);
+  // LA COSTURA: que la vista USE los puntos del trazo de la conexion.
+  //
+  // Se probo antes con geometria real -un trazo de 2000 px- y la comprobacion no
+  // distinguia: las columnas que veia las producian las tareas, no el trazo, asi que
+  // pasaba igual con la costura rota. Aqui se controla la costura directamente: se le
+  // da al controlador una funcion de puntos conocida y se comprueba que la masa de la
+  // conexion aparece EXACTAMENTE en el punto que devuelve, en un sitio donde no hay
+  // ninguna figura.
+  const puntosControlados = [ { x: 4000, y: 4000 }, { x: 4100, y: 4000 } ];
+  const original = controller._puntosDelTrazo;
+  controller._puntosDelTrazo = (flujo) => (flujo.id === 'F2' ? puntosControlados : original.call(controller, flujo));
+
+  controller.showMetric('zonas');
+  const viaTrazo = [ ...document.querySelectorAll('.heatmap-zones rect') ]
+    .map((r) => ({ x: Number(r.getAttribute('x')), y: Number(r.getAttribute('y')) }))
+    .filter((c) => c.x >= 3900 && c.y >= 3900);
+
+  ok(viaTrazo.length > 0,
+    'la masa de una conexión aparece DONDE DICE SU TRAZO, no en el centro de su caja',
+    `${viaTrazo.length} celdas en la zona del trazo (x,y ~ 4000), donde no hay ninguna figura`);
+
+  controller._puntosDelTrazo = original;
+
+  // SIN circulos: esta vista es la rejilla. Mezclar las dos daria dos significados al
+  // mismo color sobre el mismo diagrama.
+  ok(document.querySelectorAll('.heatmap-layer circle').length === 0,
+    'y NO pinta circulos por tarea (seria mezclar dos lecturas)',
+    String(document.querySelectorAll('.heatmap-layer circle').length));
+
+  // La leyenda DICE LA UNIDAD. Sin ella, un numero en una celda no significa nada y la
+  // mancha es un adorno en vez de una medicion.
+  const leyendaZonas = canvas.contenedor.querySelector('.heatmap-legend');
+  ok(/Zonas/.test(leyendaZonas.textContent), 'la leyenda se declara como mapa de zonas',
+    leyendaZonas.textContent.slice(0, 70));
+  ok(/de trabajo/.test(leyendaZonas.textContent),
+    'y dice la unidad (minutos de trabajo), que es lo que lo vuelve medible');
+  ok(/no cambia al acercarse/.test(leyendaZonas.textContent),
+    'y explica que la celda es un trozo fijo del diagrama');
+
+  // Cambiar de vista limpia las celdas: si quedaran, el diagrama seguiria con una
+  // lectura que ya no es la activa.
+  controller.showMetric('cost');
+  ok(!document.querySelector('.heatmap-zones'), 'al cambiar de métrica las celdas se van');
 
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //

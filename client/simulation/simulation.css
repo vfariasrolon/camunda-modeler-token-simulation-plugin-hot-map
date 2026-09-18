@@ -224,6 +224,21 @@
     overflow: visible !important;
 }
 
+/* MAPA DE ZONAS: la rejilla de celdas sobre el diagrama.
+   Las celdas van en coordenadas del DIAGRAMA (heredan el zoom de la capa de overlays),
+   para que una celda sea siempre el mismo trozo de planta y el numero de la leyenda no
+   cambie al acercarse. `pointer-events: none` porque es una lectura, no un control. */
+.heatmap-zones {
+    pointer-events: none;
+}
+
+/* Sin mezcla de color: aqui el relleno YA es el color de la escala (no una mascara
+   como en los circulos, que se colorean con el filtro). Mezclar con `multiply` sobre
+   el diagrama apagaria la mancha justo donde debe destacar. */
+.heatmap-zones rect {
+    shape-rendering: crispEdges;
+}
+
 /* TRAZOS DE LA VISTA DE ESTRUCTURA.
    Se clonan en la capa de overlays, asi que heredan el zoom del diagrama sin tocar
    los trazos originales. `pointer-events: none` para no interceptar la seleccion ni

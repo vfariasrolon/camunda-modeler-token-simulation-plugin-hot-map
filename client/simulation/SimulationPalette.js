@@ -33,6 +33,8 @@ const FrequencyIcon = '<path d="M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H1
 const GroupIcon = '<path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>';
 // Tres lineas que se ensanchan: el trazo de una conexion por la que pasa mas trabajo.
 const FlowIcon = '<path d="M2 6.5h20v2.2H2V6.5zm2 5.4h16v2.2H4v-2.2zM7 17.3h10v2.2H7v-2.2z"/>';
+// Una rejilla con sus celdas: el mapa de zonas.
+const ZonesIcon = '<path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/>';
 
 // --- Controles ---
 const ClearIcon = '<path d="M15 16h4v2h-4v-2zm0-8h7v2h-7V8zm0 4h6v2h-6v-2zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12V5z"/>';
@@ -230,6 +232,15 @@ export default class SimulationPalette {
     // VISTA DE ESTRUCTURA. Va aparte de las metricas por tarea porque NO es una
     // metrica mas: mide otra cosa (pasos por la conexion) sobre otros objetos (las
     // lineas), y su lectura es «por donde pasa el trabajo y por donde no».
+    // MAPA DE ZONAS: la mancha continua. Va con las otras dos vistas y no dentro de
+    // ninguna, porque la suya es otra pregunta: no cuanto cuesta una tarea ni por que
+    // linea pasa el trabajo, sino por que TROZO de diagrama.
+    this.addEntry({
+      title: 'Mapa de zonas: dónde se concentra el trabajo',
+      tooltip: 'Pinta una rejilla sobre el diagrama con el trabajo que pasó por cada trozo (minutos de trabajo: ejecuciones × duración). Las figuras cercanas SUMAN, así que sale una mancha continua con las zonas más rojas donde más trabajo hubo. No es lo mismo que el mapa por tareas: un círculo está centrado en su figura y nunca puede formar una mancha.',
+      icon: ZonesIcon,
+      metric: 'zonas'
+    });
     this.addEntry({
       title: 'Vista de estructura: por dónde pasa el trabajo',
       tooltip: 'Pinta las CONEXIONES según cuántos tokens las recorrieron, además de las figuras. Las conexiones por las que NO pasó nada salen en gris discontinuo: esa es la lectura que el mapa por tareas no puede dar, porque una línea no tiene tiempo ni costo.',
