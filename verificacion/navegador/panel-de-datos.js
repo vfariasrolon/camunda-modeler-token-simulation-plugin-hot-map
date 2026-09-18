@@ -420,6 +420,79 @@ check('CSV tareas: exportar → importar → exportar es idempotente',
   iguales(csvTareas2, filasCsv),
   JSON.stringify(csvTareas2.filter((r, i) => !iguales(r, filasCsv[i]))));
 
+// --- 6b. La tasa de fallo, en % de punta a punta ---------------------------
+//
+// La casilla y el CSV van en % (0-100) mientras el motor sigue guardando la
+// fraccion (0-1). Es el mismo trato que el reparto de las compuertas, y por eso hay
+// que comprobar las DOS direcciones: que un 10 en pantalla sea 0,1 en el modelo, y
+// que un CSV viejo con 0,1 en la columna `tasa_fallo` siga siendo 0,1 (y no 0,1 %,
+// que seria 0,001: cien veces menos y sin ningun aviso).
+panel._activeTab = 'tasks';
+panel._renderTasks();
+guardar(recoger('tasks'));
+
+check('Tasa de fallo: la casilla se pinta en % (0,1 guardado → «10»)',
+  celda('Task_1', 'failureRate').value === '10', celda('Task_1', 'failureRate').value);
+check('Tasa de fallo: el signo % se ve al lado de la casilla',
+  Boolean(celda('Task_1', 'failureRate').closest('.pct'))
+  && Boolean(celda('Task_1', 'failureRate').closest('.pct').querySelector('.pct-signo')));
+check('Tasa de fallo: la casilla ya no admite fracciones (tope 100)',
+  celda('Task_1', 'failureRate').getAttribute('max') === '100');
+
+escribir('Task_1', 'failureRate', 12.5);
+writes = recoger('tasks');
+check('Tasa de fallo: 12,5 en la casilla se guarda como 0,125',
+  buscar(writes, 'Task_1').failureRate === 0.125, buscar(writes, 'Task_1').failureRate);
+
+escribir('Task_1', 'failureRate', 150);
+error = null;
+try { recoger('tasks'); } catch (e) { error = e.message; }
+check('Tasa de fallo: 150 % se rechaza nombrando el tope',
+  Boolean(error) && /100 %/.test(error), error);
+
+escribir('Task_1', 'failureRate', -1);
+error = null;
+try { recoger('tasks'); } catch (e) { error = e.message; }
+check('Tasa de fallo: un negativo se rechaza', Boolean(error) && /0 y 100/.test(error), error);
+
+escribir('Task_1', 'failureRate', 12.5);
+// El CSV sale del MODELO, no de las casillas: sin este guardado el export seguiria
+// viendo el 0,1 de antes y la comprobacion no probaria la conversion.
+guardar(recoger('tasks'));
+panel._renderTasks();
+const filaFR = panel._csvForActiveTab();
+check('CSV tareas: la columna se llama «tasa_fallo_pct» y ya no «tasa_fallo»',
+  filaFR[0].includes('tasa_fallo_pct') && !filaFR[0].some((c) => c === 'tasa_fallo'),
+  filaFR[0].join(','));
+
+const iFR = filaFR[0].indexOf('tasa_fallo_pct');
+check('CSV tareas: la tasa de fallo sale en % (12,5, no 0,125)',
+  String(filaFR.find((r) => r[0] === 'Task_1')[iFR]) === '12.5',
+  String(filaFR.find((r) => r[0] === 'Task_1')[iFR]));
+
+guardar(panel._applyCsv(aCsv(filaFR)));
+panel._renderTasks();
+check('Tasa de fallo: el 12,5 % sobrevive a exportar e importar',
+  celda('Task_1', 'failureRate').value === '12.5'
+  && buscar(recoger('tasks'), 'Task_1').failureRate === 0.125,
+  celda('Task_1', 'failureRate').value);
+
+// La columna HEREDADA. Se detecta por el nombre y no por la magnitud: un CSV que
+// alguien haya reescrito a mano con `tasa_fallo` y un 5 dentro es ambiguo, y
+// adivinar convertiria un 0,5 % legitimo en 50 %.
+const csvFRviejo = [
+  [ 'id', 'nombre', 'unidad_proceso', 'tiempo_proceso', 'tasa_fallo', 'retrabajo', 'unidad_retrabajo' ],
+  [ 'Task_2', 'Cortar', 'minutes', '15', '0.1', '20', 'minutes' ]
+].map((r) => r.join(',')).join('\r\n');
+const impFR = panel._applyCsv(csvFRviejo);
+check('CSV heredado: «tasa_fallo» 0,1 se lee como fracción (0,1 y no 0,001)',
+  buscar(impFR, 'Task_2').failureRate === 0.1, buscar(impFR, 'Task_2').failureRate);
+
+error = null;
+try { panel._applyCsv(csvFRviejo.replace(',0.1,', ',1.5,')); } catch (e) { error = e.message; }
+check('CSV heredado: un 1,5 en «tasa_fallo» se explica como fracción',
+  Boolean(error) && /fracción/.test(error), error);
+
 // --- 7. pestaña Global: tabla de lotes ------------------------------------
 
 panel._activeTab = 'global';

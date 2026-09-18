@@ -2856,7 +2856,11 @@ class DataTablePanel {
                 <td>${p('processingTime.min', d.processingTime.min, 'mín')}</td>
                 <td>${p('processingTime.mode', d.processingTime.mode, 'moda')}</td>
                 <td>${p('processingTime.max', d.processingTime.max, 'máx')}</td>
-                <td><input type="number" step="0.01" min="0" max="1" class="cell" data-field="failureRate" value="${d.failureRate}"></td>
+                <td><span class="pct">
+                  <input type="number" step="any" min="0" max="100" class="cell"
+                    data-field="failureRate" value="${pctATexto(d.failureRate)}">
+                  <span class="pct-signo">%</span>
+                </span></td>
                 <td><input type="number" step="any" min="0" class="cell" data-field="reworkTime.value" value="${d.reworkTime.value}"></td>
                 <td><select class="cell" data-field="reworkTime.unit">${units(d.reworkTime.unit)}</select></td>
                 <td><select class="cell" data-field="resources.pool">${selectPool}</select></td>
@@ -3745,10 +3749,16 @@ class DataTablePanel {
         const unit = val('processingTime.unit');
         const unitRetrabajo = val('reworkTime.unit');
 
-        const failure = num('failureRate', 'tasa de fallo');
-        if (failure < 0 || failure > 1) {
-          throw new Error(`${name}: la tasa de fallo debe estar entre 0 y 1`);
+        // La casilla esta en % (0-100) pero el motor guarda la FRACCION (0-1). La
+        // conversion vive en el unico sitio que lee la casilla, para que no haya dos
+        // verdades sobre que significa el numero que hay escrito.
+        const failurePct = num('failureRate', 'tasa de fallo (%)');
+        if (failurePct < 0 || failurePct > 100) {
+          throw new Error(
+            `${name}: la tasa de fallo debe estar entre 0 y 100 % (has puesto ${failurePct})`
+          );
         }
+        const failure = failurePct / 100;
 
         // El tiempo de proceso se lee SEGUN la distribucion elegida: con
         // triangular mandan min/moda/max y el campo "Tiempo" no se lee en
@@ -4264,7 +4274,7 @@ class DataTablePanel {
         poner('processingTime.distribution', 'fixed');
         poner('processingTime.value', this._azar(5, 45));
         poner('processingTime.unit', 'minutes');
-        poner('failureRate', (0.01 + Math.random() * 0.29).toFixed(2));
+        poner('failureRate', this._azar(1, 30));
         poner('reworkTime.value', this._azar(5, 30));
         poner('reworkTime.unit', 'minutes');
 
@@ -4459,10 +4469,15 @@ class DataTablePanel {
       // Se exportan TAMBIEN las columnas de la triangular y las de recurso: antes
       // el CSV solo llevaba el tiempo fijo, asi que una tarea triangular salia
       // con `tiempo_proceso` vacio y sus min/moda/max se perdian de vista.
+      // La tasa de fallo se exporta en % (0-100) y con la columna renombrada a
+      // `tasa_fallo_pct`, igual que el reparto de las compuertas: es lo que se ve
+      // en la tabla, y en Excel una columna rotulada «tasa_fallo» con 0,05 se lee
+      // como si fuera medio por ciento. Un CSV exportado ANTES de este cambio trae
+      // `tasa_fallo` en fraccion y se sigue importando (ver _applyCsv).
       const rows = [ [
         'id', 'nombre', 'distribucion',
         'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
-        'tasa_fallo', 'retrabajo', 'unidad_retrabajo',
+        'tasa_fallo_pct', 'retrabajo', 'unidad_retrabajo',
         'recurso', 'cant_recurso',
         'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol',
         'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad'
@@ -4483,7 +4498,7 @@ class DataTablePanel {
           tri ? d.processingTime.min : '',
           tri ? d.processingTime.mode : '',
           tri ? d.processingTime.max : '',
-          d.failureRate,
+          pctATexto(d.failureRate),
           d.reworkTime.value,
           d.reworkTime.unit,
           (d.resources && d.resources.pool) || '',
@@ -4628,9 +4643,19 @@ class DataTablePanel {
     if (this._activeTab === 'tasks') {
       const iId = idx('id');
       const iU = idx('unidad_proceso');
-      const iF = idx('tasa_fallo');
       const iR = idx('retrabajo');
       const iRU = idx('unidad_retrabajo');
+
+      // Formato nuevo: `tasa_fallo_pct` en % (0-100). Formato heredado:
+      // `tasa_fallo` en fraccion (0-1). Se aceptan los dos para no romper un CSV
+      // exportado antes del cambio. El formato se detecta por el NOMBRE de la
+      // columna, no por el valor: adivinar por magnitud convertiria un 1 %
+      // legitimo (o un 0,5 %) en otra cosa sin avisar.
+      const iFPct = header.indexOf('tasa_fallo_pct');
+      const iFHeredado = header.indexOf('tasa_fallo');
+      if (iFPct === -1 && iFHeredado === -1) {
+        throw new Error('Falta la columna «tasa_fallo_pct» en el CSV');
+      }
 
       // Columnas OPCIONALES: un CSV exportado por una version anterior (sin
       // distribucion, sin triangular y sin recurso) sigue importandose, y en ese
@@ -4653,8 +4678,19 @@ class DataTablePanel {
         if (!TASK_UNITS.includes(unit)) throw new Error(`Línea ${line}: unidad «${unit}» inválida (usa ${TASK_UNITS.join('/')}, en plural)`);
         if (!TASK_UNITS.includes(unitR)) throw new Error(`Línea ${line}: unidad «${unitR}» inválida (usa ${TASK_UNITS.join('/')}, en plural)`);
 
-        const failure = this._num(r[iF], `Línea ${line}: tasa de fallo`);
-        if (failure < 0 || failure > 1) throw new Error(`Línea ${line}: la tasa de fallo debe estar entre 0 y 1`);
+        const bruto = this._num(r[iFPct !== -1 ? iFPct : iFHeredado], `Línea ${line}: tasa de fallo`);
+        let failure;
+        if (iFPct === -1) {
+          if (bruto < 0 || bruto > 1) {
+            throw new Error(`Línea ${line}: «tasa_fallo» va en fracción (0-1) pero vale ${bruto}`);
+          }
+          failure = bruto;
+        } else {
+          if (bruto < 0 || bruto > 100) {
+            throw new Error(`Línea ${line}: la tasa de fallo debe estar entre 0 y 100 % (vale ${bruto})`);
+          }
+          failure = bruto / 100;
+        }
 
         const cur = this._taskData(el);
 
