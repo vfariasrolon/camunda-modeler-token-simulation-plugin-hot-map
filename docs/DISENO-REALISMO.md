@@ -6,8 +6,10 @@
 > cualquier otra persona pueda seguirlo sin haberla vivido.
 >
 > Alcance de este documento: los bloques **A1 a A4** (calendario, lotes, reglas laborales y
-> gráficos honestos). Los bloques posteriores están **acordados en concepto** pero no detallados
-> al mismo nivel; se resumen en §8 para que no se pierdan.
+> gráficos honestos), **A5** (personas y carga), **A6** (réplicas e intervalo de confianza),
+> **A7** (ida y vuelta con la app de toma de tiempos) y **A8** (la app de campo en Apps Script),
+> estos últimos **diseñados** pero no implementados. Los bloques posteriores están **acordados en
+> concepto** pero no detallados al mismo nivel; se resumen en §9.6 para que no se pierdan.
 
 ---
 
@@ -701,7 +703,265 @@ No detallados al nivel de este documento, pero **decididos** para no perderlos:
 
 ---
 
-## 10. Fuera de alcance (decidido, no olvidado)
+## 10. A7 · Del supuesto a la medición (ida y vuelta con la app de toma de tiempos)
+
+> **Estado: DISEÑO ACORDADO, sin implementar.** Tres decisiones tomadas: **muestreo de tarea**,
+> **ciclo cerrado** (el plugin importa) y **este documento primero**. Se detalla al mismo nivel que
+> A1-A4 porque toca la frontera del producto: los datos dejan de ser supuestos.
+
+### 10.1 Por qué
+
+Hoy los tiempos del diagrama son **supuestos**: alguien escribe `triangular(5, 10, 20)` y el informe
+presenta el resultado con la misma autoridad que si estuviera medido. Nada en el sistema distingue
+**lo que se declaró** de **lo que se midió en planta**. Eso es una debilidad de auditoría: quien lee
+el informe no puede saber qué parte del número está respaldada por datos.
+
+A7 cierra el ciclo:
+
+```
+Camunda + token (diseño)  →  configurador.json  →  app de toma de tiempos (App Script)
+        ↑                                                         ↓
+   simulación realista  ←  mediciones.json (params + muestras)  ←  estadística (n, IC, requerida)
+```
+
+Es la pieza que ninguna herramienta del montón tiene: **el diseño genera el plan de medición, y la
+medición realimenta el diseño**. Y engancha directamente con A6: una vez que una tarea tiene
+muestras, el intervalo deja de ser una suposición sobre el azar del modelo y pasa a ser el error de
+la **medición**.
+
+### 10.2 Las dos decisiones que fijan el esquema
+
+| Decisión | Elegido | Alternativa descartada | Motivo |
+|---|---|---|---|
+| **Qué mide el cronómetro** | **Muestreo de tarea**: la MISMA tarea N veces; de las muestras salen mín/moda/máx, media e IC | Muestreo de proceso (1 recorrido = 1 pieza) | Es lo que el motor triangular necesita, y es lo que alimenta A6. El muestreo de proceso queda como **bloque posterior** porque cambia el esquema (identidad de «caso») |
+| **Ida y vuelta** | **Ciclo cerrado**: la app devuelve `mediciones.json` y el plugin lo **importa** por `id` | Solo exportar | Sin reimportación el ciclo no se cierra y los datos medidos nunca llegan al simulador |
+| **Clave de fusión** | **`id` del elemento BPMN** | `descripcion + tipo` (lo que hace el HTML actual) | Dos operarios escriben «Inspección» e «Inspeccion» (tilde) y se fusionan mal o se duplican en silencio. El texto es para mostrar, no para identificar |
+
+### 10.3 Los dos archivos
+
+**`configurador.json`** — del plugin hacia la app. Lleva **solo las tareas seleccionadas** para
+medir, cada una con su configuración actual (para poder contrastar después medición contra supuesto)
+y su carga física, que en la app se reutiliza en el Cursograma (peso, distancia, movimientos).
+
+```
+{
+  "tipo": "configurador-tiempos",
+  "version": 1,
+  "unidad": "minutes",          // unidad de los parámetros; la app mide en SEGUNDOS
+  "proyecto": { "nombre", "archivo", "fecha", "semilla" },
+  "tareas": [
+    { "id": "Task_1", "nombre": "Cortar", "tipo": "bpmn:Task",
+      "unidad": "minutes",                                   // unidad propia, puede diferir
+      "supuesto": { "distribucion": "triangular", "min": 5, "moda": 10, "max": 20 },
+      "tiempoPorLote": false,
+      "carga": { "masaCargadaKg": 12, "masaArrastradaKg": 8, "distanciaM": "15" },
+      "habilidad": "soldadura",
+      "medicion": { "confianza": 95, "precision": 5, "laps": true } }
+  ]
+}
+```
+
+**`mediciones.json`** — de la app hacia el plugin. Por tarea: los parámetros derivados, las muestras
+crudas (trazabilidad: sin ellas no se puede recalcular ni auditar) y el error de la medición.
+
+```
+{
+  "tipo": "mediciones-tiempos",
+  "version": 1,
+  "proyecto": { "nombre", "elaboradoPor", "fecha", "app": "Cursograma v5.6" },
+  "mediciones": [
+    { "id": "Task_1", "nombre": "Cortar",          // nombre solo para verificar en pantalla
+      "unidad": "seconds",                          // unidad de las muestras: SIEMPRE segundos
+      "n": 22, "media_s": 9.43, "desv_s": 0.61,
+      "min_s": 8.10, "moda_s": 9.40, "max_s": 11.20,
+      "ic": { "confianza": 0.95, "margen_s": 0.27, "inferior_s": 9.16, "superior_s": 9.70 },
+      "muestras_s": [ 9.12, 9.44, ... ],
+      "muestrasRequeridas": 18,
+      "operarios": ["Ana", "Luis"] }
+  ]
+}
+```
+
+### 10.4 Reglas invariables de A7
+
+Estas cuatro no son estilo: **si se rompen, el resultado es incorrecto aunque el programa funcione.**
+
+1. **La identidad es el `id`, nunca el texto.** Una tarea que no exista en el diagrama se reporta
+   como **no aplicada** y se lista; no se ignora en silencio y no se crea.
+2. **La unidad se declara, y la conversión es explícita.** Las muestras viajan en **segundos** y los
+   parámetros del motor van en **minutos/horas/segundos** según la unidad de cada tarea. Mezclarlas
+   sin declararlas es un error de 60× (ya pasó una vez con los gráficos).
+3. **Una medición no borra el supuesto: lo sustituye y se conserva aparte.** El `simulationData`
+   guarda `medicion: { ... , supuestoPrevio: {...} }`, de modo que el informe puede decir
+   «medido» o «supuesto» tarea por tarea, y la validación a mano sigue siendo auditable.
+4. **Sin datos no se inventa.** Una tarea con `n = 1` no tiene desviación: se importa la media y se
+   marca `n=1`, sin fabricar un intervalo. Una tarea sin muestras **no se toca**.
+
+### 10.5 Cómo entra al motor
+
+El motor lee `processingTime: { distribution, value|min/mode/max, unit }`. La importación escribe esa
+estructura, no una nueva:
+
+| Estadístico medido | Qué se escribe | Por qué |
+|---|---|---|
+| **min** y **max** | extremos **observados**, sin ensanchar | Son los que se vieron; añadir cola sería inventar |
+| **moda** | si la nube tiene una moda clara, la medida; si no, **la media** y se declara | El triangular exige una moda y no siempre existe una evidente |
+| Distribución | `triangular(min, moda, max)` si hay variación; `fixed(media)` si `desv = 0` | Con desviación nula el triangular degeneraría en un punto; `fixed` lo dice mejor |
+| Si el tiempo es **por lote** | Se escribe en `processingTime` y **el muestreo se detecta** | El muestreo de tarea no distingue pieza de lote sin la pista de la frecuencia |
+
+### 10.6 Qué se muestra al importar (no puede ser un «listo»)
+
+El diálogo de importación imprime, por tarea: **id → nombre**, **n**, **media ± margen** en la unidad
+de la tarea, el rango observado, y el resultado (**aplicada**, **sin muestras**, **no está en el
+diagrama**, **unidad desconocida**). Cualquier fila no aplicada se cuenta al final. Un «listo» a
+secas escondería exactamente el fallo que hay que ver.
+
+### 10.7 Cómo se comprobará
+
+- **Que no hay error de unidad**: una tarea declarada en `minutes` y medida en segundos entra como
+  `min/60`; se comprueba contra un caso calculado a mano (es el error de 60× más fácil de cometer).
+- **Que el id manda**: una medición con `descripcion` coincidente pero `id` inexistente **no** se
+  aplica y se lista como no aplicada.
+- **Que el supuesto se conserva**: tras importar, `processingTime` es el medido y `supuestoPrevio`
+  guarda el original.
+- **Que `n = 1` no inventa desviación** y que sin muestras no se toca nada.
+- **Que el ciclo da la vuelta**: exportar el configurador de un diagrama, medir con el mismo id y
+  reimportar devuelve exactamente los parámetros esperados (ida y vuelta completa).
+- **Que las muestras son las mismas**: el `mediciones.json` de ida y vuelta conserva las muestras
+  crudas, que es lo que permite recalcular el IC fuera del programa.
+
+### 10.8 El ID visible (prerrequisito, no un extra)
+
+Sin un identificador **legible** la app no puede decir qué tarea está midiendo, ni el operario puede
+escribirlo en un papel. Se implementa **antes** que la exportación.
+
+**Dos identificadores, y no son lo mismo:**
+
+| Cuál | Ejemplo | Papel |
+|---|---|---|
+| `id` técnico | `Activity_1a2b3` | El del XML. **Inmutable**, ya existe, y es la **clave de fusión** |
+| `idCorto` + `nombre` | `1` · «Cortar» | La etiqueta **visible**. Se **deriva**, nunca se teclea |
+
+**Decisión: el orden es el del FLUJO**, desde el evento de inicio (1 = la primera tarea que se
+ejecuta). Se descartó el orden en pantalla (X/Y) porque mover una figura renumeraría todo, y el
+orden el XML porque es arbitrario para quien va a medir con el cronómetro. Con el orden del flujo el
+número **coincide con el orden en que se recorre el proceso midiendo**.
+
+**Advertencia que el producto tiene que dar:** el `idCorto` **se reasigna** al añadir o borrar una
+tarea. Es una etiqueta de trabajo, no un identificador persistente: si se reordena un diagrama ya
+medido, quien salva la medición es el `id` técnico, no el número. Se imprime en la ayuda del botón.
+
+**Cómo se dibuja** (y cómo se esquiva el fallo del zoom):
+
+- Overlay con `position: { top: 5, right: 5 }` → **dentro** de la tarea: sin offset, sin solapes y
+  sin girar las figuras.
+- **`scale: { min: 0.35 }`** → por debajo del 35 % el círculo **deja de encogerse**: el número sigue
+  legible en un diagrama enorme. Es justo lo que la librería no hace con sus iconos.
+- **Sin `minZoom`**: los overlays con `show: { minZoom }` **se ocultan** por debajo del umbral
+  (`diagram-js`, `Overlays.js`), así que copiar el mecanismo del token habría reintroducido el fallo
+  del zoom out. El ID se mantiene visible a cualquier escala.
+
+Detalle: hoy el token es **verde** (`#10D070`); el ID va en **azul** para que las dos cosas se
+distingan cuando la simulación está corriendo, y **por encima** del mapa de calor.
+
+### 10.9 Bloques posteriores de A7 (acordados, no detallados)
+
+- **Muestreo de proceso**: 1 recorrido = 1 pieza, con identidad de «caso»; añade el tiempo de ciclo
+  REAL del caso completo, que hoy solo es supuesto.
+- **Curva de aprendizaje por operario** («Add a todo» en el HTML base) y **tiempo observado vs
+  calificado**: ritmo, suplementos y tiempo estándar de la escuela clásica de tiempos y movimientos.
+- **La tabla compartida** (Google Sheets con `Code.gs`): medición desde el móvil, varias personas
+  midiendo la misma tarea, y fusión por `id` (que es lo que hace posible el `id`).
+
+---
+
+## 11. A8 · La app de campo (Apps Script + hoja de cálculo)
+
+> **Estado: DISEÑO ACORDADO, sin implementar.** Toma el patrón del repo `cotizador_fmm`
+> (`{success, data, message}`, `google.script.run`, `insertSheet` si no existe, identidad por la hoja
+> `user_id`) y añade lo que falta para medir en planta con varios operarios.
+
+### 11.1 La decisión que gobierna todo: **la hoja es la verdad, la caché es un acelerador**
+
+`CacheService` **no garantiza el TTL**: una entrada puede desalojarse antes de tiempo. Si el candado
+de una tarea viviera solo en caché, el desalojo haría que **dos operarios midieran la misma tarea sin
+enterarse**. No fallaría ruidosamente: fallaría **en silencio**, que es exactamente lo que llevamos
+tres arreglos evitando.
+
+| Capa | Qué guarda | Papel | Si se pierde |
+|---|---|---|---|
+| **Hoja `_apartados`** | `idTarea`, `sesion`, `usuario`, `apartadoEn`, `latidoEn`, `estado`, `liberadoEn`, `liberadoPor`, `motivo` | **La verdad.** Se reconstruye todo: quién, cuándo, por qué | Nada: es la fuente |
+| **Caché** | Lo mismo, para leer rápido | **Solo velocidad** | Se recalcula desde la hoja. El sistema sigue correcto |
+
+**Regla invariable:** la caché se puede perder en cualquier momento y el sistema sigue siendo
+correcto. Eso es lo que la hace segura.
+
+### 11.2 Tres estados, y el cron **marca**, no cierra
+
+| Estado | Significa | Quién pasa |
+|---|---|---|
+| **LIBRE** | Nadie la mide | Todos |
+| **ACTIVA** | Alguien mide, con latido reciente | Solo esa sesión |
+| **HUÉRFANA** | El latido caducó (cerró el navegador, se fue, se cayó la red) | Cualquiera, **con confirmación** |
+
+- El cron (5 min) **solo marca** HUÉRFANA lo que lleva sin latido más de `latido + 3 intervalos`.
+  **Marcar es reversible; cerrar no.** Si el cron cerrara, le borraría el trabajo en curso a quien sí
+  estaba midiendo.
+- La sesión viva **sigue midiendo** aunque la hayan marcado: el aviso es para los demás.
+- **Latido del cliente** cada ~60-90 s: el cliente se declara vivo, el servidor no pregunta nada.
+- Al recuperar una huérfana, la confirmación **dice quién y cuándo**: «Ana la dejó hace 12 min». Sin
+  ese dato, «liberar» es un botón a ciegas.
+- El umbral se **imprime en pantalla**, no se esconde en una constante.
+
+### 11.3 Identidad: el anónimo obliga a separar dos cosas
+
+Con `access: ANYONE_ANONYMOUS`, `Session.getActiveUser().getEmail()` devuelve **cadena vacía**. Por eso
+el repo ya usa la hoja `user_id`. Se mantiene, y se separan dos conceptos que no son lo mismo:
+
+| Cuál | Qué identifica | Para qué |
+|---|---|---|
+| `sesionId` (UUID en `localStorage`) | **El navegador** | Candado, latido, orfandad |
+| `usuario` (de `user_id`) | **La persona** | Concordancia entre analistas |
+
+Confundirlos haría que dos pestañas del mismo operario se pelearan por el candado, o que dos personas
+distintas parecieran la misma.
+
+### 11.4 La `bd`: una fila por muestra
+
+Una fila por **muestra**, nunca por tarea. Guardar solo la media **impide recalcular**, y todo lo que
+queremos (IC, n requerido, concordancia) depende de las muestras.
+
+Columnas: `muestraId` (UUID), `proyectoId`, `id` (técnico del BPMN), `idCorto`, `nombre`, `sesion`,
+`usuario`, `tiempo_s`, `tipo` (normal/atípica/calentamiento), `nota`, `creadoEn`.
+
+- **`muestraId` es la idempotencia**: un reintento tras fallo de red se ignora, y eso **sustituye al
+  bloqueo en la captura**. Un `append` no necesita candado: nadie sobrescribe nada.
+- **`proyectoId` es imprescindible** porque el `idCorto` **se reasigna** entre diagramas: sin él, dos
+  tareas distintas de proyectos distintos se mezclarían en silencio.
+- **`LockService` solo para estructura** (crear pestaña, escribir encabezados, migrar `esquemaVersion`),
+  que sí es leer-modificar-escribir, **con `finally`** para no dejar un candado huérfano.
+
+### 11.5 Encabezados: contra `_config`, nunca contra la fila 1
+
+Escribir el encabezado «si la fila 1 está vacía» es una trampa: el día que alguien inserta una fila
+arriba, el sistema **vuelve a escribir encabezados encima de las muestras**. Por eso:
+
+- El encabezado se escribe **solo al crear la pestaña**.
+- La vigilancia es `esquemaVersion` en `_config`, y las columnas se leen **por nombre, no por
+  posición**: añadir una columna nueva no corrompe lo viejo.
+
+### 11.6 Lo que falta (necesita input)
+
+- **Troceador del configurador**: un BPMN de 300 tareas supera el límite por entrada de `CacheService`.
+  Se trocea **con manifiesto** (cuántos trozos, hash de cada uno) para poder detectar un trozo que
+  falta o está viejo **antes** de leer un proyecto a medias. Pendiente: ver el troceador de
+  `cotizador_fmm` para reusarlo en vez de inventar otro patrón.
+- **Endpoint**: el Web App expone acciones de diagnóstico (`ping`, `esquema`, `ultimasMuestras`) que
+  devuelven **estructura y conteos, nunca datos de planta**, para poder verificar sin ver producción.
+
+---
+
+## 12. Fuera de alcance (decidido, no olvidado)
 
 - **Perfiles médicos, lesiones y elementos de protección.** El sistema no contempla lesiones: solo
   reporta cargas y marca las que destacan. La evaluación es del analista, fuera del programa.
@@ -715,7 +975,7 @@ No detallados al nivel de este documento, pero **decididos** para no perderlos:
 
 ---
 
-## 11. Registro de decisiones
+## 13. Registro de decisiones
 
 Para que quede **por qué**, no solo **qué**.
 
@@ -750,3 +1010,20 @@ Para que quede **por qué**, no solo **qué**.
 | **El intervalo se calcula sobre la DIFERENCIA de planes emparejados** | Dos medias independientes | La diferencia emparejada tiene menos varianza, así que demuestra antes lo que se quiere demostrar |
 | **Solo las MEDIAS llevan intervalo, no los totales** | Poner intervalo a todo | Un total acumulado crece con n: su intervalo no significa nada. Es el error clásico |
 | **20 réplicas por defecto** | 10 o 50 | Con n < 20 la t de Student es ancha y el intervalo sale poco útil; con más, el coste por corrida se nota |
+| **A7: la identidad de una medición es el `id` del elemento** | Nombre + tipo (lo que usa la app base) | Dos operarios escriben el nombre distinto (tilde, mayúscula) y la fusión une lo que no debe o duplica en silencio |
+| **A7: las muestras viajan en SEGUNDOS y la unidad se declara** | Unidad implícita | El motor configura en minutos/horas y la app mide en segundos: sin declararlo es un error de 60× |
+| **A7: la medición sustituye al supuesto pero lo conserva** | Sobrescribir `processingTime` | El informe tiene que poder decir «medido» o «supuesto» por tarea, y la validación a mano seguir siendo auditable |
+| **A7: `n = 1` no fabrica intervalo** | Calcular desviación con una muestra | Con una muestra no hay desviación; inventarla sería falsa precisión (mismo criterio que A6 con el determinista) |
+| **A7: A6 va primero** | Hacer A7 antes | A6 pone el intervalo del MODELO; A7 mide el error de la MEDICIÓN. Sin A6, el intervalo de una tarea no tiene dónde mostrarse |
+| **A7: el `idCorto` se DERIVA del flujo, no se teclea** | Campo editable a mano | Un identificador que se escribe a mano se desincroniza del diagrama; derivado, no puede mentir |
+| **A7: numeración por orden de FLUJO** | Orden en pantalla (X/Y) o del XML | Mover una figura no puede renumerar el proceso, y el número tiene que coincidir con el orden en que se recorre midiendo |
+| **A7: el ID visible va SIN `minZoom`** | Copiar el `show: { minZoom: 0.5 }` del token | `minZoom` OCULTA el overlay al alejarse: habría reintroducido el fallo del zoom out que ya se revirtió una vez |
+| **A7: tres identificadores viajan juntos (`id`, `idCorto`, `nombre`)** | Solo el `id` técnico | El técnico es la clave; el corto y el nombre son la etiqueta legible que el operario y la hoja de Google necesitan |
+| **A8: la hoja `_apartados` es la verdad; la caché solo acelera** | El candado solo en `CacheService` | `CacheService` puede desalojar antes del TTL: dos operarios medirían la misma tarea **sin enterarse**. Un fallo silencioso es peor que uno ruidoso |
+| **A8: el cron MARCA huérfana, no cierra** | Cerrar la sesión sin latido | Cerrar le borraría el trabajo en curso a quien sí estaba midiendo; marcar es reversible |
+| **A8: `sesionId` (navegador) y `usuario` (persona) separados** | Un solo identificador | Con acceso anónimo no hay correo; y dos pestañas del mismo operario no deben pelearse por el candado, ni dos personas parecer la misma |
+| **A8: la captura es `append` + idempotencia, sin bloqueo** | Bloquear la tarea al guardar | Un `append` no sobrescribe nada: nadie necesita esperar. El `muestraId` cubre el reintento, que era el problema real |
+| **A8: `LockService` solo para estructura** | Bloqueo para todo | Crear la pestaña y escribir encabezados SÍ es leer-modificar-escribir; la captura no. El candado se toma milisegundos, no minutos |
+| **A8: `bd` con una fila por muestra** | Una fila por tarea con la media | Guardar solo la media impide recalcular, y el IC, el n requerido y la concordancia dependen de las muestras |
+| **A8: encabezados contra `_config` y `esquemaVersion`** | «Si la fila 1 está vacía» | El día que alguien inserta una fila arriba, el sistema reescribiría encabezados encima de las muestras |
+| **A8: el troceador lleva manifiesto** | Partir sin más | Sin manifiesto se puede leer un proyecto **a medias** sin detectarlo |
