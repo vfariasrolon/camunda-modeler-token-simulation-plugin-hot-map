@@ -45,6 +45,10 @@ const HelpIcon = '<path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 
 // --- Exportar ---
 const ExportIcon = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
 
+// Icono del configurador de medicion (Material Symbols "timer"): lo que se
+// descarga es el plan de toma de tiempos para la app de campo.
+const MeasurementIcon = '<path d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42A8.962 8.962 0 0 0 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9a8.994 8.994 0 0 0 7.03-14.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>';
+
 // Catálogo de ayuda: alimenta el panel del botón ?.
 // Se mantiene junto a los iconos para que icono y explicación no se desincronicen.
 const HELP_SECTIONS = [
@@ -103,7 +107,11 @@ const HELP_SECTIONS = [
       [ RadiusPlusIcon, 'Radio + / −',
         'Tamaño de las manchas de calor. Súbelo si el diagrama es grande y quieres ver la tendencia general.' ],
       [ BlurPlusIcon, 'Desenfoque + / −',
-        'Suavizado de las manchas. Más desenfoque = vista más difusa; menos = zonas más definidas.' ]
+        'Suavizado de las manchas. Más desenfoque = vista más difusa; menos = zonas más definidas.' ],
+      [ ExportIcon, 'Exportar mapa de calor',
+        'Descarga el diagrama con el mapa de calor como PNG.' ],
+      [ MeasurementIcon, 'Exportar configurador de medición',
+        'Descarga un JSON con las tareas para la app de toma de tiempos: el <strong>id</strong> del diagrama, el ID visible, el nombre, el supuesto de tiempo y la carga física. Ojo: el <strong>ID visible se reasigna</strong> al añadir o borrar tareas; la clave con la que se fusionan las mediciones es el <strong>id</strong> del diagrama, no el número.' ]
     ]
   }
 ];
@@ -120,6 +128,7 @@ export default class SimulationPalette {
     this._clearCallback = () => {};
     this._adjustCallback = () => {};
     this._exportCallback = () => {};
+    this._measurementCallback = () => {};
 
     // *** FIX: Defer initialization until canvas is ready ***
     this._eventBus.on('canvas.init', () => {
@@ -239,13 +248,20 @@ export default class SimulationPalette {
       isExport: true
     });
 
+    this.addEntry({
+      title: 'Exportar configurador de medición (JSON)',
+      tooltip: 'Descarga un JSON con las tareas para la app de toma de tiempos: id del diagrama, ID visible, nombre, supuesto de tiempo y carga física',
+      icon: MeasurementIcon,
+      isMeasurementExport: true
+    });
+
     this.addSeparator();
 
     this.addHelpEntry();
   }
 
   addEntry(options) {
-    const { title, tooltip, icon, text, metric, isClear, isBack, isExport } = options;
+    const { title, tooltip, icon, text, metric, isClear, isBack, isExport, isMeasurementExport } = options;
 
     let content;
     if (icon) {
@@ -263,6 +279,7 @@ export default class SimulationPalette {
     domEvent.bind(button, 'click', () => {
         if (isClear) this._clearCallback();
         else if (isExport) this._exportCallback();
+        else if (isMeasurementExport) this._measurementCallback();
         else if (isBack) this.close();
         else this._metricCallback(metric);
     });
@@ -324,6 +341,7 @@ export default class SimulationPalette {
   setClearCallback(cb) { this._clearCallback = cb; }
   setAdjustCallback(cb) { this._adjustCallback = cb; }
   setExportCallback(cb) { this._exportCallback = cb; }
+  setMeasurementCallback(cb) { this._measurementCallback = cb; }
 
   isOpen() {
       return this._palette && domClasses(this._palette).has(PALETTE_OPEN_CLS);

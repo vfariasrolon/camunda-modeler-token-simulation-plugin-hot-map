@@ -14,5 +14,6 @@ verificacion/LaborRules.mjs
 verificacion/Workload.mjs
 verificacion/DataAudit.mjs
 verificacion/HeatmapScale.mjs
+verificacion/TaskIds.mjs
 verificacion/ModelUtil.mjs
 verificacion/util.mjs

@@ -1,13 +1,16 @@
 # Verificación
 
-Arneses que comprueban el **motor real** del plugin: 12 ficheros, **400 comprobaciones**.
+Arneses que comprueban el **motor real** del plugin: 14 ficheros, **503 comprobaciones**, más
+2 arneses de **navegador** que montan diagram-js de verdad.
 
 ```bash
-pnpm run verificar
+pnpm run verificar             # lógica (Node, rápido)
+pnpm run verificar:navegador   # DOM, canvas y filtros SVG (Chrome)
 ```
 
-Eso es todo. El comando copia el código del plugin, lo prepara para Node y corre los doce arneses,
-imprimiendo al final un resumen y **solo lo que falle** si algo falla.
+`verificar` copia el código del plugin, lo prepara para Node y corre los arneses, imprimiendo al
+final un resumen y **solo lo que falle** si algo falla. `verificar:navegador` compila los arneses de
+`verificacion/navegador/` y los ejecuta en Chrome headless; si no encuentra Chrome, se salta solo.
 
 ---
 
@@ -27,6 +30,18 @@ imprimiendo al final un resumen y **solo lo que falle** si algo falla.
 | `10-ejemplo-de-validacion` | El fichero `docs/ejemplo-validacion.bpmn`: XML válido, JSON válido, referencias completas y **el motor corriéndolo de verdad** | 40 |
 | `11-textos-sin-mentir` | Que **ningún texto del producto niegue una capacidad que sí existe**. Si implementas algo y dejas el «sin X», este arnés falla | 27 |
 | `12-ventana-de-tiempo` | Los días **laborables** y **naturales** de la ventana: que se cuenten los dos, que los naturales nunca sean menos, y que cruzar un fin de semana o un festivo los separe | 21 |
+| `13-mapa-de-calor` | El color del mapa: **uniforme en frío** cuando no hay contraste (el caso «cantidad de recursos»), la leyenda con el rango real, y que la regla esté **cableada** | 59 |
+| `14-id-de-tareas` | El ID visible: numeración por **orden de flujo** (no de pantalla), bucles y ramas sin dejar tareas sin número, y el **contrato del configurador** | 44 |
+
+## Arneses de navegador (`verificacion/navegador/`)
+
+Comprueban lo que solo se ve en un navegador. Existen porque el fallo que dejó pasar la regresión del
+zoom **no era de lógica, era del ciclo de eventos**: ningún arnés de Node lo habría cazado.
+
+| Arnés | Qué cubre | Checks |
+|---|---|---|
+| `mapa-de-calor.js` | El filtro SVG real: la tabla de color da azul en 0 y rojo en 255, y el caso uniforme sale con opacidad fría | 14 |
+| `ids-de-tarea.js` | Que el ID se pinte, que a zoom 25 % **siga visible** (contraste: un overlay con `minZoom` se oculta) y que se compense x1.4 | 11 |
 
 ---
 

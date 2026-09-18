@@ -9,6 +9,7 @@ import Chart from 'chart.js/auto';
 import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
 import { describeLabor } from './LaborRules.js';
 import { rangoDeValores, opacidadDe, textoDeEscala, gradienteCss, colorFrio, GRADIENTE_ESCALA } from './HeatmapScale.js';
+import { numerarTareas, etiquetaDe } from './TaskIds.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -68,6 +69,16 @@ const AuditIcon = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
       <path fill="currentColor" d="M6.3 10.6l-2.1 2.1 4.6 4.6L20 6.1 17.9 4 8.8 13.1l-2.5-2.5z"/>
       <path fill="currentColor" opacity="0.45" d="M3 19h18v2H3z"/>
+    </svg>
+  </span>
+`;
+
+// Icono de IDs (Material Symbols "tag"): para el boton que muestra el numero de
+// cada tarea, que es la etiqueta con la que se mide en planta.
+const IdsIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M21.41 11.58l-9-9C12.05 2.11 11.36 1.75 10.59 1.75H4c-1.1 0-2 .9-2 2v6.59c0 .77.36 1.46.95 1.91l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l6.59-6.59c.36-.36.58-.86.58-1.41s-.22-1.05-.59-1.41zM6.5 8C5.67 8 5 7.33 5 6.5S5.67 5 6.5 5 8 5.67 8 6.5 7.33 8 6.5 8z"/>
     </svg>
   </span>
 `;
@@ -161,6 +172,9 @@ export default class SimulationController {
     this.overtimeReport = null;
     this.normalReport = null;
     this.lastMetric = null;
+    // Los IDs visibles arrancan ENCENDIDOS: son la etiqueta con la que se mide en
+    // planta y sin ellos no se sabe a que tarea corresponde una medicion.
+    this.idsVisibles = true;
 
     this._eventBus.on('canvas.init', () => {
       this.init();
@@ -177,6 +191,7 @@ export default class SimulationController {
     const tableButton = domify(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
     const reportButton = domify(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
     const auditButton = domify(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
+    const idsButton = domify(`<div class="bts-entry" title="Mostrar IDs" data-tip="Muestra u oculta el ID de cada tarea (círculo azul). El número sigue el orden del flujo y se reasigna al añadir o borrar tareas: la clave para medir es el id del XML, no el número">${IdsIcon}</div>`);
 
     domEvent.bind(runButton, 'click', () => this.runSimulation());
     domEvent.bind(showButton, 'click', () => this._simulationPalette.toggle());
@@ -187,6 +202,7 @@ export default class SimulationController {
     domEvent.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
     // Mismo motivo: el panel de diagnostico se registra despues.
     domEvent.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
+    domEvent.bind(idsButton, 'click', () => (this.idsVisibles ? this.ocultarIds() : this.mostrarIds()));
 
     this._tokenSimulationPalette.addEntry(domify('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
@@ -195,11 +211,23 @@ export default class SimulationController {
     this._tokenSimulationPalette.addEntry(tableButton, 15);
     this._tokenSimulationPalette.addEntry(reportButton, 16);
     this._tokenSimulationPalette.addEntry(auditButton, 17);
+    this._tokenSimulationPalette.addEntry(idsButton, 18);
+
+    // Los IDs se pintan al arrancar (arrancan encendidos) y se repintan cuando el
+    // diagrama cambia, porque el numero depende del orden del flujo.
+    this._eventBus.on('canvas.init', () => this.mostrarIds());
+    const refrescar = () => this._refrescarIds();
+    this._eventBus.on('shape.added', refrescar);
+    this._eventBus.on('shape.removed', refrescar);
+    this._eventBus.on('elements.changed', refrescar);
+    this._eventBus.on('connection.added', refrescar);
+    this._eventBus.on('connection.removed', refrescar);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
     this._simulationPalette.setExportCallback(this.exportHeatmapPng.bind(this));
+    this._simulationPalette.setMeasurementCallback(this.exportMediciones.bind(this));
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
@@ -902,6 +930,168 @@ export default class SimulationController {
     this._heatmap.data(dataPoints).max(rango.max || 1).radius(this._radius, this._blur).draw();
     if (rango.n > 0) this._renderLegend(metric, rango);
     this.showOverlays(metric);
+  }
+
+  /**
+   * Enciende el ID visible de cada tarea: un circulo azul con el numero corto.
+   *
+   * El numero se DERIVA del diagrama (ver TaskIds.js) y sigue el ORDEN DEL FLUJO,
+   * no el de la pantalla: mover una figura no renumera el proceso, y el numero
+   * coincide con el orden en que se recorre midiendo.
+   *
+   * NO se usa `show: { minZoom }` a proposito. En diagram-js, `minZoom` OCULTA el
+   * overlay por debajo del umbral (Overlays.js, `_updateOverlayVisibilty`): es
+   * justo el fallo que tenia el mapa de calor al alejarse. En su lugar se fija
+   * `scale: { min: 0.35 }`, que hace que el circulo DEJE de encogerse por debajo
+   * del 35 % sin desaparecer. Es decir: a cualquier zoom se ve, y en un diagrama
+   * enorme sigue siendo legible.
+   *
+   * Se dibuja DENTRO de la tarea (arriba a la derecha, sin offset) para no
+   * solaparse con la figura vecina ni girar sobre el borde.
+   */
+  mostrarIds() {
+    this.idsVisibles = true;
+    const tareas = this._tareasNumerables();
+    const numeros = numerarTareas(tareas);
+
+    tareas.forEach((tarea) => {
+      const numero = numeros.get(tarea.id);
+      const etiqueta = etiquetaDe(tarea, numero);
+
+      this._overlays.add(tarea, 'task-id', {
+        position: { top: 5, right: 5 },
+        scale: { min: 0.35 },
+        html: `<div class="task-id-badge" title="ID ${numero} · ${etiqueta}">${numero}</div>`
+      });
+    });
+  }
+
+  ocultarIds() {
+    this.idsVisibles = false;
+    this._overlays.remove({ type: 'task-id' });
+  }
+
+  /**
+   * Configurador de medicion: el JSON que alimenta la app de toma de tiempos.
+   *
+   * Lleva SOLO tareas (los eventos y compuertas no se miden) y tres formas de
+   * nombrar cada una, porque cada una sirve para algo distinto:
+   *   - `id`      el del XML: la clave con la que se fusionan las mediciones.
+   *   - `idCorto` el numero visible. Se reasigna si cambia el diagrama.
+   *   - `nombre`  para leer en pantalla.
+   *
+   * Y el SUPUESTO actual (la distribucion que hoy usa el motor), para que la app
+   * pueda contrastar lo declarado con lo medido en planta. Ese contraste es el
+   * motivo de existir del archivo: hoy el informe presenta un supuesto con la
+   * misma autoridad que si estuviera medido.
+   */
+  construirConfigurador() {
+    const tareas = this._tareasNumerables();
+    const numeros = numerarTareas(tareas);
+
+    const tareasJson = tareas.map((tarea) => {
+      const data = getSimulationData(tarea) || {};
+      const pt = data.processingTime || {};
+      const carga = data.carga || {};
+
+      // El supuesto se aplana (min/moda/max) en vez de anidarse: la app de tiempos
+      // no tiene por que conocer la estructura interna del motor.
+      const supuesto = { distribucion: pt.distribution || 'fixed' };
+      if (supuesto.distribucion === 'triangular') {
+        supuesto.min = pt.min;
+        supuesto.moda = pt.mode;
+        supuesto.max = pt.max;
+      } else {
+        supuesto.valor = pt.value;
+      }
+      supuesto.unidad = pt.unit || 'minutes';
+
+      return {
+        id: tarea.id,
+        idCorto: numeros.get(tarea.id) || null,
+        nombre: (tarea.businessObject && tarea.businessObject.name) || null,
+        tipo: tarea.type,
+        unidad: pt.unit || 'minutes',
+        supuesto,
+        tiempoPorLote: data.frequency === 'lot',
+        carga: {
+          masaCargadaKg: carga.masaCargadaKg == null ? null : carga.masaCargadaKg,
+          masaArrastradaKg: carga.masaArrastradaKg == null ? null : carga.masaArrastradaKg,
+          distanciaM: carga.distanciaM == null ? null : carga.distanciaM
+        },
+        habilidad: data.habilidad || null,
+        medicion: { confianza: 95, precision: 5 }
+      };
+    });
+
+    const raiz = this._elementRegistry.find((el) => !isLabel(el) && is(el, 'bpmn:StartEvent') && (getSimulationData(el) || {}).isRoot);
+
+    return {
+      tipo: 'configurador-tiempos',
+      version: 1,
+      proyecto: {
+        nombre: this._nombreExportado(),
+        archivo: String(document.title || '').replace(/\s*[-–—|]\s*Camunda Modeler.*$/i, '').trim() || null,
+        fecha: new Date().toISOString().slice(0, 10),
+        semilla: raiz ? ((getSimulationData(raiz) || {}).seed || null) : null
+      },
+      tareas: tareasJson
+    };
+  }
+
+  /**
+   * Descarga el configurador como JSON.
+   *
+   * Si no hay tareas avisa en vez de descargar un archivo vacio: un JSON sin
+   * tareas haria que la app abriese sin nada que medir y el fallo se veria mas
+   * tarde, lejos de la causa.
+   */
+  exportMediciones() {
+    const configurador = this.construirConfigurador();
+
+    if (!configurador.tareas.length) {
+      this._notifications.showNotification({
+        text: 'El diagrama no tiene tareas que medir',
+        type: 'warning',
+        duration: 5000
+      });
+      return;
+    }
+
+    const dataStr = JSON.stringify(configurador, null, 2);
+    const link = document.createElement('a');
+    link.setAttribute('href', 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr));
+    link.setAttribute('download', `configurador-${this._nombreExportado()}.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    this._notifications.showNotification({
+      text: `Configurador exportado: ${configurador.tareas.length} tarea(s)`,
+      type: 'success',
+      duration: 4000
+    });
+  }
+
+  /** Tareas que reciben numero: solo tareas, igual que el mapa de calor. */
+  _tareasNumerables() {
+    return this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:Task'));
+  }
+
+  /**
+   * Vuelve a pintar los IDs tras un cambio en el diagrama.
+   *
+   * Hace falta porque el numero depende de la ESTRUCTURA (el orden del flujo): al
+   * anadir o borrar una tarea hay que renumerar. Se quita y se vuelve a poner en
+   * lugar de recalcular, porque el overlay guarda su propio html y su posicion.
+   *
+   * Si los IDs estan apagados no hace nada: repintar seria encenderlos sin que
+   * nadie lo haya pedido.
+   */
+  _refrescarIds() {
+    if (!this.idsVisibles) return;
+    this.ocultarIds();
+    this.mostrarIds();
   }
 
   /**

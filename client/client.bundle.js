@@ -6851,14 +6851,16 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationController)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var chart_js_auto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! chart.js/auto */ "./node_modules/.pnpm/chart.js@4.5.0/node_modules/chart.js/auto/auto.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
 /* harmony import */ var _HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./HeatmapScale.js */ "./client/simulation/HeatmapScale.js");
+/* harmony import */ var _TaskIds_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./TaskIds.js */ "./client/simulation/TaskIds.js");
+
 
 
 
@@ -6929,6 +6931,16 @@ const AuditIcon = `
   </span>
 `;
 
+// Icono de IDs (Material Symbols "tag"): para el boton que muestra el numero de
+// cada tarea, que es la etiqueta con la que se mide en planta.
+const IdsIcon = `
+  <span class="bts-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M21.41 11.58l-9-9C12.05 2.11 11.36 1.75 10.59 1.75H4c-1.1 0-2 .9-2 2v6.59c0 .77.36 1.46.95 1.91l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l6.59-6.59c.36-.36.58-.86.58-1.41s-.22-1.05-.59-1.41zM6.5 8C5.67 8 5 7.33 5 6.5S5.67 5 6.5 5 8 5.67 8 6.5 7.33 8 6.5 8z"/>
+    </svg>
+  </span>
+`;
+
 // Tipos de figura que reciben mancha del mapa de calor.
 //
 // Se deja como lista explicita (en vez de "todo FlowNode") para poder ajustarla
@@ -6992,7 +7004,7 @@ const limpiarNombre = (s) => String(s || '')
 // pasarian cualquier comprobacion de tipo.
 const isSimulatedElement = (element) => {
   if ((0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) return false;
-  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, type));
+  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, type));
 };
 
 class SimulationController {
@@ -7018,6 +7030,9 @@ class SimulationController {
     this.overtimeReport = null;
     this.normalReport = null;
     this.lastMetric = null;
+    // Los IDs visibles arrancan ENCENDIDOS: son la etiqueta con la que se mide en
+    // planta y sin ellos no se sabe a que tarea corresponde una medicion.
+    this.idsVisibles = true;
 
     this._eventBus.on('canvas.init', () => {
       this.init();
@@ -7028,35 +7043,49 @@ class SimulationController {
     // data-tip alimenta el tooltip CSS (ver simulation.css). Se mantiene tambien
     // el atributo title por accesibilidad: los lectores de pantalla lo anuncian,
     // y sirve como respaldo si el CSS no carga.
-    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
-    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
-    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
-    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
-    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
-    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
+    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
+    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
+    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
+    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
+    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
+    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
+    const idsButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`<div class="bts-entry" title="Mostrar IDs" data-tip="Muestra u oculta el ID de cada tarea (círculo azul). El número sigue el orden del flujo y se reasigna al añadir o borrar tareas: la clave para medir es el id del XML, no el número">${IdsIcon}</div>`);
 
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(runButton, 'click', () => this.runSimulation());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(runButton, 'click', () => this.runSimulation());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
     // Por evento y no llamando al panel: el modulo del informe se registra
     // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
     // Mismo motivo: el panel de diagnostico se registra despues.
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(idsButton, 'click', () => (this.idsVisibles ? this.ocultarIds() : this.mostrarIds()));
 
-    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
     this._tokenSimulationPalette.addEntry(tableButton, 15);
     this._tokenSimulationPalette.addEntry(reportButton, 16);
     this._tokenSimulationPalette.addEntry(auditButton, 17);
+    this._tokenSimulationPalette.addEntry(idsButton, 18);
+
+    // Los IDs se pintan al arrancar (arrancan encendidos) y se repintan cuando el
+    // diagrama cambia, porque el numero depende del orden del flujo.
+    this._eventBus.on('canvas.init', () => this.mostrarIds());
+    const refrescar = () => this._refrescarIds();
+    this._eventBus.on('shape.added', refrescar);
+    this._eventBus.on('shape.removed', refrescar);
+    this._eventBus.on('elements.changed', refrescar);
+    this._eventBus.on('connection.added', refrescar);
+    this._eventBus.on('connection.removed', refrescar);
 
     this._simulationPalette.setMetricCallback(this.showMetric.bind(this));
     this._simulationPalette.setClearCallback(this.clear.bind(this));
     this._simulationPalette.setAdjustCallback(this.adjustHeatmap.bind(this));
     this._simulationPalette.setExportCallback(this.exportHeatmapPng.bind(this));
+    this._simulationPalette.setMeasurementCallback(this.exportMediciones.bind(this));
 
     this._eventBus.on('simulation.charts.opened', () => this.showChart());
     this._eventBus.on('simulation.charts.typeChanged', (e) => this.showChart());
@@ -7077,9 +7106,9 @@ class SimulationController {
     return {
       normal: this.normalReport,
       overtime: this.overtimeReport,
-      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task')),
+      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task')),
       flujos: this._elementRegistry.filter(
-        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el.source, 'bpmn:ExclusiveGateway')
+        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el.source, 'bpmn:ExclusiveGateway')
       )
     };
   }
@@ -7405,7 +7434,7 @@ class SimulationController {
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:FlowNode')) return base;
+    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:FlowNode')) return base;
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
     if (!half || half <= this._radius) return base;
@@ -7710,7 +7739,7 @@ class SimulationController {
 
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
-        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
           const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
           const value = (data && data.resources && data.resources.quantityRequired) || 0;
           pares.push({ element, value });
@@ -7762,6 +7791,168 @@ class SimulationController {
   }
 
   /**
+   * Enciende el ID visible de cada tarea: un circulo azul con el numero corto.
+   *
+   * El numero se DERIVA del diagrama (ver TaskIds.js) y sigue el ORDEN DEL FLUJO,
+   * no el de la pantalla: mover una figura no renumera el proceso, y el numero
+   * coincide con el orden en que se recorre midiendo.
+   *
+   * NO se usa `show: { minZoom }` a proposito. En diagram-js, `minZoom` OCULTA el
+   * overlay por debajo del umbral (Overlays.js, `_updateOverlayVisibilty`): es
+   * justo el fallo que tenia el mapa de calor al alejarse. En su lugar se fija
+   * `scale: { min: 0.35 }`, que hace que el circulo DEJE de encogerse por debajo
+   * del 35 % sin desaparecer. Es decir: a cualquier zoom se ve, y en un diagrama
+   * enorme sigue siendo legible.
+   *
+   * Se dibuja DENTRO de la tarea (arriba a la derecha, sin offset) para no
+   * solaparse con la figura vecina ni girar sobre el borde.
+   */
+  mostrarIds() {
+    this.idsVisibles = true;
+    const tareas = this._tareasNumerables();
+    const numeros = (0,_TaskIds_js__WEBPACK_IMPORTED_MODULE_5__.numerarTareas)(tareas);
+
+    tareas.forEach((tarea) => {
+      const numero = numeros.get(tarea.id);
+      const etiqueta = (0,_TaskIds_js__WEBPACK_IMPORTED_MODULE_5__.etiquetaDe)(tarea, numero);
+
+      this._overlays.add(tarea, 'task-id', {
+        position: { top: 5, right: 5 },
+        scale: { min: 0.35 },
+        html: `<div class="task-id-badge" title="ID ${numero} · ${etiqueta}">${numero}</div>`
+      });
+    });
+  }
+
+  ocultarIds() {
+    this.idsVisibles = false;
+    this._overlays.remove({ type: 'task-id' });
+  }
+
+  /**
+   * Configurador de medicion: el JSON que alimenta la app de toma de tiempos.
+   *
+   * Lleva SOLO tareas (los eventos y compuertas no se miden) y tres formas de
+   * nombrar cada una, porque cada una sirve para algo distinto:
+   *   - `id`      el del XML: la clave con la que se fusionan las mediciones.
+   *   - `idCorto` el numero visible. Se reasigna si cambia el diagrama.
+   *   - `nombre`  para leer en pantalla.
+   *
+   * Y el SUPUESTO actual (la distribucion que hoy usa el motor), para que la app
+   * pueda contrastar lo declarado con lo medido en planta. Ese contraste es el
+   * motivo de existir del archivo: hoy el informe presenta un supuesto con la
+   * misma autoridad que si estuviera medido.
+   */
+  construirConfigurador() {
+    const tareas = this._tareasNumerables();
+    const numeros = (0,_TaskIds_js__WEBPACK_IMPORTED_MODULE_5__.numerarTareas)(tareas);
+
+    const tareasJson = tareas.map((tarea) => {
+      const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(tarea) || {};
+      const pt = data.processingTime || {};
+      const carga = data.carga || {};
+
+      // El supuesto se aplana (min/moda/max) en vez de anidarse: la app de tiempos
+      // no tiene por que conocer la estructura interna del motor.
+      const supuesto = { distribucion: pt.distribution || 'fixed' };
+      if (supuesto.distribucion === 'triangular') {
+        supuesto.min = pt.min;
+        supuesto.moda = pt.mode;
+        supuesto.max = pt.max;
+      } else {
+        supuesto.valor = pt.value;
+      }
+      supuesto.unidad = pt.unit || 'minutes';
+
+      return {
+        id: tarea.id,
+        idCorto: numeros.get(tarea.id) || null,
+        nombre: (tarea.businessObject && tarea.businessObject.name) || null,
+        tipo: tarea.type,
+        unidad: pt.unit || 'minutes',
+        supuesto,
+        tiempoPorLote: data.frequency === 'lot',
+        carga: {
+          masaCargadaKg: carga.masaCargadaKg == null ? null : carga.masaCargadaKg,
+          masaArrastradaKg: carga.masaArrastradaKg == null ? null : carga.masaArrastradaKg,
+          distanciaM: carga.distanciaM == null ? null : carga.distanciaM
+        },
+        habilidad: data.habilidad || null,
+        medicion: { confianza: 95, precision: 5 }
+      };
+    });
+
+    const raiz = this._elementRegistry.find((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent') && ((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(el) || {}).isRoot);
+
+    return {
+      tipo: 'configurador-tiempos',
+      version: 1,
+      proyecto: {
+        nombre: this._nombreExportado(),
+        archivo: String(document.title || '').replace(/\s*[-–—|]\s*Camunda Modeler.*$/i, '').trim() || null,
+        fecha: new Date().toISOString().slice(0, 10),
+        semilla: raiz ? (((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(raiz) || {}).seed || null) : null
+      },
+      tareas: tareasJson
+    };
+  }
+
+  /**
+   * Descarga el configurador como JSON.
+   *
+   * Si no hay tareas avisa en vez de descargar un archivo vacio: un JSON sin
+   * tareas haria que la app abriese sin nada que medir y el fallo se veria mas
+   * tarde, lejos de la causa.
+   */
+  exportMediciones() {
+    const configurador = this.construirConfigurador();
+
+    if (!configurador.tareas.length) {
+      this._notifications.showNotification({
+        text: 'El diagrama no tiene tareas que medir',
+        type: 'warning',
+        duration: 5000
+      });
+      return;
+    }
+
+    const dataStr = JSON.stringify(configurador, null, 2);
+    const link = document.createElement('a');
+    link.setAttribute('href', 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr));
+    link.setAttribute('download', `configurador-${this._nombreExportado()}.json`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    this._notifications.showNotification({
+      text: `Configurador exportado: ${configurador.tareas.length} tarea(s)`,
+      type: 'success',
+      duration: 4000
+    });
+  }
+
+  /** Tareas que reciben numero: solo tareas, igual que el mapa de calor. */
+  _tareasNumerables() {
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task'));
+  }
+
+  /**
+   * Vuelve a pintar los IDs tras un cambio en el diagrama.
+   *
+   * Hace falta porque el numero depende de la ESTRUCTURA (el orden del flujo): al
+   * anadir o borrar una tarea hay que renumerar. Se quita y se vuelve a poner en
+   * lugar de recalcular, porque el overlay guarda su propio html y su posicion.
+   *
+   * Si los IDs estan apagados no hace nada: repintar seria encenderlos sin que
+   * nadie lo haya pedido.
+   */
+  _refrescarIds() {
+    if (!this.idsVisibles) return;
+    this.ocultarIds();
+    this.mostrarIds();
+  }
+
+  /**
    * Pinta la leyenda que da sentido al color.
    *
    * Sin ella, el rojo y el azul no significan nada: la escala es relativa al
@@ -7776,7 +7967,7 @@ class SimulationController {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
-      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)('<div class="heatmap-legend"></div>');
+      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)('<div class="heatmap-legend"></div>');
       contenedor.appendChild(leyenda);
     }
 
@@ -7793,7 +7984,7 @@ class SimulationController {
 
   showOverlays(metric) {
     const elements = metric === 'resourceQuantity'
-      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task'))
+      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task'))
       : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
 
     elements.forEach(element => {
@@ -7806,7 +7997,7 @@ class SimulationController {
             const value = (data && data.resources && data.resources.quantityRequired) || 0;
             if (value > 0) overlayText = `Recursos: ${value}`;
         } else if (result) {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalCost, 'MXN')}`;
                 else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime / (result.executionCount || 1))}`;
                 else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime)}`;
@@ -7819,7 +8010,7 @@ class SimulationController {
                 else if (metric === 'overtime') overlayText = `H. Extras: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalOvertime)}`;
                 else if (metric === 'reworkTime') overlayText = `T. Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalReworkTime)}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalWaitTimeCost, 'MXN')}`;
-            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
@@ -7829,7 +8020,7 @@ class SimulationController {
         // El guard !isLabel es imprescindible: una etiqueta de compuerta pasa
         // is(el, 'bpmn:ExclusiveGateway'), pero NO tiene `outgoing`, asi que
         // element.outgoing.forEach lanzaria TypeError.
-        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
             element.outgoing.forEach(flow => {
                 const flowResult = this.simulationResults.get(flow.id);
                 if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
@@ -8452,7 +8643,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const allElements = this._elementRegistry.getAll();
     const elementsWithData = [];
     allElements.forEach(element => {
-      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
+      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
         if (data && Object.keys(data).length > 0) {
           elementsWithData.push({
@@ -8756,7 +8947,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const tareas = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task')) return;
 
       const operacion = r.totalOperationCost || 0;
       const doble = r.totalDoubleOvertimeCost || 0;
@@ -8779,7 +8970,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const caminos = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:SequenceFlow')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:SequenceFlow')) return;
       if (!r.executionCount) return;
 
       caminos.push({
@@ -8933,7 +9124,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
 
     if (metric === 'resourceQuantity') {
         this._elementRegistry.forEach(element => {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
                 const value = (data && data.resources && data.resources.quantityRequired) || 0;
                 tasks.push({ name: element.businessObject.name || element.id, value: value });
@@ -8942,7 +9133,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     } else {
         this.simulationResults.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
-            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
@@ -9274,7 +9465,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       this._heatmap = null;
     }
     const contenedor = this._canvas.getContainer();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(contenedor).remove('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(contenedor).remove('heatmap-shown');
     const leyenda = contenedor.querySelector('.heatmap-legend');
     if (leyenda) leyenda.remove();
     this._overlays.remove({ type: 'simulation-overlay' });
@@ -9283,7 +9474,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
   createHeatmap() {
     if (this._heatmap) return;
     this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   showPlanBreakdown() {
@@ -11435,6 +11626,10 @@ const HelpIcon = '<path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 
 // --- Exportar ---
 const ExportIcon = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
 
+// Icono del configurador de medicion (Material Symbols "timer"): lo que se
+// descarga es el plan de toma de tiempos para la app de campo.
+const MeasurementIcon = '<path d="M15 1H9v2h6V1zm-4 13h2V8h-2v6zm8.03-6.61l1.42-1.42c-.43-.51-.9-.99-1.41-1.41l-1.42 1.42A8.962 8.962 0 0 0 12 4c-4.97 0-9 4.03-9 9s4.02 9 9 9a8.994 8.994 0 0 0 7.03-14.61zM12 20c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>';
+
 // Catálogo de ayuda: alimenta el panel del botón ?.
 // Se mantiene junto a los iconos para que icono y explicación no se desincronicen.
 const HELP_SECTIONS = [
@@ -11493,7 +11688,11 @@ const HELP_SECTIONS = [
       [ RadiusPlusIcon, 'Radio + / −',
         'Tamaño de las manchas de calor. Súbelo si el diagrama es grande y quieres ver la tendencia general.' ],
       [ BlurPlusIcon, 'Desenfoque + / −',
-        'Suavizado de las manchas. Más desenfoque = vista más difusa; menos = zonas más definidas.' ]
+        'Suavizado de las manchas. Más desenfoque = vista más difusa; menos = zonas más definidas.' ],
+      [ ExportIcon, 'Exportar mapa de calor',
+        'Descarga el diagrama con el mapa de calor como PNG.' ],
+      [ MeasurementIcon, 'Exportar configurador de medición',
+        'Descarga un JSON con las tareas para la app de toma de tiempos: el <strong>id</strong> del diagrama, el ID visible, el nombre, el supuesto de tiempo y la carga física. Ojo: el <strong>ID visible se reasigna</strong> al añadir o borrar tareas; la clave con la que se fusionan las mediciones es el <strong>id</strong> del diagrama, no el número.' ]
     ]
   }
 ];
@@ -11510,6 +11709,7 @@ class SimulationPalette {
     this._clearCallback = () => {};
     this._adjustCallback = () => {};
     this._exportCallback = () => {};
+    this._measurementCallback = () => {};
 
     // *** FIX: Defer initialization until canvas is ready ***
     this._eventBus.on('canvas.init', () => {
@@ -11629,13 +11829,20 @@ class SimulationPalette {
       isExport: true
     });
 
+    this.addEntry({
+      title: 'Exportar configurador de medición (JSON)',
+      tooltip: 'Descarga un JSON con las tareas para la app de toma de tiempos: id del diagrama, ID visible, nombre, supuesto de tiempo y carga física',
+      icon: MeasurementIcon,
+      isMeasurementExport: true
+    });
+
     this.addSeparator();
 
     this.addHelpEntry();
   }
 
   addEntry(options) {
-    const { title, tooltip, icon, text, metric, isClear, isBack, isExport } = options;
+    const { title, tooltip, icon, text, metric, isClear, isBack, isExport, isMeasurementExport } = options;
 
     let content;
     if (icon) {
@@ -11653,6 +11860,7 @@ class SimulationPalette {
     min_dom__WEBPACK_IMPORTED_MODULE_0__.event.bind(button, 'click', () => {
         if (isClear) this._clearCallback();
         else if (isExport) this._exportCallback();
+        else if (isMeasurementExport) this._measurementCallback();
         else if (isBack) this.close();
         else this._metricCallback(metric);
     });
@@ -11714,6 +11922,7 @@ class SimulationPalette {
   setClearCallback(cb) { this._clearCallback = cb; }
   setAdjustCallback(cb) { this._adjustCallback = cb; }
   setExportCallback(cb) { this._exportCallback = cb; }
+  setMeasurementCallback(cb) { this._measurementCallback = cb; }
 
   isOpen() {
       return this._palette && (0,min_dom__WEBPACK_IMPORTED_MODULE_0__.classes)(this._palette).has(PALETTE_OPEN_CLS);
@@ -11741,6 +11950,138 @@ class SimulationPalette {
 }
 
 SimulationPalette.$inject = [ 'canvas', 'eventBus' ];
+
+
+/***/ }),
+
+/***/ "./client/simulation/TaskIds.js":
+/*!**************************************!*\
+  !*** ./client/simulation/TaskIds.js ***!
+  \**************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   etiquetaDe: () => (/* binding */ etiquetaDe),
+/* harmony export */   idCortoDe: () => (/* binding */ idCortoDe),
+/* harmony export */   numerarTareas: () => (/* binding */ numerarTareas)
+/* harmony export */ });
+/**
+ * El ID visible de cada tarea: un numero corto (1, 2, 3...) para medir en planta.
+ *
+ * Por qué existe: el `id` tecnico del BPMN (`Activity_1a2b3`) identifica sin
+ * ambiguedad, pero nadie lo va a escribir en un papel ni en un cronometro. Y el
+ * `nombre` tampoco sirve como clave: dos operarios escriben «Inspeccion» e
+ * «Inspección» y la fusion de mediciones une lo que no debe.
+ *
+ * Se mantienen TRES cosas, con papeles distintos:
+ *   - `id`      -> el del XML. Inmutable, es la clave de fusion.
+ *   - `idCorto` -> etiqueta visible. SE DERIVA; no se teclea nunca.
+ *   - `nombre`  -> para leer en pantalla.
+ *
+ * El orden es el del FLUJO (desde el evento de inicio), no el de la pantalla:
+ * mover una figura no puede renumerar el proceso, y asi el numero coincide con
+ * el orden en que se recorre el proceso midiendo.
+ *
+ * El recorrido esta protegido contra ciclos y contra nodos sin salida: un
+ * diagrama real tiene bucles de retrabajo, y una cola sin procesar dejaria
+ * tareas sin numerar.
+ */
+
+/** Tipos que reciben numero. Solo tareas: los eventos y compuertas no se miden. */
+const ES_TAREA = (element) => Boolean(element) && element.$type === 'bpmn:Task';
+
+/**
+ * Recorrido en anchura desde las tareas de inicio, para que el numero siga el
+ * orden de ejecucion.
+ *
+ * Se empieza por TODAS las tareas sin entrantes (no solo por el evento de
+ * inicio): un subproceso o un fragmento sin evento de inicio tambien tiene que
+ * numerarse, y si no, se quedaria fuera en silencio.
+ */
+function ordenDeFlujo(tareas) {
+  const porId = new Map(tareas.map((t) => [ t.id, t ]));
+  const salidas = new Map(tareas.map((t) => [ t.id, [] ]));
+
+  for (const t of tareas) {
+    for (const flujo of (t.outgoing || [])) {
+      const destino = flujo.target;
+      if (destino && porId.has(destino.id)) salidas.get(t.id).push(destino.id);
+    }
+  }
+
+  const entrantes = new Map(tareas.map((t) => [ t.id, 0 ]));
+  for (const t of tareas) {
+    for (const flujo of (t.incoming || [])) {
+      const origen = flujo.source;
+      if (origen && porId.has(origen.id)) entrantes.set(t.id, entrantes.get(t.id) + 1);
+    }
+  }
+
+  const orden = [];
+  const visitados = new Set();
+  const cola = tareas.filter((t) => entrantes.get(t.id) === 0).map((t) => t.id);
+
+  // Si NADA es raiz (un ciclo cerrado sin entradas), se arranca por el primer
+  // elemento para no devolver una lista vacia.
+  if (!cola.length && tareas.length) cola.push(tareas[0].id);
+
+  while (cola.length) {
+    const id = cola.shift();
+    if (visitados.has(id)) continue;
+    visitados.add(id);
+    orden.push(id);
+
+    const siguientes = salidas.get(id) || [];
+    for (const s of siguientes) {
+      if (!visitados.has(s)) cola.push(s);
+    }
+
+    // Los nodos que se quedaron sin arranque propio (dentro de un ciclo) entran
+    // en cuanto se visita su primero, y los que no, al final.
+    if (!cola.length) {
+      const pendiente = tareas.find((t) => !visitados.has(t.id));
+      if (pendiente) cola.push(pendiente.id);
+    }
+  }
+
+  return orden;
+}
+
+/**
+ * Numera las tareas por orden de flujo.
+ *
+ * @param {Array} tareas elementos de bpmn-js (con `id`, `incoming`, `outgoing`)
+ * @returns {Map<string, number>} id tecnico -> numero corto (1..n)
+ */
+function numerarTareas(tareas) {
+  const numeros = new Map();
+  const validas = (tareas || []).filter(ES_TAREA);
+  ordenDeFlujo(validas).forEach((id, i) => numeros.set(id, i + 1));
+  return numeros;
+}
+
+/** Numero corto de una tarea, o null si no es una tarea numerable. */
+function idCortoDe(tareas, idTecnico) {
+  const numeros = numerarTareas(tareas);
+  return numeros.has(idTecnico) ? numeros.get(idTecnico) : null;
+}
+
+/**
+ * Etiqueta legible de una tarea: «1 · Cortar».
+ *
+ * Cae al nombre y, si tampoco hay, al id tecnico: una etiqueta vacia seria peor
+ * que el id crudo, porque pareceria que la tarea no tiene identidad.
+ */
+function etiquetaDe(tarea, numero) {
+  const nombre = (tarea && ((tarea.businessObject && tarea.businessObject.name) || tarea.name)) || null;
+  const n = numero == null ? null : String(numero);
+
+  if (n && nombre) return `${n} · ${nombre}`;
+  if (n) return n;
+  return nombre || (tarea && tarea.id) || '?';
+}
 
 
 /***/ }),
@@ -23342,6 +23683,27 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
     opacity: 0.7;
 }
 
+/* ID visible de una tarea: el circulo azul con el numero corto.
+   Se dibuja DENTRO de la figura (position top/right, sin offset) para no solaparse
+   con la vecina ni girar sobre el borde. El azul distingue del token de la libreria
+   -verde- cuando la simulacion esta corriendo.
+   \`pointer-events: none\` para que no intercepte la seleccion ni el zoom. */
+.task-id-badge {
+    width: 22px;
+    height: 22px;
+    line-height: 22px;
+    border-radius: 100%;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: 'Arial', sans-serif;
+    color: #fff;
+    background: #1565c0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+    user-select: none;
+    pointer-events: none;
+}
+
 /* Leyenda del mapa de calor.
    Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo
    de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no
@@ -23934,7 +24296,7 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/*
   border: 1px solid #d6e4f5;
   border-radius: 5px;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"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","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* Leyenda del mapa de calor.\n   Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo\n   de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no\n   «critico». Va arriba a la derecha (la paleta esta a la izquierda y el panel de\n   graficos abajo) y lleva pointer-events: none porque es informativa: no debe\n   interceptar el zoom ni los clics del lienzo. */\n.heatmap-legend {\n    position: absolute;\n    top: 16px;\n    right: 16px;\n    width: 210px;\n    padding: 8px 10px;\n    background: #fff;\n    border: 1px solid #ccc;\n    border-radius: 6px;\n    box-shadow: 0 3px 10px rgba(0, 0, 0, .15);\n    font-size: 11.5px;\n    color: #333;\n    z-index: 90;\n    pointer-events: none;\n}\n\n.heatmap-legend-title {\n    font-weight: 700;\n    margin-bottom: 6px;\n}\n\n.heatmap-legend-bar {\n    height: 10px;\n    border-radius: 3px;\n    border: 1px solid #ddd;\n}\n\n.heatmap-legend-detail {\n    margin-top: 5px;\n    font-variant-numeric: tabular-nums;\n}\n\n.heatmap-legend-note {\n    margin-top: 3px;\n    color: #777;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado y con margen a los lados, igual que el panel de tabla.\n     `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. */\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* Sin border-box, el `width` seria el del CONTENIDO y el padding de 20px se\n     sumaria por fuera: el panel acababa midiendo 40px mas de lo previsto y los\n     margenes laterales se quedaban en 5px en vez de 24. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 16px 20px 20px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n/* Altura DEFINIDA solo cuando se muestra un grafico.\n   Hace falta para que los hijos flex (`.content` -> `.canvas-wrap`) repartan el\n   alto disponible: sin una altura definida en el panel, `flex: 1` no tiene contra\n   que repartir y el grafico se queda en su minimo (200 px). Las vistas de tabla\n   no llevan esta clase, asi que siguen ajustandose a su contenido. */\n.simulation-chart-panel.chart-mode {\n  height: min(700px, calc(100% - 32px));\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n/* La ayuda es texto largo: se limita la medida de linea para que sea legible y\n   se le da jerarquia a los apartados. */\n.simulation-chart-panel .help-content h4 {\n  margin: 0 0 10px;\n  color: #1565c0;\n}\n\n.simulation-chart-panel .help-content h5 {\n  margin: 16px 0 6px;\n  font-size: 13px;\n  color: #333;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 3px;\n}\n\n.simulation-chart-panel .help-content p,\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  max-width: 88ch;\n  line-height: 1.55;\n}\n\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  margin: 6px 0;\n  padding-left: 22px;\n}\n\n.simulation-chart-panel .help-content li {\n  margin-bottom: 5px;\n}\n\n.simulation-chart-panel .help-content code {\n  padding: 1px 4px;\n  font-size: 12px;\n  background: #eef;\n  border-radius: 3px;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  /* Columna flex: deja que el envoltorio del canvas (o la tabla) ocupen\n     EXACTAMENTE el hueco que sobra en el panel, sin desbordarlo. Antes el\n     canvas tenia una altura fija en vh y, con el panel ya limitado por su\n     max-height, se salia y obligaba a desplazarse para ver el grafico entero. */\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.simulation-chart-panel .html-content {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n}\n\n/* Envoltorio del canvas: ocupa el hueco disponible y nada mas. Chart.js, con\n   maintainAspectRatio:false, ajusta el canvas a su contenedor, asi que el\n   grafico se ve entero y con las mismas proporciones sea cual sea el panel. */\n.simulation-chart-panel .canvas-wrap {\n  position: relative;\n  width: 100%;\n  flex: 1;\n  min-height: 220px;\n}\n\n.simulation-chart-panel .canvas-wrap.hidden {\n  display: none;\n}\n\n/* El canvas ocupa exactamente su envoltorio.\n   Se posiciona en absoluto y no con height:100% porque el envoltorio es un item\n   flex de altura computada `auto`: un porcentaje contra `auto` no resuelve en\n   Chrome, y el canvas se quedaba con su altura de atributo (520), desbordando el\n   panel y recortando el grafico. Con `inset: 0` el canvas llena la caja real.\n   `!important` porque Chart.js fija width/height en linea al redimensionar. */\n.simulation-chart-panel .canvas-wrap canvas {\n  position: absolute;\n  inset: 0;\n  width: 100% !important;\n  height: 100% !important;\n  display: block;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1400px, 100%);\n  max-height: 100%;\n  box-sizing: border-box;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    /* Margen de seguridad: sin el, el modal toca los bordes de la ventana en\n       pantallas bajas. */\n    padding: 24px;\n    box-sizing: border-box;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: min(760px, 100%);\n    /* Centrado por el flex del overlay; el alto se limita al hueco disponible\n       (menos el padding del overlay) para no tocar los bordes verticales. */\n    max-height: 100%;\n    overflow-y: auto;\n    box-sizing: border-box;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n/* El resumen se pinta en DOS sitios: en el modal (que ya tiene su propio\n   titulo en la cabecera) y en linea dentro del panel de graficos. El <h2> por\n   defecto salia enorme y descompensado en ambos, asi que se limita. */\n.sim-summary-container h2 {\n  margin: 0 0 12px;\n  font-size: 16px;\n  color: #1565c0;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n\n/* --- ventana de tiempo del resumen --- */\n/* Va ARRIBA del todo y con fondo propio: es la respuesta a «¿cuándo termino?»,\n   que es la primera pregunta del usuario. Se separa visualmente de la rejilla de\n   KPI para que no se lea como una tarjeta mas. */\n.sim-ventana {\n  margin: 0 0 18px;\n  padding: 14px 16px;\n  background: #f4f8fd;\n  border: 1px solid #d5e3f5;\n  border-radius: 8px;\n}\n\n.sim-ventana h3 {\n  margin: 0 0 10px;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-ventana-tabla {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-ventana-tabla th {\n  width: 190px;\n  text-align: left;\n  vertical-align: top;\n  padding: 7px 10px 7px 0;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #555;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla td {\n  padding: 7px 0;\n  font-size: 13px;\n  color: #222;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla tr:last-child th,\n.sim-ventana-tabla tr:last-child td {\n  border-bottom: none;\n}\n\n/* Las dos cifras que importan (dias laborables y naturales) se destacan: son la\n   respuesta, y el resto son el contexto que la explica. */\n.sim-ventana-tabla tr.destacado th {\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla tr.destacado strong {\n  font-size: 1.25em;\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla .sub {\n  display: block;\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: #6b7a8d;\n  line-height: 1.4;\n  font-weight: 400;\n}\n\n.sim-ventana .sim-nota {\n  margin: 12px 0 0;\n  padding-top: 10px;\n  border-top: 1px solid #e3ebf5;\n  font-size: 11.5px;\n  color: #555;\n  line-height: 1.5;\n}\n\n.sim-ventana .sim-nota strong {\n  color: #0d47a1;\n}\n\n/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.\n   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de\n   Intl.NumberFormat); el propio texto indica si coincide o no. */\n.sim-summary-note {\n  margin: 12px 0 0;\n  padding: 9px 12px;\n  font-size: 0.9em;\n  color: #444;\n  background: #f2f7fd;\n  border: 1px solid #d6e4f5;\n  border-radius: 5px;\n}\n"],"sourceRoot":""}]);
+`, "",{"version":3,"sources":["webpack://./client/simulation/simulation.css"],"names":[],"mappings":"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","sourcesContent":["/*\n* The run/show buttons now use the default .bts-entry style\n* to ensure visual consistency. No custom styles are needed.\n*/\n\n/* Simulation Palette */\n.simulation-palette {\n  position: absolute;\n  top: 20px;\n  left: 80px; /* Positioned to the right of the main palette */\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  padding: 5px;\n  display: none; /* Hidden by default */\n  z-index: 100;\n}\n\n.simulation-palette.open {\n  display: flex;\n  flex-direction: column;\n}\n\n.simulation-palette .bts-entry {\n  padding: 5px;\n  cursor: pointer;\n  border-radius: 4px;\n  margin: 2px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  min-width: 30px;\n  border: none;\n  background: none;\n}\n\n.simulation-palette .bts-entry-text {\n    font-size: 18px;\n    font-weight: bold;\n}\n\n.simulation-palette .bts-entry:hover {\n  background: #eee;\n}\n\n.simulation-palette .bts-entry.active {\n  background: #e3f0ff;\n}\n\n.simulation-palette .bts-entry svg {\n  width: 20px;\n  height: 20px;\n}\n\n.simulation-palette .bts-entry-separator {\n  margin: 5px 0;\n  border-top: 1px solid #ccc;\n  border-bottom: none;\n  border-left: none;\n  border-right: none;\n  padding: 0;\n}\n\n/* Tooltip para cualquier elemento con atributo data-tip.\n   Cubre las dos paletas y tambien la cabecera del panel de graficos:\n     - .bts-palette          (barra principal del token-simulation)\n     - .simulation-palette   (paleta de analisis)\n     - .simulation-chart-panel .header-buttons  (panel de graficos)\n   Se hace en CSS y no con el atributo title nativo porque title tarda ~500ms\n   en aparecer, no se puede estilar y se ve distinto en cada sistema operativo.\n   El title se conserva para accesibilidad (lectores de pantalla). */\n[data-tip] {\n  position: relative;\n}\n\n[data-tip]::after {\n  content: attr(data-tip);\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 50%;\n  transform: translateY(-50%);\n  background: #2b2b2b;\n  color: #fff;\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 1.35;\n  padding: 6px 9px;\n  border-radius: 5px;\n  white-space: normal;\n  width: max-content;\n  max-width: 260px;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 50;\n}\n\n[data-tip]::before {\n  content: \"\";\n  position: absolute;\n  left: calc(100% + 5px);\n  top: 50%;\n  transform: translateY(-50%);\n  border: 5px solid transparent;\n  border-right-color: #2b2b2b;\n  opacity: 0;\n  visibility: hidden;\n  transition: opacity .09s ease, visibility .09s;\n  pointer-events: none;\n  z-index: 51;\n}\n\n[data-tip]:hover::after,\n[data-tip]:hover::before {\n  opacity: 1;\n  visibility: visible;\n}\n\n/* Variante para elementos pegados al borde derecho (p. ej. el boton de cerrar\n   del panel de graficos): el tooltip sale hacia la IZQUIERDA para no salirse\n   de la ventana. */\n[data-tip][data-tip-pos=\"left\"]::after {\n  left: auto;\n  right: calc(100% + 10px);\n}\n\n[data-tip][data-tip-pos=\"left\"]::before {\n  left: auto;\n  right: calc(100% + 5px);\n  border-right-color: transparent;\n  border-left-color: #2b2b2b;\n}\n\n/* Panel de ayuda de la paleta (botón ?) */\n.simulation-palette .palette-help-panel {\n  display: none;\n  position: absolute;\n  left: calc(100% + 10px);\n  top: 0;\n  width: 460px;\n  max-height: 70vh;\n  overflow-y: auto;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 6px;\n  box-shadow: 0 5px 18px rgba(0, 0, 0, .18);\n  padding: 12px 16px 16px;\n  z-index: 60;\n}\n\n.simulation-palette .palette-help-panel.palette-help-open {\n  display: block;\n}\n\n.simulation-palette .palette-help-title {\n  font-size: 14px;\n  font-weight: 700;\n  color: #333;\n  margin-bottom: 6px;\n}\n\n.simulation-palette .palette-help-section {\n  font-size: 11px;\n  font-weight: 700;\n  text-transform: uppercase;\n  letter-spacing: .6px;\n  color: #888;\n  margin: 16px 0 6px;\n}\n\n.simulation-palette .palette-help-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.simulation-palette .palette-help-table td {\n  padding: 6px 6px;\n  border-bottom: 1px solid #f0f0f0;\n  font-size: 12.5px;\n  vertical-align: middle;\n}\n\n.simulation-palette .palette-help-table tr:last-child td {\n  border-bottom: none;\n}\n\n.simulation-palette .palette-help-table td.ic {\n  width: 30px;\n  text-align: center;\n}\n\n.simulation-palette .palette-help-table td.ic svg {\n  width: 19px;\n  height: 19px;\n  display: block;\n  margin: 0 auto;\n}\n\n.simulation-palette .palette-help-table td.nm {\n  width: 150px;\n  font-weight: 600;\n  color: #333;\n}\n\n.simulation-palette .palette-help-table td.ds {\n  color: #555;\n  line-height: 1.45;\n}\n\n\n/* Overlays */\n.simulation-overlay-text {\n  background: rgba(0, 0, 0, 0.7);\n  color: white;\n  padding: 2px 5px;\n  border-radius: 4px;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n/* Heatmap container */\n.heatmap-shown svg {\n    overflow: visible !important;\n}\n\n.heatmap-shown .heatmap-canvas {\n    position: absolute;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    pointer-events: none;\n    mix-blend-mode: multiply;\n    opacity: 0.7;\n}\n\n/* ID visible de una tarea: el circulo azul con el numero corto.\n   Se dibuja DENTRO de la figura (position top/right, sin offset) para no solaparse\n   con la vecina ni girar sobre el borde. El azul distingue del token de la libreria\n   -verde- cuando la simulacion esta corriendo.\n   `pointer-events: none` para que no intercepte la seleccion ni el zoom. */\n.task-id-badge {\n    width: 22px;\n    height: 22px;\n    line-height: 22px;\n    border-radius: 100%;\n    text-align: center;\n    font-size: 12px;\n    font-weight: 700;\n    font-family: 'Arial', sans-serif;\n    color: #fff;\n    background: #1565c0;\n    box-shadow: 0 1px 3px rgba(0, 0, 0, .35);\n    user-select: none;\n    pointer-events: none;\n}\n\n/* Leyenda del mapa de calor.\n   Sin ella el rojo y el azul no significan nada: la escala es RELATIVA al maximo\n   de la corrida, asi que «rojo» quiere decir «el mas alto de ESTE diagrama», no\n   «critico». Va arriba a la derecha (la paleta esta a la izquierda y el panel de\n   graficos abajo) y lleva pointer-events: none porque es informativa: no debe\n   interceptar el zoom ni los clics del lienzo. */\n.heatmap-legend {\n    position: absolute;\n    top: 16px;\n    right: 16px;\n    width: 210px;\n    padding: 8px 10px;\n    background: #fff;\n    border: 1px solid #ccc;\n    border-radius: 6px;\n    box-shadow: 0 3px 10px rgba(0, 0, 0, .15);\n    font-size: 11.5px;\n    color: #333;\n    z-index: 90;\n    pointer-events: none;\n}\n\n.heatmap-legend-title {\n    font-weight: 700;\n    margin-bottom: 6px;\n}\n\n.heatmap-legend-bar {\n    height: 10px;\n    border-radius: 3px;\n    border: 1px solid #ddd;\n}\n\n.heatmap-legend-detail {\n    margin-top: 5px;\n    font-variant-numeric: tabular-nums;\n}\n\n.heatmap-legend-note {\n    margin-top: 3px;\n    color: #777;\n}\n\n/* Chart Panel (panel de graficos) */\n.simulation-chart-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado y con margen a los lados, igual que el panel de tabla.\n     `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. */\n  left: 50%;\n  transform: translateX(-50%);\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* Sin border-box, el `width` seria el del CONTENIDO y el padding de 20px se\n     sumaria por fuera: el panel acababa midiendo 40px mas de lo previsto y los\n     margenes laterales se quedaban en 5px en vez de 24. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  padding: 16px 20px 20px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 100;\n}\n\n/* Altura DEFINIDA solo cuando se muestra un grafico.\n   Hace falta para que los hijos flex (`.content` -> `.canvas-wrap`) repartan el\n   alto disponible: sin una altura definida en el panel, `flex: 1` no tiene contra\n   que repartir y el grafico se queda en su minimo (200 px). Las vistas de tabla\n   no llevan esta clase, asi que siguen ajustandose a su contenido. */\n.simulation-chart-panel.chart-mode {\n  height: min(700px, calc(100% - 32px));\n}\n\n.simulation-chart-panel.open {\n  display: flex;\n}\n\n.simulation-chart-panel .header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 10px;\n  margin-bottom: 12px;\n}\n\n.simulation-chart-panel .header .chart-select {\n  flex: 1;\n  min-width: 0;\n  max-width: 520px;\n  padding: 7px 10px;\n  font-size: 13px;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header .chart-select:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n}\n\n.simulation-chart-panel .header-buttons {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  margin-left: auto;\n}\n\n/* Los CUATRO botones de la cabecera comparten tamano y estado.\n   Antes la regla de tamano solo cubria .help-button y .schedule-button, de modo\n   que los SVG de summary-button y comparison-button quedaban sin width/height y\n   se renderizaban al tamano por defecto de un SVG inline (300x150 px), rompiendo\n   la cabecera. */\n.simulation-chart-panel .header-buttons button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  margin-left: 0;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.simulation-chart-panel .header-buttons button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.simulation-chart-panel .header-buttons button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.simulation-chart-panel .header-buttons button.close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.simulation-chart-panel .help-content {\n  padding: 12px 2px;\n  border-top: 1px solid #eee;\n  overflow-y: auto;\n}\n\n/* La ayuda es texto largo: se limita la medida de linea para que sea legible y\n   se le da jerarquia a los apartados. */\n.simulation-chart-panel .help-content h4 {\n  margin: 0 0 10px;\n  color: #1565c0;\n}\n\n.simulation-chart-panel .help-content h5 {\n  margin: 16px 0 6px;\n  font-size: 13px;\n  color: #333;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 3px;\n}\n\n.simulation-chart-panel .help-content p,\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  max-width: 88ch;\n  line-height: 1.55;\n}\n\n.simulation-chart-panel .help-content ul,\n.simulation-chart-panel .help-content ol {\n  margin: 6px 0;\n  padding-left: 22px;\n}\n\n.simulation-chart-panel .help-content li {\n  margin-bottom: 5px;\n}\n\n.simulation-chart-panel .help-content code {\n  padding: 1px 4px;\n  font-size: 12px;\n  background: #eef;\n  border-radius: 3px;\n}\n\n.simulation-chart-panel .help-content.hidden,\n.simulation-chart-panel .content.hidden,\n.simulation-chart-panel .html-content.hidden {\n  display: none;\n}\n\n/* Styles for HTML Table Views */\n.simulation-chart-panel .content {\n  flex: 1;\n  min-height: 0;\n  /* Columna flex: deja que el envoltorio del canvas (o la tabla) ocupen\n     EXACTAMENTE el hueco que sobra en el panel, sin desbordarlo. Antes el\n     canvas tenia una altura fija en vh y, con el panel ya limitado por su\n     max-height, se salia y obligaba a desplazarse para ver el grafico entero. */\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.simulation-chart-panel .html-content {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n}\n\n/* Envoltorio del canvas: ocupa el hueco disponible y nada mas. Chart.js, con\n   maintainAspectRatio:false, ajusta el canvas a su contenedor, asi que el\n   grafico se ve entero y con las mismas proporciones sea cual sea el panel. */\n.simulation-chart-panel .canvas-wrap {\n  position: relative;\n  width: 100%;\n  flex: 1;\n  min-height: 220px;\n}\n\n.simulation-chart-panel .canvas-wrap.hidden {\n  display: none;\n}\n\n/* El canvas ocupa exactamente su envoltorio.\n   Se posiciona en absoluto y no con height:100% porque el envoltorio es un item\n   flex de altura computada `auto`: un porcentaje contra `auto` no resuelve en\n   Chrome, y el canvas se quedaba con su altura de atributo (520), desbordando el\n   panel y recortando el grafico. Con `inset: 0` el canvas llena la caja real.\n   `!important` porque Chart.js fija width/height en linea al redimensionar. */\n.simulation-chart-panel .canvas-wrap canvas {\n  position: absolute;\n  inset: 0;\n  width: 100% !important;\n  height: 100% !important;\n  display: block;\n}\n\n/* Modal generico (Resumen General / Comparativo de Planes).\n   Estas clases se usaban desde ChartPanel.js pero NO tenian ningun estilo\n   definido, asi que el modal se renderizaba como contenido en linea dentro del\n   panel en lugar de aparecer centrado sobre la interfaz. */\n.generic-modal-overlay {\n  position: fixed;\n  inset: 0;\n  background: rgba(0, 0, 0, .55);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 30px;\n  z-index: 1003;\n}\n\n.generic-modal-overlay.hidden {\n  display: none;\n}\n\n.generic-modal {\n  display: flex;\n  flex-direction: column;\n  width: min(1400px, 100%);\n  max-height: 100%;\n  box-sizing: border-box;\n  background: #fff;\n  border-radius: 8px;\n  box-shadow: 0 12px 40px rgba(0, 0, 0, .32);\n  overflow: hidden;\n}\n\n.generic-modal-header {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.generic-modal-header h3 {\n  margin: 0;\n  font-size: 16px;\n  color: #212121;\n}\n\n.generic-modal-header .close-modal {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.generic-modal-header .close-modal:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n.generic-modal-header .close-modal svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.generic-modal-content {\n  padding: 20px;\n  overflow-y: auto;\n}\n\n.sim-results-table {\n    width: 100%;\n    border-collapse: collapse;\n    table-layout: fixed; /* Prevent table from expanding uncontrollably */\n}\n\n.sim-results-table th,\n.sim-results-table td {\n    border: 1px solid #ddd;\n    padding: 8px;\n    text-align: left;\n    word-wrap: break-word; /* Wrap long text */\n}\n\n.sim-results-table th {\n    background-color: #f2f2f2;\n    font-weight: bold;\n}\n\n.sim-results-table tbody tr:nth-child(even) {\n    background-color: #f9f9f9;\n}\n\n.simulation-chart-panel canvas.hidden {\n    display: none;\n}\n\n/* Schedule Modal */\n.schedule-modal-overlay,\n.plan-breakdown-modal-overlay {\n    position: fixed;\n    top: 0;\n    left: 0;\n    width: 100%;\n    height: 100%;\n    background: rgba(0, 0, 0, 0.6);\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    /* Margen de seguridad: sin el, el modal toca los bordes de la ventana en\n       pantallas bajas. */\n    padding: 24px;\n    box-sizing: border-box;\n    z-index: 1002; /* Above chart panel */\n}\n\n.schedule-modal-overlay.hidden,\n.plan-breakdown-modal-overlay.hidden {\n    display: none;\n}\n\n.schedule-modal {\n    background: #fff;\n    padding: 20px;\n    border-radius: 8px;\n    box-shadow: 0 5px 15px rgba(0,0,0,0.3);\n    width: min(760px, 100%);\n    /* Centrado por el flex del overlay; el alto se limita al hueco disponible\n       (menos el padding del overlay) para no tocar los bordes verticales. */\n    max-height: 100%;\n    overflow-y: auto;\n    box-sizing: border-box;\n}\n\n.schedule-modal-header {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    border-bottom: 1px solid #eee;\n    padding-bottom: 10px;\n    margin-bottom: 15px;\n}\n\n.schedule-modal-header h3 {\n    margin: 0;\n    font-size: 1.2em;\n}\n\n.schedule-modal-header .close-modal {\n    background: none;\n    border: none;\n    font-size: 24px;\n    cursor: pointer;\n    padding: 0 5px;\n}\n\n.schedule-modal-content h4 {\n    margin-top: 0;\n    margin-bottom: 10px;\n}\n\n.schedule-modal-content ul {\n    list-style-type: none;\n    padding-left: 0;\n}\n\n.schedule-modal-content li {\n    background: #f4f4f4;\n    padding: 8px;\n    border-radius: 4px;\n    margin-bottom: 5px;\n}\n\n.header-buttons {\n    display: flex;\n    align-items: center;\n}\n\n.header-buttons button {\n    margin-left: 5px;\n}\n\n.plan-breakdown-button {\n    background: #e0e0e0;\n    border: 1px solid #ccc;\n    border-radius: 4px;\n    padding: 2px 8px;\n    cursor: pointer;\n}\n\n.plan-breakdown-button.hidden {\n    display: none;\n}\n\n.work-plan-details {\n    display: flex;\n    justify-content: space-around;\n    gap: 20px;\n}\n\n.work-plan-table {\n    flex: 1;\n}\n\n.sim-summary-grid {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));\n  gap: 15px;\n  padding-top: 10px;\n}\n\n/* El resumen se pinta en DOS sitios: en el modal (que ya tiene su propio\n   titulo en la cabecera) y en linea dentro del panel de graficos. El <h2> por\n   defecto salia enorme y descompensado en ambos, asi que se limita. */\n.sim-summary-container h2 {\n  margin: 0 0 12px;\n  font-size: 16px;\n  color: #1565c0;\n}\n\n.sim-summary-grid .sim-summary-item {\n  display: flex;\n  flex-direction: column;\n  background: #f9f9f9;\n  padding: 10px;\n  border-radius: 5px;\n  border-left: 4px solid #1565c0; /* Accent color */\n}\n\n.sim-summary-grid .sim-summary-item .label {\n  font-weight: bold;\n  color: #333;\n  font-size: 0.9em;\n  margin-bottom: 5px;\n}\n\n.sim-summary-grid .sim-summary-item .value {\n  font-size: 1.2em;\n  color: #1565c0;\n  font-weight: bold;\n}\n\n/* --- ventana de tiempo del resumen --- */\n/* Va ARRIBA del todo y con fondo propio: es la respuesta a «¿cuándo termino?»,\n   que es la primera pregunta del usuario. Se separa visualmente de la rejilla de\n   KPI para que no se lea como una tarjeta mas. */\n.sim-ventana {\n  margin: 0 0 18px;\n  padding: 14px 16px;\n  background: #f4f8fd;\n  border: 1px solid #d5e3f5;\n  border-radius: 8px;\n}\n\n.sim-ventana h3 {\n  margin: 0 0 10px;\n  font-size: 14px;\n  color: #1565c0;\n}\n\n.sim-ventana-tabla {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-ventana-tabla th {\n  width: 190px;\n  text-align: left;\n  vertical-align: top;\n  padding: 7px 10px 7px 0;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #555;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla td {\n  padding: 7px 0;\n  font-size: 13px;\n  color: #222;\n  border-bottom: 1px solid #e3ebf5;\n}\n\n.sim-ventana-tabla tr:last-child th,\n.sim-ventana-tabla tr:last-child td {\n  border-bottom: none;\n}\n\n/* Las dos cifras que importan (dias laborables y naturales) se destacan: son la\n   respuesta, y el resto son el contexto que la explica. */\n.sim-ventana-tabla tr.destacado th {\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla tr.destacado strong {\n  font-size: 1.25em;\n  color: #0d47a1;\n}\n\n.sim-ventana-tabla .sub {\n  display: block;\n  margin-top: 2px;\n  font-size: 11.5px;\n  color: #6b7a8d;\n  line-height: 1.4;\n  font-weight: 400;\n}\n\n.sim-ventana .sim-nota {\n  margin: 12px 0 0;\n  padding-top: 10px;\n  border-top: 1px solid #e3ebf5;\n  font-size: 11.5px;\n  color: #555;\n  line-height: 1.5;\n}\n\n.sim-ventana .sim-nota strong {\n  color: #0d47a1;\n}\n\n/* Nota de cuadre del resumen: operacion + primas + espera contra el Costo Total.\n   Va en tono neutro porque no tiene por que cerrar al centavo (redondeo de\n   Intl.NumberFormat); el propio texto indica si coincide o no. */\n.sim-summary-note {\n  margin: 12px 0 0;\n  padding: 9px 12px;\n  font-size: 0.9em;\n  color: #444;\n  background: #f2f7fd;\n  border: 1px solid #d6e4f5;\n  border-radius: 5px;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 

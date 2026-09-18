@@ -40,6 +40,9 @@ writeFileSync(join(AQUI, 'DataAudit.mjs'), leer('DataAudit.js'));
 writeFileSync(join(AQUI, 'HeatmapScale.mjs'),
   leer('HeatmapScale.js').replace("from './util'", "from './util.mjs'"));
 
+// TaskIds es puro (no importa nada del plugin), se copia tal cual.
+writeFileSync(join(AQUI, 'TaskIds.mjs'), leer('TaskIds.js'));
+
 // ModelUtil: `is` mira el $type del stub.
 writeFileSync(join(AQUI, 'ModelUtil.mjs'),
   'export const is = (el, tipo) => Boolean(el) && el.$type === tipo;\n');

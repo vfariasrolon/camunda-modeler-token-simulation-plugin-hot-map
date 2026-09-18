@@ -9,6 +9,7 @@
     "bundle:watch": "webpack -w",
     "prepare": "run-s bundle",
     "verificar": "node verificacion/build.mjs && node verificacion/verificar.mjs",
+    "verificar:navegador": "node verificacion/navegador.mjs",
     "test": "echo 'no tests'"
   },
   "repository": {
