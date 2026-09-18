@@ -1,0 +1,8 @@
+# El scriptId del proyecto Apps Script es de la cuenta, no del codigo.
+# Se ignora como se hace en el repo `cotizador_fmm`.
+.clasp.json
+
+# Apps Script no necesita nada de esto, pero el editor o el sistema operativo
+# ensucian la carpeta.
+.DS_Store
+node_modules/

@@ -1,0 +1,1526 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Toma de tiempos · Estudio de procesos</title>
+
+  <!-- Mismo stack visual que la herramienta de cotizacion (cotizador_fmm), para que
+       las dos se sientan la misma herramienta.
+
+       OJO: Tailwind por CDN significa que si el celular no tiene red, la app se ve
+       como texto plano (sin colores, sin tarjetas). El cronometro sigue funcionando
+       porque el JavaScript es local, pero la pantalla se vuelve incomoda. Es el
+       precio de la coherencia visual y esta asumido a proposito. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+
+    .msym {
+      font-family: 'Material Symbols Outlined';
+      font-weight: normal;
+      font-style: normal;
+      font-size: 20px;
+      line-height: 1;
+      letter-spacing: normal;
+      text-transform: none;
+      display: inline-block;
+      white-space: nowrap;
+      word-wrap: normal;
+      direction: ltr;
+      -webkit-font-feature-settings: 'liga';
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* El cronometro usa monoespaciada con numeros tabulares: sin eso los digitos
+       bailan al cambiar y el reloj se vuelve ilegible de reojo. */
+    .reloj {
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 1px;
+    }
+
+    .oculto { display: none !important; }
+
+    /* El boton de medir: en el celular se pulsa decenas de veces seguidas, de pie y
+       con una mano. Los 72 px de alto y la fuente de 18 son a proposito. */
+    .boton-medir {
+      width: 100%;
+      min-height: 72px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      border: none;
+      border-radius: 0.75rem;
+      cursor: pointer;
+      transition: filter .1s;
+    }
+    .boton-medir:active { filter: brightness(.9); }
+    .boton-medir.parado { background: #1565c0; }
+    .boton-medir.corriendo { background: #10d070; }
+    .boton-medir.pausado { background: #ef6c00; }
+
+    /* Avance de una tarea, sobre la tarjeta. */
+    .barra { height: 6px; border-radius: 4px; background: #e5e7eb; overflow: hidden; }
+    .barra > div { height: 100%; background: #1565c0; transition: width .3s; }
+    .barra.completa > div { background: #10d070; }
+
+    .muestra {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 0.375rem;
+      padding: 2px 7px;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      display: inline-block;
+    }
+    .muestra.atipica { background: #fef2f2; border-color: #fecaca; text-decoration: line-through; }
+
+    /* En el celular el boton de medir queda pegado abajo y no se va con el scroll:
+       si hay que buscarlo, se pierden mediciones. */
+    @media (max-width: 640px) {
+      .boton-medir {
+        position: sticky;
+        bottom: 8px;
+        z-index: 15;
+        box-shadow: 0 -2px 14px rgba(0, 0, 0, .22);
+      }
+      .reloj-grande { font-size: 3.25rem; }
+      /* 16 px como minimo: por debajo, iOS hace zoom al enfocar un campo y
+         descoloca la pantalla en mitad de una medicion. */
+      input, select, textarea { font-size: 16px !important; }
+    }
+
+    @media (max-height: 480px) {
+      .reloj-grande { font-size: 2rem; }
+    }
+  </style>
+</head>
+
+<body class="bg-gray-50 text-gray-800">
+
+  <!-- ===================== CABECERA ===================== -->
+  <header class="bg-white shadow-md sticky top-0 z-40">
+    <nav class="container mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16 gap-3">
+
+        <div class="flex items-center gap-3 min-w-0">
+          <button id="btn-volver" class="hidden text-slate-600 hover:text-slate-900 shrink-0" title="Volver a la lista de estudios">
+            <span class="msym">arrow_back</span>
+          </button>
+          <span class="text-xl font-bold text-slate-700 shrink-0">Tiempos</span>
+          <span id="chip-proyecto" class="hidden sm:inline-block text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg truncate max-w-[240px]"></span>
+        </div>
+
+        <div class="flex items-center gap-3 shrink-0">
+          <span class="flex items-center gap-1.5 text-xs text-gray-500" title="Identificador de este navegador: es el que aparta las tareas">
+            <span id="punto-estado" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>
+            <span id="texto-estado" class="hidden sm:inline">iniciando…</span>
+          </span>
+          <input id="usuario" placeholder="Tu nombre"
+                 class="shadow-sm border rounded-lg py-1.5 px-2.5 text-sm w-28 sm:w-40 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+      </div>
+    </nav>
+  </header>
+
+  <!-- Sub-pestanas: solo se ven dentro de un estudio -->
+  <nav id="tabs-estudio" class="hidden bg-white border-b sticky top-16 z-30">
+    <div class="container mx-auto px-4 sm:px-6 lg:px-8 flex overflow-x-auto">
+      <button data-vista="tareas" class="tab-estudio px-4 py-3 text-sm border-b-2 border-blue-700 text-blue-700 font-semibold whitespace-nowrap">Tareas</button>
+      <button data-vista="medir" class="tab-estudio px-4 py-3 text-sm border-b-2 border-transparent text-gray-600 whitespace-nowrap">Medir</button>
+      <button data-vista="cursograma" class="tab-estudio px-4 py-3 text-sm border-b-2 border-transparent text-gray-600 whitespace-nowrap">Cursograma</button>
+      <button data-vista="resumen" class="tab-estudio px-4 py-3 text-sm border-b-2 border-transparent text-gray-600 whitespace-nowrap">Resumen</button>
+    </div>
+  </nav>
+
+  <main class="container mx-auto p-4 sm:p-6 lg:p-8">
+
+    <!-- =====================================================================
+         VISTA: ESTUDIOS (la entrada)
+
+         Se entra aqui SIEMPRE. Antes la app cargaba el ultimo proyecto sin
+         preguntar, y con varios diagramas eso mezclaba todo: no se sabia cual se
+         estaba midiendo.
+         ===================================================================== -->
+    <section id="vista-estudios" class="vista">
+      <div class="text-center mb-8">
+        <h1 class="text-3xl sm:text-4xl font-bold text-slate-800">Estudios de tiempos</h1>
+        <p class="mt-3 text-gray-600">Elige un diagrama para medir, o importa uno nuevo desde Camunda.</p>
+      </div>
+
+      <div class="bg-white p-5 sm:p-6 rounded-xl shadow-lg mb-6">
+        <h2 class="text-lg font-bold text-slate-700 mb-3">Importar un diagrama</h2>
+        <p class="text-sm text-gray-600 mb-4">
+          Exporta el <code class="bg-gray-100 px-1.5 py-0.5 rounded">configurador.json</code> desde el
+          plugin de Camunda (paleta de análisis → <strong>Exportar configurador de medición</strong>).
+          <strong>Cada importación crea un estudio nuevo</strong>, con la fecha en el nombre: así las
+          mediciones de una versión del diagrama nunca se mezclan con las de otra.
+        </p>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input type="file" id="archivo-configurador" accept=".json,application/json"
+                 class="shadow-sm border rounded-lg w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 file:text-sm">
+          <button id="btn-importar"
+                  class="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 px-6 rounded-lg whitespace-nowrap">
+            Importar
+          </button>
+        </div>
+        <p id="nota-importar" class="text-sm mt-3 text-gray-500"></p>
+      </div>
+
+      <h2 class="text-lg font-bold text-slate-700 mb-3">Mis estudios</h2>
+      <div id="lista-estudios" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"></div>
+    </section>
+
+    <!-- =====================================================================
+         VISTA: TAREAS (el tablero de un estudio)
+         ===================================================================== -->
+    <section id="vista-tareas" class="vista oculto">
+      <div class="bg-white p-5 sm:p-6 rounded-xl shadow-lg mb-6">
+        <h2 class="text-lg font-bold text-slate-700 mb-4">Avance del estudio</h2>
+        <div id="avance-general" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3"></div>
+        <div class="barra mt-4" id="barra-general"><div style="width:0%"></div></div>
+        <p id="nota-avance" class="text-sm text-gray-600 mt-3"></p>
+      </div>
+
+      <div class="bg-white p-4 sm:p-6 rounded-xl shadow-lg mb-6">
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-gray-700 text-sm font-bold mb-2">Buscar por ID o nombre</label>
+            <input id="buscar" placeholder="1, cortar, soldar…"
+                   class="shadow-sm border rounded-lg w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-gray-700 text-sm font-bold mb-2">Estado</label>
+            <select id="filtro-estado"
+                    class="shadow-sm border rounded-lg w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">Todas</option>
+              <option value="LIBRE">Libres</option>
+              <option value="ACTIVA">En medición</option>
+              <option value="HUERFANA">Abandonadas</option>
+              <option value="suficiente">Con muestras suficientes</option>
+              <option value="faltan">A las que les faltan muestras</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="grid-tareas" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"></div>
+    </section>
+
+    <!-- =====================================================================
+         VISTA: MEDIR
+         ===================================================================== -->
+    <section id="vista-medir" class="vista oculto">
+      <div id="medir-sin-tarea" class="bg-white p-6 rounded-xl shadow-lg">
+        <p class="text-gray-600">Abre una tarea desde la pestaña <strong>Tareas</strong> para empezar a medir.</p>
+      </div>
+
+      <div id="medir-con-tarea" class="oculto">
+        <div class="bg-white p-5 rounded-xl shadow-lg mb-4">
+          <div class="flex items-center gap-3">
+            <span id="medir-id" class="inline-flex items-center justify-center min-w-[38px] h-[38px] rounded-full bg-blue-700 text-white font-bold text-lg"></span>
+            <h2 id="medir-nombre" class="text-xl font-bold text-slate-800"></h2>
+          </div>
+          <p id="medir-supuesto" class="text-sm text-gray-600 mt-3"></p>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-lg mb-4">
+          <h2 class="text-lg font-bold text-slate-700 mb-4">Cronómetro</h2>
+
+          <!-- DOS contadores. El GRANDE es el intervalo (lo que se registra en cada
+               toque) y el chico es el total de la sesion. Con un solo reloj que se
+               reinicia, el observador pierde la nocion de cuanto lleva midiendo. -->
+          <div class="bg-slate-900 rounded-xl p-5 text-center">
+            <div class="text-slate-400 text-xs uppercase tracking-wider mb-1">Intervalo (lo que se registra)</div>
+            <div id="crono" class="reloj reloj-grande text-white text-5xl">00:00.000</div>
+            <div class="border-t border-slate-700 mt-3 pt-3 flex items-center justify-center gap-3 flex-wrap text-slate-400 text-xs">
+              <span id="crono-total" class="reloj text-slate-300 text-lg">00:00</span>
+              <span>total de la sesión · <span id="cuenta-total">0</span> medición(es) <span id="hora-inicio"></span></span>
+            </div>
+          </div>
+
+          <!-- UN SOLO BOTON: nunca hay que parar. La primera pulsacion arranca; las
+               siguientes cierran la medicion, la anotan y arrancan la siguiente. -->
+          <button id="btn-medir" class="boton-medir parado mt-4">
+            <span id="btn-medir-texto">Iniciar medición</span>
+          </button>
+
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+            <button id="btn-deshacer" class="bg-white border hover:bg-gray-50 text-gray-700 font-semibold py-3 px-3 rounded-lg text-sm">Deshacer última</button>
+            <button id="btn-atipica" class="bg-white border hover:bg-gray-50 text-gray-700 font-semibold py-3 px-3 rounded-lg text-sm">Marcar atípica</button>
+            <button id="btn-pausar" class="bg-white border hover:bg-gray-50 text-gray-700 font-semibold py-3 px-3 rounded-lg text-sm">Pausar</button>
+            <button id="btn-cerrar" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-3 rounded-lg text-sm">Cerrar tarea</button>
+          </div>
+
+          <p class="text-xs text-gray-500 mt-3 leading-relaxed bg-gray-50 border-l-4 border-blue-600 p-3 rounded-r-lg">
+            <strong>Cómo se mide:</strong> pulsa <em>Iniciar medición</em> cuando el operario empiece y
+            vuelve a pulsar cada vez que termine una pieza. El reloj grande se pone en cero solo, así que
+            <strong>nunca hay que parar el cronómetro</strong>.
+          </p>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-lg mb-4">
+          <h2 class="text-lg font-bold text-slate-700 mb-3">
+            Muestras de esta sesión (<span id="cuenta-sesion">0</span>)
+          </h2>
+          <div id="muestras-sesion" class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto"></div>
+          <button id="btn-guardar" class="bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 px-5 rounded-lg w-full mt-4">
+            Guardar en la hoja
+          </button>
+          <p id="nota-cola" class="text-sm text-orange-600 mt-3"></p>
+        </div>
+
+        <div class="bg-white p-5 rounded-xl shadow-lg">
+          <h2 class="text-lg font-bold text-slate-700 mb-3">Análisis</h2>
+          <div id="stats-medir" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3"></div>
+          <p id="interpretacion" class="text-sm text-gray-600 mt-4 bg-gray-50 border-l-4 border-blue-600 p-3 rounded-r-lg"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         VISTA: CURSOGRAMA
+         ===================================================================== -->
+    <section id="vista-cursograma" class="vista oculto">
+      <div class="bg-white p-5 rounded-xl shadow-lg mb-4">
+        <h2 class="text-lg font-bold text-slate-700 mb-3">Cursograma analítico</h2>
+        <p class="text-sm text-gray-600">
+          Las tareas se listan igual que en el flujo del diagrama, así que la lectura coincide con el
+          recorrido de la pieza.
+        </p>
+        <div class="flex flex-wrap gap-2 mt-4">
+          <button id="btn-imprimir" class="bg-white border hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-lg text-sm">Imprimir / PDF</button>
+          <button id="btn-csv" class="bg-white border hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-lg text-sm">Exportar CSV</button>
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-xl shadow-lg">
+        <h2 class="text-center text-xl font-bold text-slate-800 mb-3">CURSOGRAMA ANALÍTICO</h2>
+        <div id="cursograma-cabecera" class="text-sm text-gray-600 mb-3"></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="border p-2 text-left">ID</th>
+                <th class="border p-2 text-left">Descripción</th>
+                <th class="border p-2 text-left">Tiempo medio (s)</th>
+                <th class="border p-2 text-left">Muestras</th>
+                <th class="border p-2 text-left">Margen</th>
+                <th class="border p-2 text-left">Rango</th>
+              </tr>
+            </thead>
+            <tbody id="cursograma-filas"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         VISTA: RESUMEN
+         ===================================================================== -->
+    <section id="vista-resumen" class="vista oculto">
+      <div class="bg-white p-5 rounded-xl shadow-lg mb-4">
+        <h2 class="text-lg font-bold text-slate-700 mb-3">Resumen por tarea</h2>
+        <p class="text-sm text-gray-600 mb-4">
+          Una tarea con pocas muestras no tiene un «n requerido»: la desviación todavía es ruido.
+          Por debajo de <strong id="minimo-estimar">8</strong> muestras el sistema dice
+          <em>aún no estimable</em> en vez de dar un número que después se multiplica por diez.
+        </p>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="border p-2 text-left">ID</th><th class="border p-2 text-left">Nombre</th>
+                <th class="border p-2 text-left">n</th><th class="border p-2 text-left">Media</th>
+                <th class="border p-2 text-left">Desv.</th><th class="border p-2 text-left">CV</th>
+                <th class="border p-2 text-left">Margen ±</th><th class="border p-2 text-left">Requeridas</th>
+                <th class="border p-2 text-left">Interpretación</th>
+              </tr>
+            </thead>
+            <tbody id="resumen-filas"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-xl shadow-lg mb-4">
+        <h2 class="text-lg font-bold text-slate-700 mb-3">Por operario</h2>
+        <p class="text-sm text-gray-600 mb-4">
+          Se guarda separado a propósito: si dos personas miden la misma tarea y se mezclan en un solo
+          intervalo, el margen sale estrecho <strong>y mentiroso</strong>.
+        </p>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead class="bg-slate-100">
+              <tr><th class="border p-2 text-left">Operario</th><th class="border p-2 text-left">Tarea</th>
+              <th class="border p-2 text-left">n</th><th class="border p-2 text-left">Media</th>
+              <th class="border p-2 text-left">Desv.</th></tr>
+            </thead>
+            <tbody id="operario-filas"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white p-5 rounded-xl shadow-lg">
+        <h2 class="text-lg font-bold text-slate-700 mb-3">Exportar para el simulador</h2>
+        <p class="text-sm text-gray-600 mb-4">
+          Genera el <code class="bg-gray-100 px-1.5 py-0.5 rounded">mediciones.json</code> con los
+          parámetros medidos. Es el archivo que devuelve el proceso al plugin de Camunda.
+        </p>
+        <button id="btn-mediciones" class="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 px-5 rounded-lg">
+          Descargar mediciones.json
+        </button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== MODAL DE CONFIRMACION ===================== -->
+  <div id="velo" class="hidden fixed inset-0 bg-black/50 z-50 items-center justify-center p-5">
+    <div class="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+      <h3 id="modal-titulo" class="text-lg font-bold text-slate-800 mb-3">Confirmar</h3>
+      <p id="modal-texto" class="text-gray-700 text-sm mb-5 whitespace-pre-line"></p>
+      <div class="flex gap-2 justify-end">
+        <button id="modal-no" class="bg-white border hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-lg text-sm">Cancelar</button>
+        <button id="modal-si" class="bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Sí, continuar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="avisos" class="fixed bottom-4 left-4 z-50 flex flex-col gap-2"></div>
+
+  <!-- El JavaScript va AQUI dentro, en el mismo archivo, y no en un archivo aparte.
+
+       POR QUE: se probo a partirlo en dos archivos con una plantilla de Apps Script
+       (createTemplateFromFile + un punto de inyeccion) y NO funciona: el panel de
+       codigo de usuario se serializa ESCAPANDO todo el contenido, asi que el navegador
+       recibe «\x3cscript\x3e var APP \x3d \x7b...» y revienta con SyntaxError. El
+       doGet simple (createHtmlOutputFromFile) es el patron que ya usa la herramienta
+       de cotizacion y el unico que sirve HTML correctamente. -->
+  <script>
+// ===========================================================================
+// Estado del cliente
+// ===========================================================================
+
+var APP = {
+  sesion: null,          // UUID del navegador: es lo que aparta las tareas
+  usuario: '',
+  proyectoId: null,
+  tareas: [],
+  apartados: {},
+  tareaAbierta: null,
+  muestras: [],          // muestras de la sesion en curso, sin guardar
+  // El cronometro guarda el INTERVALO (inicio) y el TOTAL de la sesion
+  // (totalAcumulado). Son dos cosas distintas y las dos hacen falta.
+  crono: {
+    corriendo: false, inicio: 0, totalAcumulado: 0,
+    raf: null, horaInicio: null, pausado: false
+  },
+  latido: null,
+  minimoEstimar: 8,
+  umbralMin: 5,
+  avisadoSinPersistencia: false,
+  vistaActual: 'estudios'
+};
+
+// ===========================================================================
+// Utilidades
+// ===========================================================================
+
+function $(id) { return document.getElementById(id); }
+
+function aviso(texto, tipo) {
+  var colores = { error: 'bg-red-600', ok: 'bg-green-700' };
+  var d = document.createElement('div');
+  d.className = (colores[tipo] || 'bg-slate-800') +
+    ' text-white px-4 py-2.5 rounded-lg text-sm shadow-lg max-w-sm';
+  d.textContent = texto;
+  $('avisos').appendChild(d);
+  setTimeout(function() { d.remove(); }, tipo === 'error' ? 8000 : 4000);
+}
+
+/** Lee la respuesta del servidor y avisa si dijo que no. */
+function responder(res, alOk) {
+  if (!res) { aviso('Sin respuesta del servidor', 'error'); return; }
+  if (!res.success) { aviso(res.message || 'Error', 'error'); return; }
+  if (alOk) alOk(res.data, res.message);
+}
+
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+function formatoCrono(ms) {
+  var min = Math.floor(ms / 60000);
+  var seg = Math.floor((ms % 60000) / 1000);
+  var mil = Math.floor(ms % 1000);
+  return String(min).padStart(2, '0') + ':' + String(seg).padStart(2, '0') + '.' + String(mil).padStart(3, '0');
+}
+
+function num(v, dec) {
+  if (v === null || v === undefined || v === '') return '—';
+  return Number(v).toFixed(dec === undefined ? 2 : dec);
+}
+
+function desdeIso(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function stat(etiqueta, valor, color) {
+  return '<div class="bg-gray-50 rounded-lg p-3">' +
+    '<div class="text-xs text-gray-500 uppercase tracking-wide">' + etiqueta + '</div>' +
+    '<div class="text-xl font-bold ' + (color || 'text-slate-700') + '">' + valor + '</div></div>';
+}
+
+// ===========================================================================
+// Sesion y latido
+// ===========================================================================
+
+function iniciarSesion() {
+  APP.sesion = localStorage.getItem('tt_sesion');
+  if (!APP.sesion) {
+    APP.sesion = uuid();
+    localStorage.setItem('tt_sesion', APP.sesion);
+  }
+
+  APP.usuario = localStorage.getItem('tt_usuario') || '';
+  $('usuario').value = APP.usuario;
+
+  $('usuario').addEventListener('change', function() {
+    APP.usuario = this.value.trim();
+    localStorage.setItem('tt_usuario', APP.usuario);
+  });
+
+  marcarEstado('bg-amber-500', 'conectando…');
+}
+
+function marcarEstado(color, texto) {
+  $('punto-estado').className = 'inline-block w-2 h-2 rounded-full ' + color;
+  $('texto-estado').textContent = texto;
+}
+
+/** El cliente se declara vivo. El servidor no pregunta nada. */
+function enviarLatido() {
+  if (!APP.tareaAbierta) return;
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.success) marcarEstado('bg-green-500', 'sesión viva');
+      else {
+        marcarEstado('bg-red-500', 'apartado perdido');
+        aviso('Otra sesión liberó esta tarea. Vuelve a abrirla.', 'error');
+        APP.tareaAbierta = null;
+        renderMedir();
+      }
+    })
+    .withFailureHandler(function() { marcarEstado('bg-amber-500', 'sin conexión'); })
+    .latir(APP.proyectoId, APP.tareaAbierta.id, APP.sesion);
+}
+
+function arrancarLatido() {
+  if (APP.latido) clearInterval(APP.latido);
+  // 90 s, el mismo intervalo que declara el backend. Si la red parpadea, el servidor
+  // tolera tres intervalos antes de marcar la sesion como huerfana.
+  APP.latido = setInterval(enviarLatido, 90000);
+}
+
+// ===========================================================================
+// Navegacion
+// ===========================================================================
+
+function cambiarVista(nombre) {
+  APP.vistaActual = nombre;
+
+  document.querySelectorAll('.vista').forEach(function(v) {
+    v.classList.toggle('oculto', v.id !== 'vista-' + nombre);
+  });
+
+  // El boton de volver y las sub-pestanas solo tienen sentido dentro de un estudio.
+  var enEstudio = nombre !== 'estudios';
+  $('btn-volver').classList.toggle('hidden', !enEstudio);
+  $('tabs-estudio').classList.toggle('hidden', !enEstudio);
+  $('chip-proyecto').classList.toggle('hidden', !enEstudio);
+
+  document.querySelectorAll('.tab-estudio').forEach(function(b) {
+    var activa = b.dataset.vista === nombre;
+    b.className = 'tab-estudio px-4 py-3 text-sm border-b-2 whitespace-nowrap ' +
+      (activa ? 'border-blue-700 text-blue-700 font-semibold' : 'border-transparent text-gray-600');
+  });
+
+  window.scrollTo(0, 0);
+  if (nombre === 'resumen') renderResumen();
+}
+
+function volverAEstudios() {
+  if (APP.tareaAbierta) {
+    confirmar('Tienes una tarea abierta',
+      'Vas a salir con la tarea ' + APP.tareaAbierta.idCorto + ' abierta. Se cerrará y las mediciones ' +
+      'sin guardar se quedan en este navegador para cuando vuelvas.\n\n¿Salir?',
+      function() {
+        liberarApartado(function() {
+          APP.proyectoId = null;
+          localStorage.removeItem('tt_proyecto');
+          cambiarVista('estudios');
+          cargarEstudios();
+        });
+      });
+    return;
+  }
+
+  APP.proyectoId = null;
+  localStorage.removeItem('tt_proyecto');
+  cambiarVista('estudios');
+  cargarEstudios();
+}
+
+// ===========================================================================
+// Arranque
+// ===========================================================================
+
+function arrancar() {
+  iniciarSesion();
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      responder(res, function(d) {
+        APP.minimoEstimar = d.minimoParaEstimar || 8;
+        APP.umbralMin = d.umbralHuerfanaMin || 5;
+        $('minimo-estimar').textContent = APP.minimoEstimar;
+        marcarEstado('bg-green-500', 'conectado');
+
+        // SIEMPRE se entra por la lista de estudios: nunca se carga uno solo sin
+        // preguntar, que es lo que mezclaba los diagramas.
+        cambiarVista('estudios');
+        cargarEstudios();
+      });
+    })
+    .withFailureHandler(function(e) {
+      marcarEstado('bg-red-500', 'sin conexión');
+      aviso('No se pudo preparar la hoja: ' + (e && e.message ? e.message : e), 'error');
+    })
+    .prepararHoja();
+}
+
+// ===========================================================================
+// Vista: estudios (la entrada)
+// ===========================================================================
+
+function cargarEstudios() {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      responder(res, function(proyectos) {
+        var cont = $('lista-estudios');
+        cont.innerHTML = '';
+
+        if (!proyectos.length) {
+          cont.innerHTML = '<div class="sm:col-span-2 lg:col-span-3 bg-white p-6 rounded-xl shadow-lg text-gray-500">' +
+            'Todavía no hay estudios. Importa el primero con el botón de arriba.</div>';
+          return;
+        }
+
+        proyectos.forEach(function(p) {
+          var card = document.createElement('div');
+          card.className = 'bg-white p-5 rounded-xl shadow-lg hover:shadow-xl transition-shadow cursor-pointer border-l-4 border-blue-600';
+
+          var enUso = p.tareasEnUso
+            ? '<p class="text-xs text-orange-600 font-semibold mt-2">' + p.tareasEnUso + ' tarea(s) en medición</p>'
+            : '';
+
+          card.innerHTML =
+            '<h3 class="font-bold text-slate-800 truncate">' + (p.nombre || '(sin nombre)') + '</h3>' +
+            '<p class="text-xs text-gray-500 mt-1 truncate">' + p.proyectoId + '</p>' +
+            '<div class="grid grid-cols-2 gap-2 mt-3">' +
+              '<div><span class="text-gray-500 text-xs">Tareas</span><br><span class="font-semibold">' + (p.tareas || 0) + '</span></div>' +
+              '<div><span class="text-gray-500 text-xs">Muestras</span><br><span class="font-semibold">' + (p.muestras || 0) + '</span></div>' +
+            '</div>' +
+            '<p class="text-xs text-gray-500 mt-3">Importado: ' + desdeIso(p.importadoEn) + '</p>' +
+            (p.ultimaMuestra ? '<p class="text-xs text-gray-500">Última medición: ' + desdeIso(p.ultimaMuestra) + '</p>' : '') +
+            enUso +
+            '<div class="flex gap-2 mt-4">' +
+              '<button class="entrar bg-blue-700 hover:bg-blue-800 text-white font-semibold py-2 px-4 rounded-lg text-sm flex-1">Medir</button>' +
+              '<button class="borrar bg-white border hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-gray-600 font-semibold py-2 px-3 rounded-lg text-sm" title="Borrar este estudio y sus mediciones">' +
+                '<span class="msym text-base">delete</span></button>' +
+            '</div>';
+
+          card.querySelector('.entrar').addEventListener('click', function(e) {
+            e.stopPropagation();
+            cargarEstudio(p.proyectoId);
+          });
+
+          card.querySelector('.borrar').addEventListener('click', function(e) {
+            e.stopPropagation();
+            confirmar('Borrar el estudio',
+              'Se van a borrar «' + (p.nombre || p.proyectoId) + '» y sus ' + (p.muestras || 0) +
+              ' mediciones. Esto NO se puede deshacer.\n\n¿Seguro?',
+              function() { borrarEstudio(p.proyectoId); });
+          });
+
+          card.addEventListener('click', function() { cargarEstudio(p.proyectoId); });
+          cont.appendChild(card);
+        });
+      });
+    })
+    .listarProyectos();
+}
+
+function cargarEstudio(proyectoId) {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      responder(res, function(d) {
+        APP.proyectoId = proyectoId;
+        APP.tareas = d.tareas || [];
+        localStorage.setItem('tt_proyecto', proyectoId);
+
+        $('chip-proyecto').textContent = (d.proyecto && d.proyecto.archivo) || proyectoId;
+
+        cargarApartados(function() {
+          cambiarVista('tareas');
+          renderTareas();
+        });
+      });
+    })
+    .obtenerProyecto(proyectoId);
+}
+
+function cargarApartados(alTerminar) {
+  if (!APP.proyectoId) { if (alTerminar) alTerminar(); return; }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.success) {
+        APP.apartados = (res.data && res.data.apartados) || {};
+        APP.umbralMin = (res.data && res.data.umbralMin) || APP.umbralMin;
+      }
+      if (alTerminar) alTerminar();
+    })
+    .withFailureHandler(function() { if (alTerminar) alTerminar(); })
+    .estadoApartados(APP.proyectoId);
+}
+
+function borrarEstudio(proyectoId) {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      responder(res, function() {
+        aviso('Estudio borrado.', 'ok');
+        cargarEstudios();
+      });
+    })
+    .withFailureHandler(function(e) { aviso('No se pudo borrar: ' + (e && e.message ? e.message : e), 'error'); })
+    .borrarProyecto(proyectoId);
+}
+
+// ===========================================================================
+// Vista: tareas
+// ===========================================================================
+
+function estadoDe(t) {
+  var a = APP.apartados[t.id];
+  return a ? a.estado : 'LIBRE';
+}
+
+function renderTareas() {
+  var grid = $('grid-tareas');
+  grid.innerHTML = '';
+
+  var busqueda = ($('buscar').value || '').toLowerCase().trim();
+  var filtro = $('filtro-estado').value;
+
+  APP.tareas.forEach(function(t) {
+    var m = t.metrica || {};
+    var estado = estadoDe(t);
+
+    if (busqueda) {
+      var texto = (String(t.idCorto || '') + ' ' + (t.nombre || '') + ' ' + t.id).toLowerCase();
+      if (texto.indexOf(busqueda) === -1) return;
+    }
+
+    var suficiente = Boolean(m.requeridas) && m.n >= m.requeridas;
+
+    if (filtro === 'suficiente' && !suficiente) return;
+    if (filtro === 'faltan' && (suficiente || !m.estimable)) return;
+    if (filtro && [ 'LIBRE', 'ACTIVA', 'HUERFANA' ].indexOf(filtro) !== -1 && estado !== filtro) return;
+
+    var borde = { LIBRE: 'border-green-500', ACTIVA: 'border-amber-500', HUERFANA: 'border-red-500' }[estado];
+
+    var card = document.createElement('div');
+    card.className = 'bg-white p-4 rounded-xl shadow-lg hover:shadow-xl transition-shadow cursor-pointer border-l-4 ' +
+      borde + (suficiente ? ' bg-green-50' : '');
+
+    var pct = m.requeridas ? Math.min(100, Math.round((m.n / m.requeridas) * 100))
+      : (m.n ? Math.min(95, m.n * 8) : 0);
+
+    var avisoEstado = '';
+    if (estado === 'ACTIVA') {
+      var a = APP.apartados[t.id];
+      avisoEstado = '<p class="text-xs text-amber-600 mt-2">La mide ' + ((a && a.usuario) || 'otra sesión') + '</p>';
+    } else if (estado === 'HUERFANA') {
+      var h = APP.apartados[t.id];
+      avisoEstado = '<p class="text-xs text-red-600 mt-2">Abandonada por ' + ((h && h.usuario) || 'otra sesión') +
+        (h && h.minSinSenal !== null && h.minSinSenal !== undefined ? ' hace ' + h.minSinSenal + ' min' : '') +
+        ' · se puede liberar</p>';
+    }
+
+    var idTexto = (t.idCorto !== null && t.idCorto !== undefined) ? t.idCorto : '?';
+
+    card.innerHTML =
+      '<div class="flex items-center gap-2">' +
+        '<span class="inline-flex items-center justify-center min-w-[26px] h-[26px] rounded-full bg-blue-700 text-white text-xs font-bold">' + idTexto + '</span>' +
+        '<span class="font-semibold text-slate-800 truncate">' + (t.nombre || t.id) + '</span>' +
+      '</div>' +
+      '<div class="text-xs text-gray-600 mt-2">' +
+        (m.n ? 'n=' + m.n + ' · media ' + num(m.media_s, 2) + ' s' : 'sin muestras') +
+        (m.requeridas ? '<br>requeridas ' + m.requeridas + ' · margen ±' + num(m.margen_s, 2) + ' s' : '') +
+      '</div>' +
+      '<div class="barra mt-2' + (suficiente ? ' completa' : '') + '"><div style="width:' + pct + '%"></div></div>' +
+      avisoEstado;
+
+    card.addEventListener('click', function() { abrirTarea(t); });
+    grid.appendChild(card);
+  });
+
+  if (!grid.children.length) {
+    grid.innerHTML = '<div class="sm:col-span-2 lg:col-span-3 bg-white p-6 rounded-xl shadow-lg text-gray-500">' +
+      'Ninguna tarea coincide con el filtro.</div>';
+  }
+
+  renderAvanceGeneral();
+}
+
+/**
+ * Avance del estudio: TRES indicadores, no uno.
+ *
+ * «Llevo 50 de 100» no significa lo mismo que «llevo 50 y necesito 34». Y las tareas
+ * que aun no permiten estimar se cuentan aparte, porque no se puede decir cuanto
+ * les falta.
+ */
+function renderAvanceGeneral() {
+  var total = APP.tareas.length;
+  var conMuestras = 0, suficientes = 0, sinEstimar = 0, tomadas = 0, requeridas = 0;
+
+  APP.tareas.forEach(function(t) {
+    var m = t.metrica || {};
+    if (m.n > 0) conMuestras++;
+    if (m.requeridas && m.n >= m.requeridas) suficientes++;
+    if (m.n > 0 && !m.estimable) sinEstimar++;
+    tomadas += m.n || 0;
+    requeridas += m.requeridas || 0;
+  });
+
+  var pct = requeridas ? Math.round((tomadas / requeridas) * 100) : 0;
+
+  $('avance-general').innerHTML =
+    stat('Tareas', total) +
+    stat('Con muestras', conMuestras) +
+    stat('Suficientes', suficientes, suficientes === total && total > 0 ? 'text-green-700' : '') +
+    stat('Muestras tomadas', tomadas) +
+    stat('Requeridas', requeridas || '—') +
+    stat('Avance', requeridas ? pct + ' %' : '—', pct >= 100 ? 'text-green-700' : 'text-amber-600');
+
+  $('barra-general').className = 'barra mt-4' + (pct >= 100 ? ' completa' : '');
+  $('barra-general').firstElementChild.style.width = Math.min(100, pct) + '%';
+
+  var nota = 'El «requerido» se mueve mientras mides: cada muestra nueva cambia la desviación, y con ' +
+    'ella el número que falta. Si sube, no es un error: significa que la variabilidad resultó mayor de lo que parecía.';
+  if (sinEstimar) {
+    nota = sinEstimar + ' tarea(s) todavía no permiten estimar cuántas muestras hacen falta (hacen falta al menos ' +
+      APP.minimoEstimar + '). ' + nota;
+  }
+  $('nota-avance').textContent = nota;
+}
+
+// ===========================================================================
+// Vista: medir
+// ===========================================================================
+
+function abrirTarea(t) {
+  if (!APP.usuario) {
+    aviso('Escribe tu nombre arriba antes de medir: es lo que permite comparar entre analistas.', 'error');
+    $('usuario').focus();
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res && res.success) {
+        APP.tareaAbierta = t;
+        APP.muestras = [];
+        cronoReiniciar();
+        recuperarSesionLocal();
+        cambiarVista('medir');
+        renderMedir();
+        arrancarLatido();
+        return;
+      }
+
+      // No se pudo apartar: se explica POR QUE y, si esta abandonada, se ofrece
+      // liberarla ENSENANDO quien y cuando. Sin ese dato, el boton es a ciegas.
+      var d = (res && res.data) || {};
+
+      if (d.estado === 'HUERFANA') {
+        confirmar('Liberar tarea abandonada',
+          'La tarea ' + t.idCorto + ' (' + (t.nombre || t.id) + ') quedó apartada por ' +
+          (d.usuario || d.sesion || 'otra sesión') +
+          (d.minSinSenal !== null && d.minSinSenal !== undefined ? ' hace ' + d.minSinSenal + ' min' : '') +
+          '. El umbral de abandono es de ' + (d.umbralMin || APP.umbralMin) + ' min.\n\n¿La liberas para medirla tú?',
+          function() { abrirTareaForzada(t); });
+      } else {
+        aviso(res.message || 'No se pudo abrir la tarea', 'error');
+        cargarApartados(renderTareas);
+      }
+    })
+    .withFailureHandler(function(e) { aviso('Error al abrir: ' + (e && e.message ? e.message : e), 'error'); })
+    .apartarTarea(APP.proyectoId, t.id, APP.sesion, APP.usuario, false);
+}
+
+function abrirTareaForzada(t) {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      responder(res, function() {
+        APP.tareaAbierta = t;
+        APP.muestras = [];
+        cronoReiniciar();
+        recuperarSesionLocal();
+        cambiarVista('medir');
+        renderMedir();
+        arrancarLatido();
+        aviso('Tarea liberada. Ya puedes medir.', 'ok');
+      });
+    })
+    .withFailureHandler(function(e) { aviso('Error: ' + (e && e.message ? e.message : e), 'error'); })
+    .apartarTarea(APP.proyectoId, t.id, APP.sesion, APP.usuario, true);
+}
+
+function renderMedir() {
+  var t = APP.tareaAbierta;
+
+  $('medir-sin-tarea').classList.toggle('oculto', Boolean(t));
+  $('medir-con-tarea').classList.toggle('oculto', !t);
+  if (!t) return;
+
+  $('medir-id').textContent = (t.idCorto !== null && t.idCorto !== undefined) ? t.idCorto : '?';
+  $('medir-nombre').textContent = t.nombre || t.id;
+
+  var s = t.supuesto || {};
+  var supuestoTexto = s.distribucion === 'triangular'
+    ? 'Triangular ' + num(s.min, 2) + ' / ' + num(s.moda, 2) + ' / ' + num(s.max, 2) + ' ' + (s.unidad || '')
+    : 'Fijo ' + num(s.valor, 2) + ' ' + (s.unidad || '');
+
+  $('medir-supuesto').innerHTML =
+    'Supuesto en el diagrama: <strong>' + supuestoTexto + '</strong>' +
+    (t.carga && (t.carga.masaCargadaKg || t.carga.distanciaM)
+      ? ' · carga: ' + (t.carga.masaCargadaKg ? t.carga.masaCargadaKg + ' kg' : '') +
+        (t.carga.distanciaM ? ' a ' + t.carga.distanciaM + ' m' : '')
+      : '') +
+    '<br><span class="text-gray-500">La medición sustituirá al supuesto, pero el supuesto se conserva ' +
+    'para poder auditar de dónde salió cada número.</span>';
+
+  renderMuestrasSesion();
+  renderStatsMedir();
+}
+
+function renderMuestrasSesion() {
+  $('cuenta-sesion').textContent = APP.muestras.length;
+  $('cuenta-total').textContent = APP.muestras.length;
+
+  var cont = $('muestras-sesion');
+  cont.innerHTML = '';
+  APP.muestras.forEach(function(m) {
+    var d = document.createElement('span');
+    d.className = 'muestra' + (m.tipo === 'atipica' ? ' atipica' : '');
+    d.textContent = num(m.tiempo_s, 3) + ' s';
+    d.title = m.tipo === 'atipica' ? 'Marcada como atípica: no cuenta en la media' : 'Cuenta en la media';
+    cont.appendChild(d);
+  });
+
+  $('nota-cola').textContent = APP.muestras.length
+    ? 'Hay ' + APP.muestras.length + ' medición(es) sin guardar. Se conservan en este navegador aunque cierres.'
+    : '';
+}
+
+/** Estadistica local de la sesion: orientativa; la oficial la calcula el servidor. */
+function renderStatsMedir() {
+  var t = APP.tareaAbierta;
+  if (!t) return;
+
+  var propias = APP.muestras.filter(function(m) { return m.tipo !== 'atipica'; })
+    .map(function(m) { return m.tiempo_s; });
+
+  var tarea = APP.tareas.filter(function(x) { return x.id === t.id; })[0];
+  var guardadas = (tarea && tarea.metrica) || {};
+
+  if (!propias.length && !guardadas.n) {
+    $('stats-medir').innerHTML = stat('Sesión', 0) + stat('En la hoja', 0);
+    $('interpretacion').textContent = 'Añade la primera muestra para ver el análisis.';
+    return;
+  }
+
+  var mediaSesion = propias.length
+    ? propias.reduce(function(a, b) { return a + b; }, 0) / propias.length
+    : 0;
+
+  $('stats-medir').innerHTML =
+    stat('Sesión', propias.length) +
+    stat('Media sesión', num(mediaSesion, 3) + ' s') +
+    stat('En la hoja', guardadas.n || 0) +
+    stat('Media total', guardadas.media_s !== undefined ? num(guardadas.media_s, 3) + ' s' : '—') +
+    stat('Margen ±', guardadas.margen_s !== undefined ? num(guardadas.margen_s, 3) : '—') +
+    stat('Requeridas', guardadas.estimable ? guardadas.requeridas : 'aún no estimable',
+      guardadas.estimable && guardadas.n >= guardadas.requeridas ? 'text-green-700' : 'text-amber-600');
+
+  $('interpretacion').textContent = guardadas.interpretacion || '';
+}
+
+// --- Cronometro de un solo boton ---
+//
+// EL OBSERVADOR NUNCA PARA. La primera pulsacion arranca y las siguientes cierran la
+// medicion, la anotan y arrancan la siguiente. Midiendo pieza tras pieza, el operario
+// no espera: con un solo toque no se pierde el arranque de la pieza siguiente.
+//
+// EL PINTADO VA CON requestAnimationFrame Y NO setInterval: en un celular, con la
+// pantalla apagada o la pestana en segundo plano, el navegador SUSPENDE setInterval y
+// el reloj mostrado se congela. El tiempo guardado siempre fue correcto (se calcula
+// con Date.now), pero el numero en pantalla mentia.
+
+function cronoPintar() {
+  var ahora = Date.now();
+
+  $('crono').textContent = formatoCrono(APP.crono.inicio ? ahora - APP.crono.inicio : 0);
+
+  var total = APP.crono.totalAcumulado + (APP.crono.inicio ? ahora - APP.crono.inicio : 0);
+  $('crono-total').textContent = formatoCrono(total).slice(0, 5);
+
+  // La hora de inicio permite, al revisar la hoja, saber si la sesion se hizo de
+  // noche o despues de comer: el rendimiento cambia muchisimo.
+  var inicio = APP.crono.horaInicio
+    ? APP.crono.horaInicio.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+    : '';
+  $('hora-inicio').textContent = inicio ? '· desde las ' + inicio : '';
+}
+
+function cronoBucle() {
+  if (!APP.crono.corriendo) return;
+  cronoPintar();
+  APP.crono.raf = requestAnimationFrame(cronoBucle);
+}
+
+function cronoArrancar() {
+  APP.crono.corriendo = true;
+  APP.crono.inicio = Date.now();
+  if (!APP.crono.horaInicio) APP.crono.horaInicio = new Date();
+  cronoBucle();
+  pintarBotonMedir();
+}
+
+/** Cierra la medicion en curso, la anota y arranca la siguiente. */
+function cronoCerrarYseguir() {
+  var duracion = (Date.now() - APP.crono.inicio) / 1000;
+
+  // Un toque accidental da tiempos de decimas. Se descarta y SE AVISA: un descarte
+  // invisible es un dato escondido.
+  if (duracion < 0.5) {
+    aviso('Menos de medio segundo: se descarta. Vuelve a pulsar cuando termine la pieza.');
+    return;
+  }
+
+  registrarMuestra(duracion);
+
+  // El intervalo cierra y vuelve a cero, pero el TOTAL de la sesion conserva lo
+  // medido: es la suma de todas las piezas.
+  APP.crono.totalAcumulado += Date.now() - APP.crono.inicio;
+  APP.crono.inicio = Date.now();
+  cronoPintar();
+
+  aviso('Medición ' + APP.muestras.length + ': ' + num(duracion, 3) + ' s', 'ok');
+}
+
+function cronoPausar() {
+  if (!APP.crono.corriendo) { aviso('El cronómetro ya está pausado.'); return; }
+  APP.crono.totalAcumulado += Date.now() - APP.crono.inicio;
+  APP.crono.corriendo = false;
+  APP.crono.inicio = 0;
+  if (APP.crono.raf) cancelAnimationFrame(APP.crono.raf);
+  pintarBotonMedir();
+  cronoPintar();
+  aviso('Pausado. El tiempo en curso NO se registra: reanuda para seguir midiendo.');
+}
+
+function cronoReiniciar() {
+  if (APP.crono.raf) cancelAnimationFrame(APP.crono.raf);
+  APP.crono = {
+    corriendo: false, inicio: 0, totalAcumulado: 0, raf: null,
+    horaInicio: null, pausado: false
+  };
+  $('crono').textContent = formatoCrono(0);
+  $('crono-total').textContent = '00:00';
+  $('hora-inicio').textContent = '';
+  pintarBotonMedir();
+}
+
+function pintarBotonMedir() {
+  var btn = $('btn-medir');
+  var texto = $('btn-medir-texto');
+
+  if (APP.crono.corriendo) {
+    btn.className = 'boton-medir corriendo mt-4';
+    texto.textContent = 'Cerrar y empezar la siguiente';
+  } else if (APP.crono.pausado) {
+    btn.className = 'boton-medir pausado mt-4';
+    texto.textContent = 'Reanudar medición';
+  } else {
+    btn.className = 'boton-medir parado mt-4';
+    texto.textContent = 'Iniciar medición';
+  }
+}
+
+/**
+ * Un solo pulsador: la accion la decide el estado, no el usuario.
+ *
+ * Se usa `click` a secas. Anadir `touchstart` guardaria DOS mediciones por toque en
+ * iOS, porque el navegador emite ademas el click sintetico. Es justo el fallo que hay
+ * que evitar aqui.
+ */
+function botonMedirPulsado() {
+  if (APP.crono.corriendo) cronoCerrarYseguir();
+  else if (APP.crono.pausado) { APP.crono.pausado = false; cronoArrancar(); aviso('Reanudado.', 'ok'); }
+  else cronoArrancar();
+}
+
+function registrarMuestra(segundos) {
+  if (!(segundos > 0)) return false;
+
+  APP.muestras.push({
+    muestraId: uuid(),
+    tiempo_s: Math.round(segundos * 1000) / 1000,
+    tipo: 'normal',
+    creadoEn: new Date().toISOString()
+  });
+
+  guardarSesionLocal();
+  renderMuestrasSesion();
+  renderStatsMedir();
+  return true;
+}
+
+/**
+ * Deshace la ultima medicion.
+ *
+ * Hace falta porque el boton unico se pulsa decenas de veces y un dedo se va: sin
+ * deshacer, la unica salida seria borrar la muestra a mano en la hoja.
+ */
+function deshacerUltima() {
+  if (!APP.muestras.length) { aviso('No hay ninguna medición que deshacer.'); return; }
+  var quitada = APP.muestras.pop();
+  guardarSesionLocal();
+  renderMuestrasSesion();
+  renderStatsMedir();
+  aviso('Deshecha la última: ' + num(quitada.tiempo_s, 3) + ' s');
+}
+
+// --- Persistencia de la sesion ---
+//
+// Las muestras sin guardar se escriben en localStorage en CADA registro. En el
+// celular, cerrar la pestana o recibir una llamada es constante, y sin esto se
+// llevaba por delante el trabajo de media hora.
+
+function claveSesion() {
+  return 'tt_borrador_' + APP.proyectoId + '_' + (APP.tareaAbierta ? APP.tareaAbierta.id : '');
+}
+
+function guardarSesionLocal() {
+  try {
+    localStorage.setItem(claveSesion(), JSON.stringify({
+      muestras: APP.muestras,
+      totalAcumulado: APP.crono.totalAcumulado,
+      horaInicio: APP.crono.horaInicio ? APP.crono.horaInicio.toISOString() : null,
+      guardadoEn: new Date().toISOString()
+    }));
+  } catch (e) {
+    // Sin cuota o en modo privado: se avisa UNA vez. Creer que el trabajo esta a
+    // salvo cuando no lo esta es peor que no guardarlo.
+    if (!APP.avisadoSinPersistencia) {
+      APP.avisadoSinPersistencia = true;
+      aviso('Este navegador no permite guardar el borrador: no cierres con mediciones sin guardar.', 'error');
+    }
+  }
+}
+
+function recuperarSesionLocal() {
+  try {
+    var crudo = localStorage.getItem(claveSesion());
+    if (!crudo) return;
+
+    var d = JSON.parse(crudo);
+    if (!d || !Array.isArray(d.muestras) || !d.muestras.length) return;
+
+    APP.muestras = d.muestras;
+    APP.crono.totalAcumulado = d.totalAcumulado || 0;
+    APP.crono.horaInicio = d.horaInicio ? new Date(d.horaInicio) : null;
+
+    aviso('Se recuperaron ' + d.muestras.length + ' medición(es) sin guardar de esta tarea.', 'ok');
+  } catch (e) { /* borrador ilegible: se ignora */ }
+}
+
+function borrarSesionLocal() {
+  try { localStorage.removeItem(claveSesion()); } catch (e) { /* nada */ }
+}
+
+// --- Guardar ---
+
+function guardar() {
+  if (!APP.muestras.length) { aviso('No hay muestras que guardar.'); return; }
+
+  var t = APP.tareaAbierta;
+  $('btn-guardar').disabled = true;
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      $('btn-guardar').disabled = false;
+
+      if (!res || !res.success) { aviso((res && res.message) || 'No se pudo guardar', 'error'); return; }
+
+      var d = res.data;
+      aviso(d.guardadas + ' guardada(s)' + (d.duplicadas ? ', ' + d.duplicadas + ' ya estaban' : ''), 'ok');
+
+      // El borrador local se limpia: si no, al reabrir la tarea se recuperarian
+      // muestras que YA estan en la hoja y se contarian dos veces.
+      APP.muestras = [];
+      borrarSesionLocal();
+      renderMuestrasSesion();
+
+      var t2 = APP.tareas.filter(function(x) { return x.id === t.id; })[0];
+      if (t2) t2.metrica = d.metrica;
+
+      renderMedir();
+      renderTareas();
+    })
+    .withFailureHandler(function(e) {
+      $('btn-guardar').disabled = false;
+      aviso('No se pudo guardar: ' + (e && e.message ? e.message : e), 'error');
+      // Las muestras NO se borran: se quedan para reintentar.
+    })
+    .guardarMuestras(APP.proyectoId, t.id, APP.sesion, APP.usuario, APP.muestras);
+}
+
+function cerrarTarea() {
+  if (APP.muestras.length) {
+    confirmar('Hay mediciones sin guardar',
+      'Tienes ' + APP.muestras.length + ' medición(es) sin guardar. Se quedan en este navegador y se ' +
+      'recuperan si vuelves a abrir la tarea, pero no están en la hoja.\n\n¿Cerrar de todas formas?',
+      cerrarTareaAhora);
+    return;
+  }
+  cerrarTareaAhora();
+}
+
+function cerrarTareaAhora() {
+  liberarApartado(function() { aviso('Tarea cerrada.', 'ok'); });
+}
+
+function liberarApartado(alTerminar) {
+  if (!APP.tareaAbierta) { if (alTerminar) alTerminar(); return; }
+
+  var id = APP.tareaAbierta.id;
+
+  google.script.run
+    .withSuccessHandler(function() {
+      APP.tareaAbierta = null;
+      APP.muestras = [];
+      if (APP.latido) { clearInterval(APP.latido); APP.latido = null; }
+      cronoReiniciar();
+      renderMedir();
+      cargarApartados(function() {
+        renderTareas();
+        cambiarVista('tareas');
+      });
+      if (alTerminar) alTerminar();
+    })
+    .withFailureHandler(function(e) {
+      aviso('Error al cerrar: ' + (e && e.message ? e.message : e), 'error');
+    })
+    .liberarApartado(APP.proyectoId, id, APP.sesion, APP.usuario);
+}
+
+/**
+ * Suelta el apartado al salir de la pagina, SIN esperar respuesta.
+ *
+ * `beforeunload` NO SE DISPARA NUNCA en el celular. Con solo ese evento, cada vez que
+ * se cerraba la pestana la tarea quedaba apartada y el propio operario se bloqueaba a
+ * si mismo hasta que el cron la marcara abandonada (5 min).
+ *
+ * `visibilitychange` SI funciona en movil. Las muestras sin guardar no se pierden:
+ * ya estan en localStorage y se recuperan al volver a abrir la tarea.
+ */
+function liberarAlSalir() {
+  if (!APP.tareaAbierta) return;
+
+  guardarSesionLocal();
+
+  try {
+    google.script.run.liberarApartado(APP.proyectoId, APP.tareaAbierta.id, APP.sesion, APP.usuario);
+  } catch (e) { /* sin red: lo resolvera el cron al marcarla abandonada */ }
+
+  APP.tareaAbierta = null;
+  if (APP.latido) { clearInterval(APP.latido); APP.latido = null; }
+}
+
+// ===========================================================================
+// Vista: cursograma y resumen
+// ===========================================================================
+
+function renderCursograma() {
+  $('cursograma-cabecera').innerHTML = APP.proyectoId
+    ? 'Estudio: <strong>' + APP.proyectoId + '</strong> · ' + new Date().toLocaleDateString('es-MX')
+    : '';
+
+  var tb = $('cursograma-filas');
+  tb.innerHTML = '';
+
+  APP.tareas.forEach(function(t) {
+    var m = t.metrica || {};
+    var tr = document.createElement('tr');
+    tr.className = 'hover:bg-gray-50';
+    tr.innerHTML =
+      '<td class="border p-2 font-semibold">' + ((t.idCorto !== null && t.idCorto !== undefined) ? t.idCorto : '?') + '</td>' +
+      '<td class="border p-2">' + (t.nombre || t.id) + '</td>' +
+      '<td class="border p-2">' + (m.media_s !== undefined ? num(m.media_s, 3) : '—') + '</td>' +
+      '<td class="border p-2">' + (m.n || 0) + '</td>' +
+      '<td class="border p-2">' + (m.margen_s !== undefined ? '±' + num(m.margen_s, 3) : '—') + '</td>' +
+      '<td class="border p-2">' + (m.min_s !== undefined ? num(m.min_s, 2) + ' – ' + num(m.max_s, 2) : '—') + '</td>';
+    tb.appendChild(tr);
+  });
+}
+
+function renderResumen() {
+  if (!APP.proyectoId) return;
+
+  var tb = $('resumen-filas');
+  tb.innerHTML = '';
+
+  APP.tareas.forEach(function(t) {
+    var m = t.metrica || {};
+    var tr = document.createElement('tr');
+    tr.className = 'hover:bg-gray-50';
+    tr.innerHTML =
+      '<td class="border p-2 font-semibold">' + ((t.idCorto !== null && t.idCorto !== undefined) ? t.idCorto : '?') + '</td>' +
+      '<td class="border p-2">' + (t.nombre || t.id) + '</td>' +
+      '<td class="border p-2">' + (m.n || 0) + '</td>' +
+      '<td class="border p-2">' + (m.media_s !== undefined ? num(m.media_s, 3) + ' s' : '—') + '</td>' +
+      '<td class="border p-2">' + (m.desv_s !== undefined && m.desv_s !== null ? num(m.desv_s, 3) : '—') + '</td>' +
+      '<td class="border p-2">' + (m.cv !== undefined && m.cv !== null ? (m.cv * 100).toFixed(1) + ' %' : '—') + '</td>' +
+      '<td class="border p-2">' + (m.margen_s !== undefined ? '±' + num(m.margen_s, 3) : '—') + '</td>' +
+      '<td class="border p-2">' + (m.estimable ? m.requeridas : 'aún no estimable') + '</td>' +
+      '<td class="border p-2 text-xs text-gray-600">' + (m.interpretacion || '') + '</td>';
+    tb.appendChild(tr);
+  });
+
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) return;
+
+      var ob = $('operario-filas');
+      ob.innerHTML = '';
+
+      var porOp = res.data.porOperario || {};
+      Object.keys(porOp).forEach(function(usuario) {
+        Object.keys(porOp[usuario]).forEach(function(id) {
+          var m = porOp[usuario][id];
+          var t = APP.tareas.filter(function(x) { return x.id === id; })[0] || {};
+          var tr = document.createElement('tr');
+          tr.className = 'hover:bg-gray-50';
+          tr.innerHTML =
+            '<td class="border p-2">' + usuario + '</td>' +
+            '<td class="border p-2">' + ((t.idCorto !== null && t.idCorto !== undefined) ? t.idCorto + ' · ' : '') +
+              (t.nombre || id) + '</td>' +
+            '<td class="border p-2">' + m.n + '</td>' +
+            '<td class="border p-2">' + num(m.media_s, 3) + ' s</td>' +
+            '<td class="border p-2">' + num(m.desv_s, 3) + '</td>';
+          ob.appendChild(tr);
+        });
+      });
+
+      if (!ob.children.length) {
+        ob.innerHTML = '<tr><td class="border p-2 text-gray-500" colspan="5">Sin datos por operario todavía.</td></tr>';
+      }
+    })
+    .obtenerMediciones(APP.proyectoId);
+}
+
+// ===========================================================================
+// Importar y exportar
+// ===========================================================================
+
+function importarConfigurador() {
+  var f = $('archivo-configurador').files[0];
+  if (!f) { aviso('Elige el configurador.json', 'error'); return; }
+
+  var lector = new FileReader();
+  lector.onload = function() {
+    var json;
+    try { json = JSON.parse(lector.result); }
+    catch (e) { $('nota-importar').textContent = 'El archivo no es JSON válido.'; return; }
+
+    $('nota-importar').textContent = 'Importando…';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (!res || !res.success) {
+          $('nota-importar').textContent = (res && res.message) || 'No se pudo importar.';
+          return;
+        }
+        $('nota-importar').textContent =
+          'Importado como estudio «' + res.data.proyectoId + '» con ' + res.data.tareas + ' tarea(s).';
+        aviso('Estudio importado: ' + res.data.tareas + ' tareas', 'ok');
+        $('archivo-configurador').value = '';
+        cargarEstudios();
+      })
+      .withFailureHandler(function(e) {
+        $('nota-importar').textContent = 'Error: ' + (e && e.message ? e.message : e);
+      })
+      .importarProyecto(json);
+  };
+  lector.readAsText(f);
+}
+
+function exportarMediciones() {
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (!res || !res.success) { aviso('No se pudo exportar', 'error'); return; }
+      descargar('mediciones-' + APP.proyectoId + '.json', JSON.stringify(res.data, null, 2));
+      aviso('mediciones.json descargado', 'ok');
+    })
+    .withFailureHandler(function(e) { aviso('Error: ' + (e && e.message ? e.message : e), 'error'); })
+    .obtenerMediciones(APP.proyectoId);
+}
+
+function exportarCsv() {
+  var filas = [ [ 'idCorto', 'id', 'nombre', 'n', 'media_s', 'desv_s', 'margen_s', 'min_s', 'max_s' ] ];
+  APP.tareas.forEach(function(t) {
+    var m = t.metrica || {};
+    filas.push([ t.idCorto, t.id, t.nombre, m.n || 0, m.media_s || '', m.desv_s || '',
+      m.margen_s || '', m.min_s || '', m.max_s || '' ]);
+  });
+
+  var csv = filas.map(function(f) {
+    return f.map(function(c) {
+      return '"' + String(c === undefined || c === null ? '' : c).replace(/"/g, '""') + '"';
+    }).join(',');
+  }).join('\r\n');
+
+  descargar('cursograma-' + APP.proyectoId + '.csv', csv, 'text/csv');
+}
+
+function descargar(nombre, contenido, tipo) {
+  var blob = new Blob([ contenido ], { type: (tipo || 'application/json') + ';charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
+}
+
+// ===========================================================================
+// Modal
+// ===========================================================================
+
+function confirmar(titulo, texto, alAceptar) {
+  $('modal-titulo').textContent = titulo;
+  // `textContent` y no `innerHTML`: el texto lleva nombres de usuario y de proyecto,
+  // y un nombre con `<` romperia el modal.
+  $('modal-texto').textContent = texto;
+
+  var velo = $('velo');
+  velo.classList.remove('hidden');
+  velo.classList.add('flex');
+
+  $('modal-si').onclick = function() {
+    velo.classList.add('hidden');
+    velo.classList.remove('flex');
+    alAceptar();
+  };
+  $('modal-no').onclick = function() {
+    velo.classList.add('hidden');
+    velo.classList.remove('flex');
+  };
+}
+
+// ===========================================================================
+// Enlaces
+// ===========================================================================
+
+document.addEventListener('DOMContentLoaded', function() {
+  $('btn-volver').addEventListener('click', volverAEstudios);
+  $('btn-importar').addEventListener('click', importarConfigurador);
+
+  document.querySelectorAll('.tab-estudio').forEach(function(b) {
+    b.addEventListener('click', function() { cambiarVista(this.dataset.vista); });
+  });
+
+  $('buscar').addEventListener('input', renderTareas);
+  $('filtro-estado').addEventListener('change', renderTareas);
+
+  // El boton unico de medicion. Solo `click`: anadir `touchstart` guardaria DOS
+  // mediciones por toque en iOS (touchstart + el click sintetico que le sigue).
+  $('btn-medir').addEventListener('click', botonMedirPulsado);
+  $('btn-pausar').addEventListener('click', cronoPausar);
+  $('btn-deshacer').addEventListener('click', deshacerUltima);
+  $('btn-guardar').addEventListener('click', guardar);
+  $('btn-cerrar').addEventListener('click', cerrarTarea);
+
+  // Marcar atipica: un descarte DECLARADO en vez de borrar la muestra a mano.
+  // El servidor la excluye de la media pero la informa, para que el descarte se vea.
+  $('btn-atipica').addEventListener('click', function() {
+    var i = -1;
+    for (var k = APP.muestras.length - 1; k >= 0; k--) {
+      if (APP.muestras[k].tipo !== 'atipica') { i = k; break; }
+    }
+    if (i === -1) { aviso('No hay ninguna muestra normal que marcar.'); return; }
+    APP.muestras[i].tipo = 'atipica';
+    guardarSesionLocal();
+    renderMuestrasSesion();
+    renderStatsMedir();
+    aviso('Marcada como atípica: no cuenta en la media, pero se informa.', 'ok');
+  });
+
+  $('btn-mediciones').addEventListener('click', exportarMediciones);
+  $('btn-csv').addEventListener('click', exportarCsv);
+  $('btn-imprimir').addEventListener('click', function() { window.print(); });
+
+  // LIBERAR LA TAREA AL SALIR (ver el comentario de `liberarAlSalir`).
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'hidden') liberarAlSalir();
+  });
+
+  window.addEventListener('pagehide', liberarAlSalir);
+
+  window.addEventListener('beforeunload', function(e) {
+    if (APP.muestras.length) {
+      guardarSesionLocal();
+      // Solo se avisa si hay trabajo sin guardar: si no, el navegador pediria
+      // confirmacion en cada recarga y el usuario aprenderia a ignorarla.
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  arrancar();
+});
+
+  </script>
+</body>
+</html>
