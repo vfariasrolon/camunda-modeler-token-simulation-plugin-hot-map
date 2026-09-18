@@ -50,8 +50,8 @@ function correr({ runValue = 10, tareas, piscinas = [], overtime, seed = 42, lab
       id: t.id, $type: 'bpmn:Task', businessObject: { name: t.id }, outgoing: [],
       _datos: {
         processingTime: { distribution: 'fixed', value: t.minutos, unit: 'minutes' },
-        failureRate: 0,
-        reworkTime: { value: 0, unit: 'minutes' },
+        failureRate: t.falla || 0,
+        reworkTime: { value: t.retrabajo || 0, unit: 'minutes' },
         ...(t.frequency ? { frequency: t.frequency } : {}),
         ...(t.pool ? { resources: { pool: t.pool, quantityRequired: t.cantidad || 1 } } : {})
       }
@@ -167,6 +167,34 @@ console.log('\n== 3. Proveedor que cobra POR PIEZA, tarea por token ==');
   ok(sinPrecio.r('T1').totalOperationCost === 0 && sinPrecio.r('T1').totalBilledPieces === 10,
     'sin precio declarado factura 0 pero deja las 10 piezas contadas (se puede detectar)',
     `${sinPrecio.r('T1').totalOperationCost} / ${sinPrecio.r('T1').totalBilledPieces}`);
+}
+
+console.log('\n== 3b. El RETRABAJO: por hora se paga, por pieza no ==');
+{
+  // El motor NO modela el retrabajo como una segunda ejecucion: lo suma como MAS
+  // DURACION de la misma tarea. Eso deja una consecuencia que conviene tener dicha:
+  //
+  //   por HORA   el retrabajo se paga, porque se paga el tiempo.
+  //   por PIEZA  la pieza se factura UNA vez, con su retrabajo dentro.
+  //
+  // No es un descuido: es exactamente el riesgo que se traslada al subcontratar por
+  // pieza. Y va en la direccion buena para ti, asi que hay que saberlo antes de
+  // decidir, no despues.
+  const comun = {
+    runValue: 20,
+    tareas: [ { id: 'T1', minutos: 10, pool: 'X', falla: 0.5, retrabajo: 30 } ]
+  };
+  const porHora = correr({ ...comun, piscinas: [ { name: 'X', quantity: 1, origen: 'externa', cobro: 'hora', tarifaHora: 120 } ] });
+  const porPieza = correr({ ...comun, piscinas: [ { name: 'X', quantity: 1, origen: 'externa', cobro: 'pieza', precioPieza: 20 } ] });
+
+  ok(porHora.r('T1').totalReworkTime > 0, 'CONTROL: la corrida SI produjo retrabajo (hay fallos)',
+    String(porHora.r('T1').totalReworkTime));
+  ok(porHora.r('T1').totalOperationCost > 20 * (10 / 60) * 120,
+    'por HORA el retrabajo se paga (el coste pasa del de solo procesar)',
+    String(porHora.r('T1').totalOperationCost));
+  ok(porPieza.r('T1').totalOperationCost === 20 * 20,
+    'por PIEZA la factura NO cambia por el retrabajo: 20 piezas x 20 = 400',
+    String(porPieza.r('T1').totalOperationCost));
 }
 
 console.log('\n== 4. Proveedor por pieza con tarea POR LOTE: factura el lote entero ==');
