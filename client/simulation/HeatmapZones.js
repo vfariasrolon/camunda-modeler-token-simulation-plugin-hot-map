@@ -28,27 +28,58 @@
 export const LADO_CELDA = 12;
 
 /**
- * Cuanto se reparte la masa de una figura alrededor de su centro, en celdas.
+ * Cuanto se reparte la masa de una figura, en PX DE DIAGRAMA.
  *
- * CON CELDAS PEQUENAS ESTO IMPORTA MAS, no menos: con 60 px, radio 2 cubria 120 px de
- * diagrama (mas ancho que una tarea) y las celdas se solapaban solas. Con 12 px, radio 2
- * cubriria 24 px -menos que una tarea-, la mancha saldria con el centro marcado y los
- * bordes de la figura vacios, y se volveria al problema del principio: un punto por
- * figura en vez de una zona.
+ * EN PIXELES Y NO EN CELDAS, y ese es el arreglo de un fallo real: con el radio contado
+ * en celdas, su tamano en el diagrama cambiaba al cambiar la resolucion. Al bajar la
+ * celda a 12 px y subir el radio a 6 celdas «para compensar», la mancha pasaba a
+ * desbordarse 72 px por cada lado de una figura que mide 100x80: en un diagrama apretado
+ * el mapa se veia flotando en el VACIO, con celdas encendidas donde no hay nada.
  *
- * 6 celdas dan 72 px de radio: cubre una tarea estandar con su borde difuminado y hace
- * que dos tareas contiguas se unan sin escalon. Se queda por debajo del maximo util
- * (radio mayor que media figura no aporta nada: solo engorda el difuminado).
+ * En px el reparto significa lo mismo con cualquier resolucion, y se puede ajustar al
+ * tamano de la figura: el radio sale de la MITAD del lado mayor, acotado entre estos dos
+ * limites. Una figura grande recibe una mancha grande y una pequena, una pequena -una
+ * compuerta de 50x50 no puede recibir una mancha de 100 px-.
  */
-export const RADIO_MANCHA = 6;
+export const RADIO_MINIMO = 24;
+export const RADIO_MAXIMO = 90;
+
+/**
+ * Radio del reparto para una figura, en px de diagrama.
+ *
+ * Se toma la mitad del lado mayor para que el borde difuminado LLEGUE al borde de la
+ * figura y no mas: asi la mancha cubre la figura y no invade a la vecina ni el espacio
+ * vacio de al lado. Acotado por arriba y por abajo, porque una figura diminuta merece
+ * algo visible y una enorme no debe tapar el diagrama entero.
+ */
+export const radioDe = (element) => {
+  const lado = Math.max(Number(element && element.width) || 0, Number(element && element.height) || 0);
+  if (!(lado > 0)) return RADIO_MINIMO;
+  return Math.min(RADIO_MAXIMO, Math.max(RADIO_MINIMO, lado / 2));
+};
+
+/**
+ * ¿La celda cae DENTRO del circulo del reparto?
+ *
+ * Parece redundante con `pesoPorDistancia` -que ya devuelve 0 fuera-, pero no lo es, y
+ * este es el fallo que se veia como mancha flotando en el vacio: el bucle recorre el
+ * CUADRO de celdas del radio y el peso es CIRCULAR, asi que las esquinas del cuadro
+ * quedaban con peso bajo pero distinto de cero. Eran celdas encendidas 18 px por encima
+ * de una tarea, donde no hay nada. El filtro por el centro de la celda corta las esquinas.
+ */
+const dentroDelCirculo = (cx, cy, cx0, cy0, radioCeldas) => {
+  const dx = (cx - cx0) + 0.5;
+  const dy = (cy - cy0) + 0.5;
+  return Math.sqrt(dx * dx + dy * dy) <= radioCeldas + 0.5;
+};
 
 /** Peso de una celda segun su distancia al centro (en celdas). */
-const pesoPorDistancia = (dx, dy) => {
+const pesoPorDistancia = (dx, dy, radioCeldas) => {
   const d = Math.sqrt(dx * dx + dy * dy);
-  if (d > RADIO_MANCHA) return 0;
+  if (d > radioCeldas) return 0;
   // 1 en el centro, 0 en el borde, y siempre positivo dentro: un peso negativo haria
   // que una zona RESTARA trabajo a otra, que no significa nada.
-  return 1 - (d / (RADIO_MANCHA + 1));
+  return 1 - (d / (radioCeldas + 1));
 };
 
 /** Clave de una celda. Enteros, para que dos figuras cercanas caigan en la misma. */
@@ -70,6 +101,24 @@ export const centroDe = (element) => {
 };
 
 /**
+ * ¿La celda TOCA la caja de la figura?
+ *
+ * El reparto circular no cabe en un rectangulo: por las esquinas se sale por mas de 20 px
+ * aunque el radio sea la mitad del lado. Esas esquinas eran las celdas encendidas donde no
+ * hay nada. Recortar por la caja hace que la mancha sea la figura, no una nube alrededor.
+ */
+const toquenLaFigura = (cx, cy, element, lado) => {
+  const x = cx * lado;
+  const y = cy * lado;
+  const ancho = Number(element && element.width) || 0;
+  const alto = Number(element && element.height) || 0;
+  const fx = Number(element && element.x) || 0;
+  const fy = Number(element && element.y) || 0;
+  // Se solapa: una celda de 1 px de holgura cuenta como que toca.
+  return x + lado >= fx - 1 && x <= fx + ancho + 1 && y + lado >= fy - 1 && y <= fy + alto + 1;
+};
+
+/**
  * Reparte `masa` desde un punto por las celdas de alrededor.
  *
  * EL REPARTO CONSERVA LA MASA: lo que sale sumado es exactamente la masa que entra.
@@ -82,20 +131,27 @@ export const centroDe = (element) => {
  * Devuelve pares `[clave, aporte, cx, cy]` en vez de escribir en un acumulador: asi la
  * funcion no tiene estado y el arnes la puede probar sola.
  */
-export const repartirMasa = (x, y, masa, lado = LADO_CELDA, radio = RADIO_MANCHA) => {
+export const repartirMasa = (x, y, masa, lado = LADO_CELDA, radioPx = RADIO_MINIMO) => {
   const aportes = [];
   if (!(masa > 0)) return aportes;
 
   const cx0 = Math.floor(x / lado);
   const cy0 = Math.floor(y / lado);
 
+  // El radio viene en PX DE DIAGRAMA y aqui se pasa a celdas: es lo que hace que la
+  // mancha signifique lo mismo con cualquier resolucion (ver RADIO_MINIMO).
+  const radioCeldas = Math.max(1, Math.round(radioPx / lado));
+
   // Primero los pesos y su suma; despues el reparto. La suma se calcula aqui y no se
   // asume constante porque depende del radio.
   const puntos = [];
   let sumaPesos = 0;
-  for (let dx = -radio; dx <= radio; dx++) {
-    for (let dy = -radio; dy <= radio; dy++) {
-      const peso = pesoPorDistancia(dx, dy);
+  for (let dx = -radioCeldas; dx <= radioCeldas; dx++) {
+    for (let dy = -radioCeldas; dy <= radioCeldas; dy++) {
+      // Se recorre el CUADRO pero solo se acepta el CIRCULO: sin esto, las esquinas
+      // del cuadro quedan encendidas fuera de la figura (ver `dentroDelCirculo`).
+      if (!dentroDelCirculo(cx0 + dx, cy0 + dy, cx0, cy0, radioCeldas)) continue;
+      const peso = pesoPorDistancia(dx, dy, radioCeldas);
       if (peso <= 0) continue;
       puntos.push([ cx0 + dx, cy0 + dy, peso ]);
       sumaPesos += peso;
@@ -120,7 +176,7 @@ export const repartirMasa = (x, y, masa, lado = LADO_CELDA, radio = RADIO_MANCHA
  *
  * Devuelve `{ celdas, max, min, n, lado }` con las celdas ya sumadas.
  */
-export const calcularZonas = (elementos, { lado = LADO_CELDA, radio = RADIO_MANCHA, puntosDeFlujo } = {}) => {
+export const calcularZonas = (elementos, { lado = LADO_CELDA, radio, puntosDeFlujo } = {}) => {
   const acumulado = new Map();
 
   (elementos || []).forEach(({ element, masa }) => {
@@ -134,8 +190,11 @@ export const calcularZonas = (elementos, { lado = LADO_CELDA, radio = RADIO_MANC
       // Se reparte entre los puntos, no entero en cada uno: si no, una linea larga
       // sumaria su masa tantas veces como puntos tenga y se comeria la escala.
       const porPunto = masa / puntos.length;
+      // Una conexion no tiene caja: su radio es el de una figura pequena, porque su
+      // masa se reparte a lo largo del trazo y no alrededor de un centro.
+      const radioFlujo = radio == null ? RADIO_MINIMO : radio;
       puntos.forEach((p) => {
-        repartirMasa(p.x, p.y, porPunto, lado, radio).forEach(([k, aporte]) => {
+        repartirMasa(p.x, p.y, porPunto, lado, radioFlujo).forEach(([k, aporte]) => {
           acumulado.set(k, (acumulado.get(k) || 0) + aporte);
         });
       });
@@ -143,7 +202,34 @@ export const calcularZonas = (elementos, { lado = LADO_CELDA, radio = RADIO_MANC
     }
 
     const c = centroDe(element);
-    repartirMasa(c.x, c.y, masa, lado, radio).forEach(([k, aporte]) => {
+    // El radio se AJUSTA A LA FIGURA: una compuerta de 50x50 no puede recibir la misma
+    // mancha que una tarea de 200x160, o la mancha se sale de la figura y aparece
+    // flotando donde no hay nada.
+    const radioFigura = radio == null ? radioDe(element) : radio;
+
+    // Y se RECORTA A LA CAJA de la figura. El reparto circular no cabe en un rectangulo:
+    // por las esquinas se sale mas de 20 px aunque el radio sea la mitad del lado, y esas
+    // esquinas eran las celdas encendidas donde no hay nada.
+    //
+    // CONSECUENCIA, y hay que decirla en vez de esconderla: recortar DESCARTA la parte de
+    // la masa que caia fuera, asi que el total del mapa queda algo por debajo de la suma de
+    // las masas (del orden del 0,5 %: solo se pierden esquinas). La alternativa -renormalizar
+    // lo que queda- conservaria el total pero SUBIRIA el valor de las celdas del borde para
+    // compensar lo que se tiro, y eso es peor: el numero de una celda dejaria de ser «lo que
+    // paso por aqui». Se prefiere perder el 0,5 % y que cada celda diga la verdad.
+    const aportes = repartirMasa(c.x, c.y, masa, lado, radioFigura)
+      .filter(([, , cx, cy]) => toquenLaFigura(cx, cy, element, lado));
+
+    if (!aportes.length) {
+      // Una figura sin ninguna celda dentro (mas pequena que la celda) al menos marca su
+      // centro: sin esto, una tarea diminuta no apareceria en el mapa.
+      repartirMasa(c.x, c.y, masa, lado, radioFigura).slice(0, 1).forEach(([k, aporte]) => {
+        acumulado.set(k, (acumulado.get(k) || 0) + aporte);
+      });
+      return;
+    }
+
+    aportes.forEach(([k, aporte]) => {
       acumulado.set(k, (acumulado.get(k) || 0) + aporte);
     });
   });

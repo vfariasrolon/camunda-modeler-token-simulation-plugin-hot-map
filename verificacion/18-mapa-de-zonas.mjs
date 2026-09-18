@@ -4,7 +4,7 @@
 // una celda mal sumada pinta una zona donde no se trabajo, y eso no se ve mirando el
 // dibujo (se ve bonito igual), asi que tiene que fallar aqui.
 import {
-  LADO_CELDA, RADIO_MANCHA, MAX_CELDAS,
+  LADO_CELDA, RADIO_MINIMO, RADIO_MAXIMO, radioDe, MAX_CELDAS,
   centroDe, repartirMasa, calcularZonas, celdasQueOcupa, ladoQueCabe
 } from './HeatmapZones.mjs';
 
@@ -90,12 +90,18 @@ console.log('\n== 3. Dos figuras cercanas SUMAN en las celdas que comparten ==')
     'y su valor es mayor que el de una sola figura (las dos suman)',
     `${soloUna.toFixed(2)} -> ${compartida.valor.toFixed(2)}`);
 
-  // Y lo que NO puede pasar: que sumar las dos genere masa de la nada. La masa total
-  // del mapa es exactamente la suma de las masas de las figuras.
+  // Y lo que NO puede pasar: que sumar las dos genere masa DE LA NADA. El total del mapa
+  // tiene que ser la suma de las figuras, MENOS lo que se recorta al ceñir la mancha a la
+  // caja de cada figura (las esquinas del circulo, que se salian al vacio). Es una perdida
+  // pequena y conocida, no una invencion: se tolera hasta un 2 % y se comprueba que NUNCA
+  // supere la masa de entrada, que es el error grave (masa de la nada).
   const total = suma(dos.celdas);
-  ok(Math.abs(total - 20) < 0.01,
-    'y la masa total del mapa es exactamente la suma de las dos figuras',
-    `${total.toFixed(2)} de 20`);
+  ok(total <= 20 + 0.01,
+    'el mapa NUNCA suma mas masa de la que entro (nada de masa de la nada)',
+    `${total.toFixed(3)} de 20`);
+  ok(total >= 20 * 0.98,
+    'y conserva casi toda: solo se pierden las esquinas que salian de la figura',
+    `${total.toFixed(3)} de 20 (${(100 * total / 20).toFixed(1)} %)`);
 
   // El maximo del mapa cae en la zona mas cargada, que es donde debe ir el rojo.
   ok(dos.max >= compartida.valor, 'el maximo es el de la zona mas cargada');
@@ -217,10 +223,61 @@ console.log('\n== 8. La RESOLUCION: que el detalle sea el que se pidio ==');
 
   // El radio tiene que cubrir la figura: con celdas chicas un radio pequeno dejaria el
   // centro marcado y los bordes vacios, que es volver al punto por figura.
-  const alcance = RADIO_MANCHA * zonas.lado;
-  ok(alcance >= 50,
-    'y el reparto alcanza a cubrir media figura (si no, la mancha seria un punto)',
+  const alcance = radioDe({ width: 100, height: 80 });
+  ok(alcance >= 40,
+    'y el reparto se ajusta a la figura (si no, la mancha se sale o queda en un punto)',
     `${alcance} px de radio para una figura de 100x80`);
+}
+
+console.log('\n== 9. La mancha NO se sale de las figuras (el fallo del espacio vacio) ==');
+{
+  // EL CASO QUE SE REPORTO: la mancha aparecia flotando donde no hay nada. Con el radio
+  // contado en CELDAS, al bajar la celda a 12 px la mancha se desbordaba 72 px por cada
+  // lado de una figura de 100x80, y en un diagrama apretado eso son celdas encendidas en
+  // el vacio.
+  //
+  // La geometria es la del ejemplo REAL del usuario (figuras de x=182 a 852), porque con
+  // coordenadas de juguete empezando en 0 el desbordamiento no se ve.
+  const figuras = [
+    { id: 'T1', x: 270, y: 90, width: 100, height: 80 },
+    { id: 'T2', x: 530, y: 90, width: 100, height: 80 },
+    { id: 'GW', x: 425, y: 105, width: 50, height: 50 }
+  ];
+
+  const zonas = calcularZonas(figuras.map((element) => ({ element, masa: 1000 })), { lado: LADO_CELDA });
+
+  // Se mide la distancia de cada celda al rectangulo de la figura mas cercana: si una
+  // celda ya no toca a ninguna, esta en el vacio.
+  const distanciaAlRectangulo = (celda, f) => {
+    const dx = Math.max(f.x - (celda.x + zonas.lado), celda.x - (f.x + f.width), 0);
+    const dy = Math.max(f.y - (celda.y + zonas.lado), celda.y - (f.y + f.height), 0);
+    return Math.max(dx, dy);
+  };
+
+  const sueltas = zonas.celdas.filter((c) => {
+    const d = Math.min(...figuras.map((f) => distanciaAlRectangulo(c, f)));
+    return d > 1;   // 1 px de holgura por el solape de las celdas
+  });
+
+  ok(sueltas.length === 0,
+    'ninguna celda queda lejos de toda figura: la mancha no flota en el vacio',
+    sueltas.length ? `${sueltas.length} celdas sueltas, p.ej. (${sueltas[0].x}, ${sueltas[0].y})`
+      : `${zonas.n} celdas, todas sobre alguna figura`);
+
+  // Y el radio se ajusta al TAMANO: una compuerta de 50x50 no puede recibir la mancha de
+  // una tarea de 100x80, o se sale por los lados.
+  const radioGrande = radioDe({ width: 100, height: 80 });
+  const radioChico = radioDe({ width: 50, height: 50 });
+  ok(radioChico < radioGrande,
+    'una figura pequena recibe una mancha mas pequena que una grande',
+    `compuerta ${radioChico} px vs tarea ${radioGrande} px`);
+  ok(radioGrande <= 50,
+    'y el radio no pasa de media figura (si no, la mancha invade a la vecina)', String(radioGrande));
+  ok(radioDe({ width: 500, height: 400 }) === RADIO_MAXIMO,
+    'con un tope para figuras enormes', String(radioDe({ width: 500, height: 400 })));
+  ok(radioDe({ width: 4, height: 4 }) === RADIO_MINIMO,
+    'y un minimo para que una figura diminuta siga viendose', String(radioDe({ width: 4, height: 4 })));
+  ok(radioDe({}) === RADIO_MINIMO, 'sin caja conocida no revienta', String(radioDe({})));
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);

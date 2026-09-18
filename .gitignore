@@ -19,3 +19,7 @@ verificacion/ComparativaPlanes.mjs
 verificacion/HeatmapZones.mjs
 verificacion/ModelUtil.mjs
 verificacion/util.mjs
+
+# Carpeta de capturas que sube el usuario para reportar un problema visual: son
+# evidencia de un reporte, no material del plugin. No se versionan.
+imagenes/
