@@ -1,7 +1,7 @@
 import { domify, event as domEvent, classes as domClasses } from 'min-dom';
 import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData, isLabel } from './util';
-import { inventarioDe, diagnosticar, pendientesPorDato, CAPACIDADES } from './DataAudit';
+import { inventarioDe, diagnosticar, pendientesPorDato, CAPACIDADES, destinoDe } from './DataAudit';
 import './data-audit.css';
 
 const PANEL_CLS = 'sim-data-audit-panel';
@@ -154,16 +154,12 @@ export default class DataAuditPanel {
         <p class="hint">
           Ordenado por <strong>cuántas capacidades desbloquea cada dato</strong>: lo de arriba es lo que más
           te devuelve por el esfuerzo de rellenarlo.
+          ${this._cuantosConDestino(porDato) ? 'Pulsa un dato para ir a rellenarlo.' : ''}
         </p>
         <table class="data-table">
           <thead><tr><th>Dato que falta</th><th>Qué te pierdes sin él</th><th>Desbloquea</th></tr></thead>
           <tbody>
-            ${porDato.map((p) => `
-              <tr>
-                <td class="dato">${esc(p.dato)}</td>
-                <td class="cons">${esc(p.consecuencia)}</td>
-                <td class="desb">${p.desbloquea.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</td>
-              </tr>`).join('')}
+            ${porDato.map((p) => this._filaPendiente(p)).join('')}
           </tbody>
         </table>
       ` : '<p class="vacio">No falta ningún dato: todas las capacidades del sistema se pueden medir.</p>'}
@@ -181,6 +177,64 @@ export default class DataAuditPanel {
         ${CAPACIDADES.map((c) => `<li><strong>${esc(c.titulo)}</strong> — ${esc(c.porque)}</li>`).join('')}
       </ul>
     `;
+
+    // Despues de pintar: los botones que hay que enlazar no existian antes.
+    this._bindAtajos();
+  }
+
+  /**
+   * Una fila de «lo que falta», con su atajo si lo tiene.
+   *
+   * El atajo va aqui y no tras un clic en toda la fila porque un pendiente SIN
+   * destino -los que el diagrama calcula solo, como el reparto de las compuertas- se
+   * veria igual de pulsable que uno que si lleva a algun sitio. Una fila que se puede
+   * pulsar y no hace nada enseña a desconfiar de la lista entera.
+   */
+  _filaPendiente(p) {
+    const destino = destinoDe(p.campo);
+    const viaja = destino && destino.espacio !== 'solo-aviso';
+
+    return `
+      <tr>
+        <td class="dato">${viaja
+          ? `<button type="button" class="btn-ir" data-campo="${esc(p.campo)}">${esc(p.dato)}</button>`
+          : esc(p.dato)}</td>
+        <td class="cons">${esc(p.consecuencia)}</td>
+        <td class="desb">${p.desbloquea.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</td>
+      </tr>`;
+  }
+
+  /** Cuantos datos de la lista SI tienen a donde llevar (para no prometer el viaje). */
+  _cuantosConDestino(porDato) {
+    return porDato.filter((p) => {
+      const d = destinoDe(p.campo);
+      return d && d.espacio !== 'solo-aviso';
+    }).length;
+  }
+
+  /**
+   * Enlaza los atajos: pulsar un dato cierra el diagnostico y lleva el editor al campo.
+   *
+   * Se CIERRA el diagnostico a proposito: los dos paneles ocupan el mismo lado de la
+   * pantalla, y abiertos a la vez se comen medio diagrama. La lista se vuelve a abrir
+   * con un clic para el siguiente dato, y el viaje se hace de uno en uno.
+   *
+   * El viaje se pide por EVENTO y no llamando al editor: `dataAuditPanel` se registra
+   * DESPUES de `dataTablePanel`, asi que inyectarlo aqui seria una dependencia
+   * circular. Es el mismo motivo por el que la barra pide este panel por evento.
+   */
+  _bindAtajos() {
+    this._body.querySelectorAll('.btn-ir').forEach((btn) => {
+      domEvent.bind(btn, 'click', (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+
+        const destino = destinoDe(btn.dataset.campo);
+        if (!destino) return;
+
+        this.close();
+        this._eventBus.fire('simulation.dataTable.ir', { destino });
+      });
+    });
   }
 
   _filaCapacidad(c) {

@@ -533,6 +533,11 @@ export default class DataTablePanel {
     this._eventBus.on('canvas.init', () => this._init());
     this._eventBus.on('diagram.destroy', () => this.destroy());
 
+    // El otro extremo del atajo del diagnostico: alli se pulsa «falta X» y aqui se
+    // abre la tabla en el campo. Por EVENTO y no inyectando el panel de diagnostico:
+    // se registra despues que este, asi que la dependencia seria circular.
+    this._eventBus.on('simulation.dataTable.ir', (e) => this._irADestino(e.destino));
+
     // Lapiz sobre la figura seleccionada, para llegar a su fila de un clic.
     this._eventBus.on('selection.changed', ({ newSelection }) => {
       this._quitarLapiz();
@@ -681,9 +686,126 @@ export default class DataTablePanel {
     }
   }
 
+  /**
+   * Atiende el atajo del diagnostico: abre la tabla en el campo y lo resalta.
+   *
+   * Si NO hay viaje (el dato lo calcula el diagrama, como el reparto de las
+   * compuertas) se DICE en la barra de estado en vez de no hacer nada: un boton que no
+   * responde se lee como que el programa esta roto. La lista del diagnostico ya no
+   * marca esos como pulsables, asi que este camino solo se recorre si algo cambia.
+   */
+  _irADestino(destino) {
+    if (!destino) return;
+
+    if (destino.espacio === 'solo-aviso' || !this.irA(destino)) {
+      this._setStatus(
+        destino.espacio === 'solo-aviso'
+          ? 'Ese dato no se escribe a mano: lo calcula el diagrama o el reparto de las compuertas.'
+          : 'No se encontró el campo de ese dato en la tabla.',
+        'info'
+      );
+      return;
+    }
+
+    this._setStatus('Ve a la casilla resaltada para rellenar el dato que falta.', 'ok');
+  }
+
+  /**
+   * Lleva la tabla al sitio donde se rellena un dato que falta.
+   *
+   * Es el otro extremo del atajo del diagnostico: alli se dice QUE falta, aqui se
+   * ensena DONDE se escribe. Va aparte de `openFor(element)` porque este ultimo
+   * trabaja sobre un elemento del diagrama -una tarea concreta- y un pendiente del
+   * diagnostico es un DATO que puede vivir en varias tareas a la vez.
+   *
+   * `objetivo` es un destino de DataAudit.DESTINOS:
+   *   { espacio: 'tabla',  tab, campos: [] }   -> resalta esos campos en la tabla
+   *   { espacio: 'tabla',  tab, columna }      -> resalta esa columna en todas las filas
+   *   { espacio: 'lista',  tab, lista }        -> lleva a una lista anidada
+   *   { espacio: 'proceso',tab, campo }        -> lleva a la fila del proceso
+   *   { espacio: 'solo-aviso' }                -> NO se mueve: no hay control que lo escriba
+   *
+   * Devuelve SI se movio, para que quien llama pueda decir «esto se calcula solo» en
+   * vez de dejar al usuario mirando una pantalla que no cambio.
+   */
+  irA(objetivo) {
+    if (!objetivo || objetivo.espacio === 'solo-aviso') return false;
+
+    this._activeTab = objetivo.tab || 'tasks';
+    this.open();
+    this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
+      domClasses(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+
+    // Despues de abrir y RENDERIZAR: el resaltado trabaja sobre nodos que hasta
+    // ahora no existian.
+    return this._resaltarDestino(objetivo);
+  }
+
+  /**
+   * Pinta el resaltado del destino y lo apaga solo.
+   *
+   * Se apaga por tiempo y no al pulsar en otro sitio: el resaltado marca un viaje
+   * recien hecho, y dejarlo pegado terminaria pareciendo un estado mas del modelo.
+   * Cuatro segundos dan para llegar con la vista; mas tiempo y ya molesta.
+   */
+  _resaltarDestino(objetivo) {
+    const objetivos = [];
+
+    if (objetivo.columna) {
+      // Toda la COLUMNA, no una celda: el dato falta en varias tareas y senalar solo
+      // la primera seria mentir sobre donde hay que escribir.
+      objetivos.push(...this._body.querySelectorAll(`[data-field="${objetivo.columna}"]`));
+    }
+
+    (objetivo.campos || []).forEach((c) => {
+      const nodo = this._body.querySelector(`[data-field="${c}"]`);
+      if (nodo) objetivos.push(nodo);
+    });
+
+    if (objetivo.campo) {
+      const nodo = this._body.querySelector(`[data-field="${objetivo.campo}"]`);
+      if (nodo) objetivos.push(nodo);
+    }
+
+    if (!objetivos.length) return false;
+
+    // Se apaga lo anterior antes de pintar lo nuevo: dos resaltados a la vez dirian que
+    // hay que rellenar dos sitios cuando el viaje fue a uno.
+    this._limpiarDestino();
+
+    this._destinoResaltado = objetivos;
+    objetivos.forEach((nodo) => domClasses(nodo).add('destino-resaltado'));
+    if (objetivos[0].scrollIntoView) objetivos[0].scrollIntoView({ block: 'center', inline: 'nearest' });
+    if (objetivos[0].focus && objetivos[0].focus.call) objetivos[0].focus();
+
+    // Y se apaga solo: el resaltado marca un viaje recien hecho, y dejarlo pegado
+    // terminaria pareciendo un estado mas del modelo. Cuatro segundos dan para llegar
+    // con la vista; mas tiempo y ya molesta.
+    this._temporizadorDestino = setTimeout(() => this._limpiarDestino(), 4000);
+
+    return true;
+  }
+
+  /**
+   * Quita el resaltado del destino y cancela su caducidad.
+   *
+   * Va en su propio metodo por dos motivos: al viajar a otro sitio hay que apagar el
+   * anterior -dos resaltados a la vez dirian que hay que rellenar dos sitios-, y el
+   * temporizador NO se puede probar desde un arnes que solo mira el DOM una vez.
+   * Llamandolo, el apagado se comprueba de verdad en vez de por fe.
+   */
+  _limpiarDestino() {
+    clearTimeout(this._temporizadorDestino);
+    (this._destinoResaltado || []).forEach((nodo) => domClasses(nodo).remove('destino-resaltado'));
+    this._destinoResaltado = null;
+  }
+
   close() {
     if (this._panel) domClasses(this._panel).remove(OPEN_CLS);
     this._focusId = null;
+    // El resaltado del atajo no sobrevive al cierre: al volver a abrir, la tabla tiene
+    // que verse limpia y no con la marca de un viaje de hace media hora.
+    this._limpiarDestino();
     this._quitarOferta();
   }
   destroy() {

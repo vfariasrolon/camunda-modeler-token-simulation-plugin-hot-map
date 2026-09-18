@@ -886,3 +886,13 @@
   background: #fdecea;
   border-color: #cf4b45;
 }
+
+/* Destino del atajo del diagnostico: el campo donde se rellena lo que falta.
+   Se apaga solo a los cuatro segundos; el amarillo del autoguardado manda si
+   coinciden, porque ese si dice algo del dato y este solo del viaje. */
+.sim-data-table-panel .destino-resaltado {
+  outline: 2px solid #1565c0;
+  outline-offset: 1px;
+  background: #e3f0ff;
+  transition: background .25s;
+}

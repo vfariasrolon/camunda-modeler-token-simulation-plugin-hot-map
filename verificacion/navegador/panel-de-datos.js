@@ -82,9 +82,22 @@ const notificaciones = [];
 const escriturasModelo = [];
 const olvidarEscrituras = () => { escriturasModelo.length = 0; };
 
+// Bus de eventos de VERDAD, no un stub mudo.
+//
+// El atajo del diagnostico viaja por evento (`simulation.dataTable.ir`), asi que con
+// un `on: () => {}, fire: () => {}` el viaje no se podria probar: el panel nunca se
+// enteraria. Y esa es justo la clase de fallo que no se ve mirando la pantalla.
+function busDeEventos() {
+  const oyentes = {};
+  return {
+    on: (nombre, fn) => { (oyentes[nombre] = oyentes[nombre] || []).push(fn); },
+    fire: (nombre, datos) => { (oyentes[nombre] || []).forEach((fn) => fn(datos)); }
+  };
+}
+
 function crearPanel(elementos) {
   const canvas = { getContainer: () => document.getElementById('lienzo') };
-  const eventBus = { on: () => {}, fire: () => {} };
+  const eventBus = busDeEventos();
   const overlays = { add: () => 'ov-1', remove: () => {} };
   const selection = { get: () => [] };
   const modeling = {
@@ -1347,6 +1360,72 @@ const csvRSinMiembros = [ [ 'nombre', 'cantidad' ], [ 'Soldadores', '3' ] ]
 const impR = panel._applyCsv(csvRSinMiembros);
 check('CSV recursos antiguo: entra y deja la piscina sin miembros',
   !impR[0].data.resourcePools[0].members, JSON.stringify(impR[0].data.resourcePools[0]));
+
+// --- 15. El atajo del diagnostico: ir al campo que falta -------------------
+//
+// El diagnostico dice QUE falta; esto lleva DONDE se escribe. Lo que se prueba es el
+// viaje completo sobre DOM real, porque tiene dos partes que solo se ven juntas: que
+// el editor cambie de pestaña Y que el campo quede resaltado. Y el resaltado solo
+// puede funcionar si el viaje re-renderiza, que es el detalle que se rompe en silencio.
+panel.close();
+
+const viajar = (destino) => panel._eventBus.fire('simulation.dataTable.ir', { destino });
+
+// 1) Un dato de TAREAS: toda la COLUMNA, no una celda.
+viajar({ espacio: 'tabla', tab: 'tasks', columna: 'carga.distanciaM' });
+check('Atajo: el viaje abre la pestaña de la tabla que toca', panel._activeTab === 'tasks',
+  panel._activeTab);
+check('Atajo: y abre el editor si estaba cerrado', panel.isOpen());
+check('Atajo: resalta el campo que falta', Boolean(document.querySelector('[data-field="carga.distanciaM"].destino-resaltado')));
+
+// La columna ENTERA: el dato falta en varias tareas y resaltar solo la primera seria
+// mentir sobre donde hay que escribir. Hay 3 tareas en el modelo de prueba.
+const resaltadosColumna = document.querySelectorAll('[data-field="carga.distanciaM"].destino-resaltado').length;
+check('Atajo: resalta la columna ENTERA, no solo la primera fila',
+  resaltadosColumna === 3, `${resaltadosColumna} casillas de 3`);
+
+// 2) Un dato con VARIOS campos: se resaltan todos los del grupo.
+viajar({ espacio: 'tabla', tab: 'global', campos: [ 'calendar.workingDays', 'calendar.workingHours.start' ] });
+check('Atajo: el viaje cambia de pestaña cuando el dato vive en otra', panel._activeTab === 'global',
+  panel._activeTab);
+check('Atajo: con varios campos del mismo dato, resalta los que haya',
+  Boolean(document.querySelector('[data-days].destino-resaltado'))
+  || Boolean(document.querySelector('[data-field="calendar.workingHours.start"].destino-resaltado')));
+
+// 3) El resaltado ANTERIOR se apaga al viajar a otro sitio: si no, al cabo de unos
+//    viajes la tabla entera estaria azul y el resaltado no diria nada.
+check('Atajo: el resaltado anterior se apaga al viajar a otro sitio',
+  !document.querySelector('[data-field="carga.distanciaM"].destino-resaltado'));
+
+// ... y tambien CADUCA SOLO. Se llama al apagado directamente en vez de esperar los
+// cuatro segundos: el arnes mira el DOM una sola vez y un temporizador no se puede
+// comprobar por fe. Asi se prueba el mismo camino que recorre el temporizador.
+viajar({ espacio: 'tabla', tab: 'tasks', columna: 'carga.distanciaM' });
+check('Atajo: el resaltado vuelve a pintarse', Boolean(document.querySelector('.destino-resaltado')));
+panel._limpiarDestino();
+check('Atajo: y caduca solo (el apagado deja la tabla limpia)',
+  !document.querySelector('.destino-resaltado'));
+
+// Cerrar el editor tambien lo apaga: al volver a abrirlo, la tabla no puede aparecer
+// con la marca de un viaje viejo.
+viajar({ espacio: 'tabla', tab: 'tasks', columna: 'carga.distanciaM' });
+panel.close();
+check('Atajo: cerrar el editor apaga el resaltado',
+  !document.querySelector('.destino-resaltado'));
+
+// 4) Un dato que NO se escribe a mano: no se viaja, y SE DICE por que.
+const antes = panel._activeTab;
+viajar({ espacio: 'solo-aviso' });
+check('Atajo: un dato que calcula el diagrama NO mueve la tabla',
+  panel._activeTab === antes, `${antes} -> ${panel._activeTab}`);
+check('Atajo: y se explica por qué no se viaja, en vez de no hacer nada',
+  /no se escribe a mano/i.test(panel._status.textContent || ''), panel._status.textContent);
+
+// 5) Un destino que apunta a un campo que no existe en esa pestaña: se avisa. Es lo
+//    que pasaria si el mapa de destinos y el editor se desincronizaran.
+viajar({ espacio: 'tabla', tab: 'tasks', campo: 'campo.que.no.existe' });
+check('Atajo: un destino sin casilla se avisa en vez de quedarse mudo',
+  /No se encontró el campo/i.test(panel._status.textContent || ''), panel._status.textContent);
 
 // --- informe --------------------------------------------------------------
 

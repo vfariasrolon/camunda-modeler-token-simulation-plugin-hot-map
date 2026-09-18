@@ -2,7 +2,8 @@
 // agrupado por dato. Codigo REAL, sin copias a mano.
 import {
   inventarioDe, evaluarCapacidad, diagnosticar, pendientesPorDato,
-  disponibles, CAPACIDADES, ESTADOS
+  disponibles, CAPACIDADES, ESTADOS,
+  DESTINOS, destinoDe, pendientesConDestino, pendientesSinDestino
 } from './DataAudit.mjs';
 
 let fallos = 0;
@@ -216,6 +217,64 @@ console.log('\n== 9. Los estados son los tres declarados ==');
   diag.capacidades.forEach((c) => {
     ok(ESTADOS.includes(c.estado), `la capacidad ${c.id} usa un estado valido`, c.estado);
   });
+}
+
+console.log('\n== 10. Cada pendiente tiene a donde llevar (o se dice por que no) ==');
+{
+  // EL GUARDIAN DEL ATAJO.
+  //
+  // Por que existe: anadir un requisito nuevo a una capacidad es facil, y si nadie le
+  // declara destino el diagnostico queda diciendo «falta X» sin que pulsarlo lleve a
+  // ningun sitio. Nadie se entera hasta que un usuario lo pulsa y no pasa nada.
+  //
+  // La lista de excepciones esta DECLARADA: son los datos que el diagrama calcula solo.
+  const SIN_VIAJE_DECLARADOS = [ 'compuerta.total', 'compuerta.conReparto' ];
+
+  // Con el modelo VACIO salen casi todos los pendientes del sistema de una vez: es el
+  // modelo que mas datos pide, asi que es el mejor sitio para vigilar.
+  const huerfanos = pendientesSinDestino(diagnosticar(inventarioDe(VACIO)));
+  const inesperados = huerfanos.filter((d) => !SIN_VIAJE_DECLARADOS.includes(d));
+  ok(inesperados.length === 0,
+    'ningun dato que falta se queda sin destino declarado',
+    inesperados.length ? 'SIN DESTINO: ' + inesperados.join(', ') : huerfanos.length + ' declarados sin viaje');
+
+  // Y los que si viajan tienen que tener un destino COMPLETO: un espacio sin pestaña
+  // dejaria al editor sin saber donde ir.
+  const conViaje = pendientesConDestino(diagnosticar(inventarioDe(VACIO)));
+  ok(conViaje.length > 0, 'y hay pendientes que SI llevan a algun sitio', String(conViaje.length));
+  ok(conViaje.every((p) => p.destino.espacio && p.destino.tab),
+    'todos los destinos dicen su espacio y su pestaña');
+  ok(conViaje.every((p) => !p.destino || p.destino.espacio !== 'solo-aviso'),
+    'y ninguno de los que se calculan solos aparece como pulsable');
+
+  // El destino se busca por la RUTA del inventario, y gana el prefijo mas largo. Se
+  // prueba con rutas de verdad porque buscar por la ETIQUETA es el error que ya se
+  // cometio una vez: «Tarifa por hora» no es una ruta y dejaba fuera todo.
+  ok(destinoDe('tarea.processingTime') === DESTINOS['tarea.processingTime'],
+    'la ruta de un dato encuentra su destino');
+  ok(destinoDe('miembro.cargaMaxima') === DESTINOS['miembro.cargaMaxima'],
+    'y una ruta con destino propio NO cae en el destino de su padre');
+  ok(destinoDe('tarea.carga.distanciaM') === DESTINOS['tarea.carga'],
+    'y una ruta MAS LARGA sin destino propio cae en el de su padre (el prefijo sirve)');
+  ok(destinoDe('Tarifa por hora') === null,
+    'una ETIQUETA legible no es una ruta y no tiene destino (era el error de partida)');
+  ok(destinoDe('dato.inventado') === null, 'y un dato que no existe tampoco');
+
+  // Y la comprobacion que de verdad cierra el circulo: TODAS las rutas que los
+  // requisitos usan de verdad tienen que estar en el mapa. Es lo que hace que anadir
+  // un requisito nuevo no pueda quedarse sin atajo sin que nadie se entere.
+  const rutasDeLosRequisitos = [ ...new Set(CAPACIDADES
+    .reduce((todas, c) => todas.concat(c.requisitos.map((r) => r.campo)), [])) ];
+  const sinMapa = rutasDeLosRequisitos.filter((r) => !destinoDe(r));
+  ok(sinMapa.length === 0,
+    'TODAS las rutas que usan los requisitos estan en el mapa de destinos',
+    sinMapa.length ? 'FALTAN: ' + sinMapa.join(', ') : rutasDeLosRequisitos.length + ' rutas');
+
+  // Los que no se escriben a mano se declaran ASI: si alguno pasara a ser 'tabla' por
+  // descuido, el atajo prometeria un viaje a una casilla que no existe.
+  ok(DESTINOS['compuerta.total'].espacio === 'solo-aviso'
+    && DESTINOS['compuerta.conReparto'].espacio === 'solo-aviso',
+    'el reparto de compuertas se declara «solo-aviso» (lo calcula el diagrama)');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);

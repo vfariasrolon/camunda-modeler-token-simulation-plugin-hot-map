@@ -157,6 +157,24 @@
   line-height: 1.45;
 }
 
+/* El dato que falta, pulsable cuando lleva a algun sitio.
+   Se ve como un enlace y no como un boton: en una tabla de lectura, un boton por
+   fila pide mas atencion de la que merece. */
+.sim-data-audit-panel .btn-ir {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #1565c0;
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sim-data-audit-panel .btn-ir:hover {
+  color: #0d47a1;
+}
+
 /* Requisitos: una linea por dato, con su marca. */
 .sim-data-audit-panel .req {
   font-size: 12px;

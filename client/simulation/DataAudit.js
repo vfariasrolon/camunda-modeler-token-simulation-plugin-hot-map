@@ -301,13 +301,129 @@ export const evaluarCapacidad = (capacidad, inv) => {
     estado,
     detalle,
     // Solo lo que FALTA, con su consecuencia: es lo que el usuario tiene que leer.
+    //
+    // `campo` VIAJA con el pendiente: es la ruta del inventario y es lo que permite
+    // saber DONDE se rellena. Sin el, el diagnostico puede decir que falta algo pero
+    // no a donde llevar. `dato` NO sirve para eso: es una etiqueta para leer («Tarifa
+    // por hora»), no una ruta.
     pendientes: [ ...faltanObligatorios, ...faltanOpcionales ].map((d) => ({
       dato: d.dato,
+      campo: d.campo,
       consecuencia: d.consecuencia,
       opcional: Boolean(d.opcional)
     }))
   };
 };
+
+/**
+ * Destinos del inventario del modelo.
+ *
+ * Una cosa es MEDIR (`inventarioDe`) y otra muy distinta MANEJAR el modelo: esto
+ * ultimo es del editor, y este modulo declara datos y no se ocupa de la interfaz.
+ * El mapa se lee como «esta ruta del inventario se llena desde aqui» y es lo que
+ * permite que un pendiente del diagnostico lleve a donde se escribe, en vez de
+ * dejar al usuario buscando la casilla.
+ *
+ * OJO: el destino del modelo = el dato + el OBJETO que lo lleva.
+ *   «tiempo de proceso» se llena en varias TAREAS, cada una con su fila;
+ *   «piscinas» se llena en el PROCESO, que no es una tarea;
+ *   «compuertas» se llena en el FLUJO, no en la compuerta.
+ * Por eso el objeto va explicito y no se deduce del dato.
+ *
+ * `espacio`: donde vive el control en la pantalla.
+ *   'tabla'     — una fila por objeto, en la pestaña indicada.
+ *   'lista'     — una tabla anidada dentro de una fila (descansos, curva, lotes).
+ *   'proceso'   — el objeto es el proceso, no una fila.
+ *   'solo-aviso'— no hay ningun control que lo escriba (lo pone el generador o el
+ *                 diagrama). El atajo NO debe prometer un viaje que no existe.
+ */
+export const DESTINOS = {
+  'global.calendario':   { espacio: 'tabla', tab: 'global', campos: [ 'calendar.workingDays', 'calendar.workingHours.start', 'calendar.workingHours.end' ] },
+  'global.descansos':    { espacio: 'lista', tab: 'global', lista: 'descansos' },
+  'global.arranque':     { espacio: 'lista', tab: 'global', lista: 'curva' },
+  'global.lots':         { espacio: 'tabla', tab: 'global', campos: [ 'lots.enabled' ] },
+  'global.labor':        { espacio: 'tabla', tab: 'global', campos: [ 'labor.shiftType', 'labor.sundayPremiumPercent' ] },
+  'global.tarifa':       { espacio: 'tabla', tab: 'global', campos: [ 'cost.baseRatePerHour' ] },
+
+  'tarea.processingTime':{ espacio: 'tabla', tab: 'tasks', columna: 'processingTime.value' },
+  'tarea.fallo':         { espacio: 'tabla', tab: 'tasks', columna: 'failureRate' },
+  'tarea.recurso':       { espacio: 'tabla', tab: 'tasks', columna: 'resources.pool' },
+  'tarea.carga':         { espacio: 'tabla', tab: 'tasks', columna: 'carga.masaCargadaKg' },
+  'tarea.distancia':     { espacio: 'tabla', tab: 'tasks', columna: 'carga.distanciaM' },
+  'tarea.habilidad':     { espacio: 'tabla', tab: 'tasks', columna: 'habilidad' },
+  'tarea.barrier':       { espacio: 'tabla', tab: 'tasks', columna: 'barrier.availableProbability' },
+  'tarea.porLote':       { espacio: 'tabla', tab: 'tasks', columna: 'frequency' },
+
+  'piscina.conCantidad': { espacio: 'proceso', tab: 'resources', campo: 'pool.quantity' },
+  'miembro.total':       { espacio: 'proceso', tab: 'resources', campo: 'miembro.nombre' },
+  'miembro.tarifa':      { espacio: 'proceso', tab: 'resources', campo: 'miembro.tarifaHora' },
+  'miembro.habilidades': { espacio: 'proceso', tab: 'resources', campo: 'miembro.habilidades' },
+  'miembro.cargaMaxima': { espacio: 'proceso', tab: 'resources', campo: 'miembro.cargaMaximaKg' },
+
+  // El reparto se edita en la pestaña Flujos, pero NO lo escribe el usuario: lo
+  // calcula el boton de repartir o lo pone el CSV. Sin fila que enfocar.
+  'compuerta.total':     { espacio: 'solo-aviso' },
+  'compuerta.conReparto':{ espacio: 'solo-aviso' }
+};
+
+/**
+ * Redacta «que hacer al llegar» para un pendiente.
+ *
+ * El viaje sin la instruccion deja al usuario en una tabla de 22 columnas sin saber
+ * que tocar. La frase se apoya en la CONSECUENCIA que ya trae el requisito («sin
+ * horario el reloj no sabe cuando se trabaja»), que es lo que explica el porque.
+ */
+export const indicacionDe = (pendiente) => {
+  if (!pendiente) return '';
+  return `Ve a rellenarlo: ${pendiente.consecuencia}.`;
+};
+
+/**
+ * Destino de un dato del inventario.
+ *
+ * Se busca por la RUTA (`campo`), no por la etiqueta que se lee: «Tarifa por hora» es
+ * texto para el usuario y «global.tarifa» es la ruta. Confundirlos dejaria fuera a
+ * todos los pendientes, que es exactamente lo que paso la primera vez que se escribio
+ * esto.
+ *
+ * Se admite el prefijo mas LARGO para que un dato mas especifico gane a su padre:
+ * «miembro.cargaMaxima» tiene destino propio y no debe caer en «miembro.total».
+ */
+export const destinoDe = (campo) => {
+  const clave = texto(campo);
+  if (!clave) return null;
+  if (DESTINOS[clave]) return DESTINOS[clave];
+
+  const prefijos = Object.keys(DESTINOS)
+    .filter((k) => clave.startsWith(k + '.') || k.startsWith(clave + '.'))
+    .sort((a, b) => b.length - a.length);
+  return prefijos.length ? DESTINOS[prefijos[0]] : null;
+};
+
+/** Los pendientes del diagnostico que SI tienen a donde llevar. */
+export const pendientesConDestino = (diag) =>
+  diag.capacidades
+    .filter((c) => c.estado !== 'listo')
+    .reduce((todos, c) => todos.concat(
+      c.pendientes.map((p) => ({ ...p, capacidad: c.titulo, destino: destinoDe(p.campo) }))
+    ), [])
+    .filter((p) => p.destino && p.destino.espacio !== 'solo-aviso');
+
+/**
+ * Las RUTAS que el diagnostico pide y NO tienen destino declarado.
+ *
+ * Existe para que el guardian del arnes pueda exigir que la lista este vacia: sin
+ * esto, anadir un requisito nuevo deja un «falta X» que no lleva a ningun sitio, y
+ * nadie se entera hasta que un usuario pulsa y no pasa nada.
+ *
+ * Devuelve la RUTA y no la etiqueta: la etiqueta se repite entre capacidades («Tiempo
+ * de proceso por tarea» lo piden tres) y una lista con repetidos esconde cual falta.
+ */
+export const pendientesSinDestino = (diag) =>
+  [ ...new Set(diag.capacidades
+    .filter((c) => c.estado !== 'listo')
+    .reduce((todos, c) => todos.concat(c.pendientes.map((p) => p.campo)), [])) ]
+    .filter((campo) => !destinoDe(campo));
 
 /** Diagnostico completo, con el recuento de cabecera. */
 export const diagnosticar = (inv) => {
@@ -327,14 +443,20 @@ export const diagnosticar = (inv) => {
 /** Las capacidades que se pueden medir ya (para el resumen corto). */
 export const disponibles = (diag) => diag.capacidades.filter((c) => c.estado !== 'falta');
 
-/** Lo que falta, agrupado por dato: un dato puede desbloquear varias capacidades. */
+/** Lo que falta, agrupado por DATO: un dato puede desbloquear varias capacidades. */
 export const pendientesPorDato = (diag) => {
   const mapa = new Map();
   diag.capacidades.forEach((c) => {
     if (c.estado === 'listo') return;
     c.pendientes.forEach((p) => {
-      const clave = p.dato;
-      if (!mapa.has(clave)) mapa.set(clave, { dato: p.dato, consecuencia: p.consecuencia, desbloquea: [] });
+      // La clave del agrupado es la RUTA y no la etiqueta: la etiqueta se repite entre
+      // capacidades a proposito («tiempo de proceso» lo piden coste, ciclo y
+      // capacidad), y agrupar por texto juntaria requisitos que NO son el mismo dato.
+      // La etiqueta se conserva para leer y la ruta para saber a donde ir.
+      const clave = p.campo;
+      if (!mapa.has(clave)) {
+        mapa.set(clave, { campo: p.campo, dato: p.dato, consecuencia: p.consecuencia, desbloquea: [] });
+      }
       mapa.get(clave).desbloquea.push(c.titulo);
     });
   });
