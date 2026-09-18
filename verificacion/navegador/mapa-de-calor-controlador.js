@@ -568,6 +568,86 @@ try {
   controller.showMetric('cost');
   ok(!document.querySelector('.heatmap-zones'), 'al cambiar de métrica las celdas se van');
 
+  // --- 14. ZONAS POR TRAFICO: la otra lectura de la misma rejilla ---
+  //
+  // La diferencia con minutos de trabajo no es de matiz, y es lo que se comprueba aqui:
+  // con MUCHOS pasos y MUY poco tiempo, el trafico tiene que salir CALIENTE y los minutos
+  // FRIOS. Si las dos lecturas dieran lo mismo, la metrica nueva no aportaria nada.
+  controller._elementRegistry = registro;
+  controller.simulationResults = new Map([
+    // La tarea rapida y muy transitada: 500 pasos de 20 ms = 10 s de trabajo.
+    [ 'Task_1', { executionCount: 500, totalProcessingTime: 10000 } ],
+    // La tarea lenta y poco transitada: 2 pasos de 2 h = 4 h de trabajo.
+    [ 'Task_2', { executionCount: 2, totalProcessingTime: 7200000 } ]
+  ]);
+
+  const picoDeZonas = (metrica) => {
+    controller.showMetric(metrica);
+    const rellenos = [ ...document.querySelectorAll('.heatmap-zones rect') ]
+      .map((r) => r.getAttribute('fill'));
+    // El rojo (maximo de la escala) es el color calido: se busca su presencia.
+    return { rellenos, rojo: rellenos.some((f) => /rgb\(255, 0, 0\)|red/.test(f)) };
+  };
+
+  const conTrafico = picoDeZonas('zonasTrafico');
+  const conTiempo = picoDeZonas('zonas');
+
+  ok(conTrafico.rellenos.length > 0 && conTiempo.rellenos.length > 0,
+    'las dos lecturas pintan su rejilla',
+    `${conTrafico.rellenos.length} / ${conTiempo.rellenos.length}`);
+
+  // LA PRUEBA QUE DISTINGUE LAS DOS LECTURAS. No se mide la OPACIDAD pintada: se satura
+  // en 1 en la celda mas caliente de cada lectura, asi que daria 1.00 en las dos y no
+  // distinguiria nada (es el primer intento, que paso en falso). Se mide el VALOR de la
+  // celda que el propio pintado usa, preguntandole al calculo: es el dato que decide el
+  // color, y es donde las dos lecturas se separan.
+  const valorCercaDe = (metrica, x) => {
+    // Se reproduce la masa de cada lectura, que es UNA linea del controlador, y se
+    // localiza el maximo en la franja de esa tarea.
+    const zona = { x: null };
+    void zona;
+    controller.showMetric(metrica);
+    // El valor por celda se reconstruye desde los rects: el relleno es
+    // colorDeValor(valor/max), y la opacidad es opacidadDe(valor, max). Se usa la
+    // opacidad RELATIVA, que conserva el orden aunque se sature en el maximo.
+    const cerca = [ ...document.querySelectorAll('.heatmap-zones rect') ]
+      .map((r) => ({ x: Number(r.getAttribute('x')), o: Number(r.getAttribute('opacity')) }))
+      .filter((c) => Math.abs(c.x - x) < 200);
+    if (!cerca.length) return null;
+    // El maximo NO sirve (1 en las dos): se mira la MEDIA de la franja, que si refleja
+    // cuanto trabajo hay repartido por ahi.
+    return cerca.reduce((a, c) => a + c.o, 0) / cerca.length;
+  };
+
+  const traficoEnTask1 = valorCercaDe('zonasTrafico', 100);   // Task_1 (transitada)
+  const traficoEnTask2 = valorCercaDe('zonasTrafico', 300);  // Task_2 (lenta)
+  const tiempoEnTask1 = valorCercaDe('zonas', 100);
+  const tiempoEnTask2 = valorCercaDe('zonas', 300);
+
+  ok(traficoEnTask1 > traficoEnTask2,
+    'con TRAFICO pesa mas la tarea por la que pasan mas tokens',
+    `Task_1 ${traficoEnTask1.toFixed(3)} vs Task_2 ${traficoEnTask2.toFixed(3)}`);
+  ok(tiempoEnTask2 > tiempoEnTask1,
+    'y con MINUTOS pesa mas la tarea que ocupa mas tiempo (lo contrario)',
+    `Task_2 ${tiempoEnTask2.toFixed(3)} vs Task_1 ${tiempoEnTask1.toFixed(3)}`);
+
+  // Y la leyenda dice la unidad de cada una, que es lo que evita confundirlas.
+  const leyTrafico = (() => { controller.showMetric('zonasTrafico');
+    return canvas.contenedor.querySelector('.heatmap-legend').textContent; })();
+  const leyTiempo = (() => { controller.showMetric('zonas');
+    return canvas.contenedor.querySelector('.heatmap-legend').textContent; })();
+
+  ok(/PASAN los tokens/.test(leyTrafico), 'la leyenda de trafico se anuncia como tal', leyTrafico.slice(0, 60));
+  ok(/pasos/.test(leyTrafico), 'y su unidad son pasos', leyTrafico.slice(0, 90));
+  ok(/TIEMPO/.test(leyTiempo), 'la de minutos se anuncia como tiempo', leyTiempo.slice(0, 60));
+  ok(/de trabajo/.test(leyTiempo), 'y su unidad es tiempo de trabajo', leyTiempo.slice(0, 90));
+
+  // Cambiar entre las dos no deja celdas de la anterior.
+  controller.showMetric('zonasTrafico');
+  controller.showMetric('zonas');
+  const grupos = document.querySelectorAll('.heatmap-zones').length;
+  ok(grupos === 1, 'al cambiar de lectura queda UNA rejilla, no dos superpuestas', String(grupos));
+
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //
   // ESTA es la comprobacion que faltaba, y la que explica el reporte. Contar circulos

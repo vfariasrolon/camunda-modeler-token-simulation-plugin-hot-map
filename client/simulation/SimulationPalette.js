@@ -35,6 +35,8 @@ const GroupIcon = '<path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-
 const FlowIcon = '<path d="M2 6.5h20v2.2H2V6.5zm2 5.4h16v2.2H4v-2.2zM7 17.3h10v2.2H7v-2.2z"/>';
 // Una rejilla con sus celdas: el mapa de zonas.
 const ZonesIcon = '<path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/>';
+// La rejilla con marcas de paso dentro: trafico por zona.
+const TraficoZonasIcon = '<path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z" opacity=".35"/><path d="M6.2 5.5h1.6v3H6.2v-3zm9 0h1.6v3h-1.6v-3zM6.2 15.5h1.6v3H6.2v-3zm9 0h1.6v3h-1.6v-3z"/>';
 
 // --- Controles ---
 const ClearIcon = '<path d="M15 16h4v2h-4v-2zm0-8h7v2h-7V8zm0 4h6v2h-6v-2zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12V5z"/>';
@@ -235,8 +237,18 @@ export default class SimulationPalette {
     // MAPA DE ZONAS: la mancha continua. Va con las otras dos vistas y no dentro de
     // ninguna, porque la suya es otra pregunta: no cuanto cuesta una tarea ni por que
     // linea pasa el trabajo, sino por que TROZO de diagrama.
+    // ZONAS POR TRAFICO: la misma rejilla, otra pregunta. Aqui pesa cuantas veces paso
+    // el token, sin duracion: una tarea de 5 s con 500 pasos sale tan caliente como
+    // merece. En minutos de trabajo puede quedar frio, y en un mapa de «por donde pasa el
+    // trabajo» eso es lo contrario de lo que se quiere mirar. Las dos conviven.
     this.addEntry({
-      title: 'Mapa de zonas: dónde se concentra el trabajo',
+      title: 'Mapa de zonas: por dónde PASAN los tokens',
+      tooltip: 'La misma rejilla, midiendo TRÁFICO: cuántas veces pasó cada token por cada trozo del diagrama, sin duración. Sirve para ver las rutas más recorridas y las que casi no se usan. Con una compuerta paralela todas las salidas salen iguales, y es correcto: reparte el mismo trabajo por definición.',
+      icon: TraficoZonasIcon,
+      metric: 'zonasTrafico'
+    });
+    this.addEntry({
+      title: 'Mapa de zonas: dónde se va el TIEMPO',
       tooltip: 'Pinta una rejilla sobre el diagrama con el trabajo que pasó por cada trozo (minutos de trabajo: ejecuciones × duración). Las figuras cercanas SUMAN, así que sale una mancha continua con las zonas más rojas donde más trabajo hubo. No es lo mismo que el mapa por tareas: un círculo está centrado en su figura y nunca puede formar una mancha.',
       icon: ZonesIcon,
       metric: 'zonas'

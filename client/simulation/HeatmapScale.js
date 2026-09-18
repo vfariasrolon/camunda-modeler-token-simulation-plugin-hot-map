@@ -200,7 +200,11 @@ export const ESCALA_POR_METRICA = {
   // su formato es de tiempo. Va aqui y no en el modulo de zonas para que el guardian de
   // la escala siga cubriendo TODAS las metricas de la paleta: una sin formato dejaria la
   // leyenda sin unidad, que es justo lo que convierte el mapa en una medicion.
-  zonas: { etiqueta: 'Trabajo por zona', formatea: (v) => formatMinutes(v / 60000) }
+  zonas: { etiqueta: 'Trabajo por zona', formatea: (v) => formatMinutes(v / 60000) },
+  // TRÁFICO POR ZONA: los mismos pasos que `trafico`, pero repartidos en la rejilla en
+  // vez de sobre cada conexion. Se separa de `zonas` porque una mide TIEMPO y otra PASOS,
+  // y confundirlas seria el error mas facil de cometer al leer el mapa.
+  zonasTrafico: { etiqueta: 'Tráfico por zona', formatea: (v) => `${Math.round(v)} pasos` }
 };
 
 /** Escala de una métrica. Cae a una genérica si algún día se añade una nueva. */

@@ -6407,7 +6407,11 @@ const ESCALA_POR_METRICA = {
   // su formato es de tiempo. Va aqui y no en el modulo de zonas para que el guardian de
   // la escala siga cubriendo TODAS las metricas de la paleta: una sin formato dejaria la
   // leyenda sin unidad, que es justo lo que convierte el mapa en una medicion.
-  zonas: { etiqueta: 'Trabajo por zona', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMinutes)(v / 60000) }
+  zonas: { etiqueta: 'Trabajo por zona', formatea: (v) => (0,_util__WEBPACK_IMPORTED_MODULE_0__.formatMinutes)(v / 60000) },
+  // TRÁFICO POR ZONA: los mismos pasos que `trafico`, pero repartidos en la rejilla en
+  // vez de sobre cada conexion. Se separa de `zonas` porque una mide TIEMPO y otra PASOS,
+  // y confundirlas seria el error mas facil de cometer al leer el mapa.
+  zonasTrafico: { etiqueta: 'Tráfico por zona', formatea: (v) => `${Math.round(v)} pasos` }
 };
 
 /** Escala de una métrica. Cae a una genérica si algún día se añade una nueva. */
@@ -9428,13 +9432,13 @@ class SimulationController {
     // ZONAS: una rejilla sobre el diagrama con el trabajo que paso por cada trozo.
     // Va aparte de las otras dos porque no comparte ni la forma de pintar (celdas, no
     // circulos ni trazos) ni la unidad (minutos de trabajo, no costo ni pasos).
-    if (metric === 'zonas') {
+    if (metric === 'zonas' || metric === 'zonasTrafico') {
       if (!this.simulationResults) {
         this._notifications.showNotification({ text: 'Por favor, ejecute una simulación primero', type: 'warning', duration: 4000 });
         return;
       }
 
-      const resultado = this._pintarZonas();
+      const resultado = this._pintarZonas(metric);
       if (!resultado.pintadas) {
         this._notifications.showNotification({
           text: 'No hay trabajo que dibujar: ninguna tarea se ejecutó en esta corrida.',
@@ -9444,7 +9448,7 @@ class SimulationController {
       }
 
       const lado = resultado.zonas.lado;
-      this._leyendaZonas(resultado.zonas, lado, lado !== _HeatmapZones_js__WEBPACK_IMPORTED_MODULE_7__.LADO_CELDA);
+      this._leyendaZonas(resultado.zonas, lado, lado !== _HeatmapZones_js__WEBPACK_IMPORTED_MODULE_7__.LADO_CELDA, metric);
       // Sin circulos ni trazos: esta vista ES la rejilla. Mezclarlas daria dos
       // significados al mismo color sobre el mismo diagrama.
       return;
@@ -9854,8 +9858,11 @@ class SimulationController {
    * Como lo normal es mirarlo SIN zoom, ese es el caso que se cuida: a zoom alto las
    * celdas crecen, que es una esquina rara y no rompe nada.
    */
-  _pintarZonas() {
+  _pintarZonas(metric) {
     this._limpiarZonas();
+
+    // Con trafico, la masa es el NUMERO DE PASOS; sin el, los minutos de trabajo.
+    const porTrafico = metric === 'zonasTrafico';
 
     // La masa de cada figura es MINUTOS DE TRABAJO: ejecuciones x duracion. No el
     // costo ni la espera, porque la pregunta de esta vista es por donde paso el
@@ -9866,10 +9873,14 @@ class SimulationController {
       if (!element || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) || !this._esTrafizable(element)) return;
 
       const ejecuciones = result.executionCount || 0;
-      const duracion = result.totalProcessingTime || 0;
-      // Una conexion no tiene duracion acumulada: su masa es su trafico. Sin esto, las
-      // lineas no aportarian nada y la mancha no seguiria el camino del trabajo.
-      const masa = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:SequenceFlow') ? ejecuciones : ejecuciones * duracion;
+      // Con trafico la masa son los PASOS; sin el, los MINUTOS DE TRABAJO. Es la unica
+      // diferencia entre las dos lecturas, y va aqui y no en el bucle de pintado para
+      // que el rango y la escala salgan del dato correcto.
+      const esFlujo = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:SequenceFlow');
+      const masa = porTrafico
+        ? ejecuciones
+        : (esFlujo ? ejecuciones : ejecuciones * (result.totalProcessingTime || 0));
+
       if (masa > 0) conMasa.push({ element, masa });
     });
 
@@ -9949,7 +9960,7 @@ class SimulationController {
   }
 
   /** Leyenda de la vista de zonas: la unidad dicha, y el aviso de la resolucion. */
-  _leyendaZonas(zonas, lado, ajustado) {
+  _leyendaZonas(zonas, lado, ajustado, metric) {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
@@ -9957,15 +9968,22 @@ class SimulationController {
       contenedor.appendChild(leyenda);
     }
 
-    const minutos = (v) => (0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(v / 60000);
+    const porTrafico = metric === 'zonasTrafico';
+    // La unidad de cada lectura, escrita y distinta: minutos de trabajo y pasos NO son
+    // lo mismo, y una leyenda que dijera «trabajo» en las dos dejaria al usuario sin
+    // saber cual de las dos esta mirando.
+    const formatea = porTrafico
+      ? (v) => `${Math.round(v)} ${Math.round(v) === 1 ? 'paso' : 'pasos'}`
+      : (v) => `${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(v / 60000)} de trabajo`;
+
     const rango = (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.rangoDeValores)(zonas.celdas.map((c) => c.valor));
     const barra = rango.uniforme ? (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.colorFrio)(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.GRADIENTE_ESCALA) : (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.gradienteCss)(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.GRADIENTE_ESCALA);
 
     // La unidad va ESCRITA. Sin ella, «1.200» en una celda no dice nada, y una mancha
     // que nadie sabe de donde sale es un adorno, no una medicion.
     const detalle = rango.uniforme
-      ? `Uniforme: todas ${minutos(rango.min)} de trabajo`
-      : `${minutos(rango.min)} → ${minutos(rango.max)} de trabajo por celda`;
+      ? `Uniforme: ${formatea(rango.min)} por celda`
+      : `${formatea(rango.min)} → ${formatea(rango.max)} por celda`;
 
     const aviso = ajustado
       ? `<div class="heatmap-legend-warn">El diagrama es grande y se subió el tamaño de celda a`
@@ -9974,7 +9992,9 @@ class SimulationController {
       : '';
 
     leyenda.innerHTML = `
-      <div class="heatmap-legend-title">Zonas · trabajo que pasa por cada trozo del diagrama</div>
+      <div class="heatmap-legend-title">${porTrafico
+        ? 'Zonas · por dónde PASAN los tokens (tráfico)'
+        : 'Zonas · dónde se va el TIEMPO (minutos de trabajo)'}</div>
       <div class="heatmap-legend-bar" style="background: ${barra};"></div>
       <div class="heatmap-legend-detail">${detalle}</div>
       <div class="heatmap-legend-note">${zonas.n} celdas de ${lado} px · la celda es un trozo fijo del diagrama, así que el número no cambia al acercarse. ${rango.uniforme ? '' : 'Azul = menos trabajo · Rojo = más'}</div>
@@ -13807,6 +13827,8 @@ const GroupIcon = '<path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-
 const FlowIcon = '<path d="M2 6.5h20v2.2H2V6.5zm2 5.4h16v2.2H4v-2.2zM7 17.3h10v2.2H7v-2.2z"/>';
 // Una rejilla con sus celdas: el mapa de zonas.
 const ZonesIcon = '<path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/>';
+// La rejilla con marcas de paso dentro: trafico por zona.
+const TraficoZonasIcon = '<path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z" opacity=".35"/><path d="M6.2 5.5h1.6v3H6.2v-3zm9 0h1.6v3h-1.6v-3zM6.2 15.5h1.6v3H6.2v-3zm9 0h1.6v3h-1.6v-3z"/>';
 
 // --- Controles ---
 const ClearIcon = '<path d="M15 16h4v2h-4v-2zm0-8h7v2h-7V8zm0 4h6v2h-6v-2zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12V5z"/>';
@@ -14007,8 +14029,18 @@ class SimulationPalette {
     // MAPA DE ZONAS: la mancha continua. Va con las otras dos vistas y no dentro de
     // ninguna, porque la suya es otra pregunta: no cuanto cuesta una tarea ni por que
     // linea pasa el trabajo, sino por que TROZO de diagrama.
+    // ZONAS POR TRAFICO: la misma rejilla, otra pregunta. Aqui pesa cuantas veces paso
+    // el token, sin duracion: una tarea de 5 s con 500 pasos sale tan caliente como
+    // merece. En minutos de trabajo puede quedar frio, y en un mapa de «por donde pasa el
+    // trabajo» eso es lo contrario de lo que se quiere mirar. Las dos conviven.
     this.addEntry({
-      title: 'Mapa de zonas: dónde se concentra el trabajo',
+      title: 'Mapa de zonas: por dónde PASAN los tokens',
+      tooltip: 'La misma rejilla, midiendo TRÁFICO: cuántas veces pasó cada token por cada trozo del diagrama, sin duración. Sirve para ver las rutas más recorridas y las que casi no se usan. Con una compuerta paralela todas las salidas salen iguales, y es correcto: reparte el mismo trabajo por definición.',
+      icon: TraficoZonasIcon,
+      metric: 'zonasTrafico'
+    });
+    this.addEntry({
+      title: 'Mapa de zonas: dónde se va el TIEMPO',
       tooltip: 'Pinta una rejilla sobre el diagrama con el trabajo que pasó por cada trozo (minutos de trabajo: ejecuciones × duración). Las figuras cercanas SUMAN, así que sale una mancha continua con las zonas más rojas donde más trabajo hubo. No es lo mismo que el mapa por tareas: un círculo está centrado en su figura y nunca puede formar una mancha.',
       icon: ZonesIcon,
       metric: 'zonas'
