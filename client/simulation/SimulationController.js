@@ -64,6 +64,11 @@ const ReportIcon = `
 // Tope del radio de una mancha del mapa de calor, en px de diagrama. Sin tope,
 // un subproceso grande generaria un circulo que tapa el diagrama entero.
 const MAX_BLOB_RADIUS = 240;
+// Limites del multiplicador de TAMANO de las manchas (botones «Radio + / −»). Por
+// debajo de 0.25 la mancha desaparece dentro de la figura; por encima de 3 se comen el
+// diagrama. El defecto es 1: la mancha cubre la figura, que es como se veia siempre.
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 3;
 
 // Diagnostico de datos: responde «¿tengo lo necesario para medir esto?» antes de
 // simular. La lista con la marca de verificacion se lee de un vistazo, que es
@@ -171,6 +176,11 @@ export default class SimulationController {
     this._chart = null;
     this._radius = 20;
     this._blur = 10;
+    // Multiplicador de tamano de las manchas (botones «Radio + / −»). 1 = tamano de
+    // siempre. Va APARTE de `_radius` a proposito: `_radius` es el ancla del reparto
+    // nucleo/desvanecido, y mezclar las dos cosas era lo que hacia que el boton de
+    // agrandar achicara.
+    this._scale = 1;
     this.simulationResults = null;
     this.simulationReports = [];
     this.overtimeReport = null;
@@ -558,7 +568,17 @@ export default class SimulationController {
   }
 
   adjustHeatmap(type, amount) {
-      if (type === 'radius') this._radius = Math.max(1, this._radius + amount);
+      if (type === 'radius') {
+        // TAMANO de las manchas: un multiplicador, no el radio base.
+        //
+        // Antes estos botones movian `_radius`, que ademas de ser el radio base es el
+        // ANCLA del reparto nucleo/desvanecido de la gradiente. Subirlo reducia el
+        // factor de cobertura (`(r+blur)/r`), asi que el total BAJABA: pulsar «Radio +»
+        // ACHICABA las manchas. Con un multiplicador aparte, los botones agrandan y
+        // achican siempre en la direccion que dicen, y la forma (cuanto del radio es
+        // nucleo solido) no cambia al cambiar el tamano.
+        this._scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this._scale + amount));
+      }
       else if (type === 'blur') this._blur = Math.max(0, this._blur + amount);
       if (this.lastMetric) this.showMetric(this.lastMetric);
   }
@@ -574,18 +594,24 @@ export default class SimulationController {
    * que la mancha cubra la figura de forma solida hay que escalar el radio total
    * en la misma proporcion que la figura:
    *   total = (radio + desenfoque) * (semiFigura / radio)
+   *
+   * Y ESE total se multiplica por la ESCALA del usuario (botones «Radio + / −»), que
+   * es lo que agranda y achica. El factor de cobertura se queda como esta: es lo que
+   * hace que la parte solida llegue al borde de la figura, y cambiarlo con el tamano
+   * era justo lo que invertia el sentido de los botones.
    */
   _blobRadius(element) {
-    const base = this._radius + this._blur;
+    const base = (this._radius + this._blur) * this._scale;
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!is(element, 'bpmn:FlowNode')) return base;
+    if (!is(element, 'bpmn:FlowNode')) return Math.min(base, MAX_BLOB_RADIUS);
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
-    if (!half || half <= this._radius) return base;
+    if (!half || half <= this._radius) return Math.min(base, MAX_BLOB_RADIUS);
 
-    return Math.min(base * (half / this._radius), MAX_BLOB_RADIUS);
+    const cobertura = (this._radius + this._blur) * (half / this._radius);
+    return Math.min(cobertura * this._scale, MAX_BLOB_RADIUS);
   }
 
   /**

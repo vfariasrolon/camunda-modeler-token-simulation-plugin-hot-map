@@ -104,8 +104,8 @@ const HELP_SECTIONS = [
     items: [
       [ ClearIcon, 'Limpiar',
         'Quita el mapa de calor y las etiquetas del diagrama.' ],
-      [ RadiusPlusIcon, 'Radio + / −',
-        'Tamaño de las manchas de calor. Súbelo si el diagrama es grande y quieres ver la tendencia general.' ],
+      [ RadiusPlusIcon, 'Manchas más grandes / más pequeñas',
+        'Tamaño de las manchas de calor, en pasos del 25 %. Súbelo si el diagrama es grande y quieres ver la tendencia general, bájalo para mirar figura por figura sin que una mancha tape a la siguiente.' ],
       [ BlurPlusIcon, 'Desenfoque + / −',
         'Suavizado de las manchas. Más desenfoque = vista más difusa; menos = zonas más definidas.' ],
       [ ExportIcon, 'Exportar mapa de calor',
@@ -234,8 +234,8 @@ export default class SimulationPalette {
 
     this.addSeparator();
 
-    this.addControl(RadiusPlusIcon, 'Aumentar Radio', 'Aumentar radio de las manchas de calor (+5)', () => this._adjustCallback('radius', 5));
-    this.addControl(RadiusMinusIcon, 'Disminuir Radio', 'Disminuir radio de las manchas de calor (−5)', () => this._adjustCallback('radius', -5));
+    this.addControl(RadiusPlusIcon, 'Manchas más grandes', 'Agranda las manchas de calor (+25 %). Útil para ver la tendencia general de un diagrama grande', () => this._adjustCallback('radius', 0.25));
+    this.addControl(RadiusMinusIcon, 'Manchas más pequeñas', 'Achica las manchas de calor (−25 %). Útil para ver figura por figura sin que se tapen unas a otras', () => this._adjustCallback('radius', -0.25));
     this.addControl(BlurPlusIcon, 'Aumentar Desenfoque', 'Aumentar desenfoque de las manchas de calor (+5)', () => this._adjustCallback('blur', 5));
     this.addControl(BlurMinusIcon, 'Disminuir Desenfoque', 'Disminuir desenfoque de las manchas de calor (−5)', () => this._adjustCallback('blur', -5));
 

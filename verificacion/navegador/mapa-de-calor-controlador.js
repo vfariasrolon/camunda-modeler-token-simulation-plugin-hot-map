@@ -71,8 +71,22 @@ function crearCanvasFalso() {
 }
 
 /** Elemento de bpmn-js de mentira: `is()` mira el businessObject. */
+// JERARQUIA DE TIPOS. En moddle, `bpmn:Task` hereda de `bpmn:FlowNode`, asi que
+// `is(tarea, 'bpmn:FlowNode')` es CIERTO. Un doble que solo acepte el tipo exacto
+// miente: el motor y el mapa de calor preguntan por tipos padre a cada paso (aqui,
+// para saber si dimensionar la mancha por la caja de la figura). Con el doble ingenuo
+// la mancha caia por la rama de «es una linea» y salia del tamano equivocado.
+const HERENCIA = {
+  'bpmn:Task': [ 'bpmn:FlowNode', 'bpmn:Activity' ],
+  'bpmn:Gateway': [ 'bpmn:FlowNode' ],
+  'bpmn:StartEvent': [ 'bpmn:FlowNode', 'bpmn:Event', 'bpmn:CatchEvent' ],
+  'bpmn:EndEvent': [ 'bpmn:FlowNode', 'bpmn:Event', 'bpmn:ThrowEvent' ]
+};
+
+const hereda = (tipo, t) => tipo === t || (HERENCIA[tipo] || []).includes(t);
+
 function elemento(id, tipo, x, y, recursos) {
-  const bo = { name: id, $instanceOf: (t) => t === tipo };
+  const bo = { name: id, $instanceOf: (t) => hereda(tipo, t) };
   if (recursos) {
     bo.extensionElements = {
       values: [ {
@@ -219,7 +233,7 @@ try {
     const conDatos = (id, tipo, datos, extra) => {
       const bo = {
         name: id,
-        $instanceOf: (t) => t === tipo,
+        $instanceOf: (t) => hereda(tipo, t),
         extensionElements: {
           values: [ {
             $type: 'camunda:Properties',
@@ -288,7 +302,63 @@ try {
   } finally {
     Object.assign(console, guardar);
   }
-  // --- 9. QUE SE VEA: el pixel, no el atributo ---
+  // --- 10. Los botones de TAMAÑO: que agranden de verdad ---
+  //
+  // La auditoría encontró que el par «Radio + / −» hacía lo CONTRARIO: movía `_radius`,
+  // que además de radio base es el ancla del reparto núcleo/desvanecido, así que subirlo
+  // bajaba el total y pulsar «+» ACHICABA las manchas. Por eso parecía un duplicado del
+  // desenfoque. Aquí se comprueba la dirección, que es lo que se había invertido.
+  const tarea = controller._elementRegistry.get('Task_1');
+  const radioDe = () => controller._blobRadius(tarea);
+  const radioBase = radioDe();
+
+  ok(radioBase > 0, 'la mancha de una tarea tiene radio', String(radioBase));
+  // La invariante de siempre: la mancha CUBRE la figura (si no, el mapa «no llega»).
+  ok(radioBase >= 50, 'y cubre la figura (el semilado de una tarea de prueba es 50)', String(radioBase));
+
+  controller.adjustHeatmap('radius', 0.25);
+  const radioGrande = radioDe();
+  ok(radioGrande > radioBase,
+    'pulsar «manchas más grandes» AGRANDA (antes achicaba)',
+    `${radioBase} -> ${radioGrande}`);
+
+  controller.adjustHeatmap('radius', -0.25);
+  controller.adjustHeatmap('radius', -0.25);
+  const radioChico = radioDe();
+  ok(radioChico < radioBase,
+    'y «más pequeñas» ACHICA', `${radioBase} -> ${radioChico}`);
+
+  // Los topes: sin ellos, unos cuantos clics dejan el diagrama tapado o la mancha en nada.
+  for (let i = 0; i < 40; i++) controller.adjustHeatmap('radius', 0.25);
+  const topeAlto = radioDe();
+  ok(topeAlto <= 240, 'el tope superior corta (no se come el diagrama)', String(topeAlto));
+  for (let i = 0; i < 40; i++) controller.adjustHeatmap('radius', -0.25);
+  const topeBajo = radioDe();
+  ok(topeBajo > 0 && topeBajo < radioBase, 'y el inferior deja la mancha visible, no en cero', String(topeBajo));
+
+  // El desenfoque va APARTE y sigue funcionando: es la otra mitad del par, y mezclarlos
+  // fue lo que invirtió el sentido del tamaño.
+  controller._scale = 1;
+  const antesDesenfoque = radioDe();
+  controller.adjustHeatmap('blur', 5);
+  ok(radioDe() !== antesDesenfoque, 'el desenfoque sigue cambiando la mancha por su lado',
+    `${antesDesenfoque} -> ${radioDe()}`);
+  controller._blur = 10;
+
+  // Y lo que el usuario VE: el radio de los círculos dibujados, no solo el número interno.
+  controller.simulationResults = new Map([ [ 'Task_1', { executionCount: 5, totalCost: 100 } ] ]);
+  controller._scale = 1;
+  controller.showMetric('cost');
+  const rDibujado = Number(document.querySelector('.heatmap-layer circle').getAttribute('r'));
+  controller._scale = 2;
+  controller.showMetric('cost');
+  const rDibujadoGrande = Number(document.querySelector('.heatmap-layer circle').getAttribute('r'));
+  ok(rDibujadoGrande > rDibujado,
+    'y el cambio llega al SVG: el circulo dibujado crece con el boton',
+    `${rDibujado} -> ${rDibujadoGrande}`);
+  controller._scale = 1;
+
+  // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //
   // ESTA es la comprobacion que faltaba, y la que explica el reporte. Contar circulos
   // -que es lo que hacian todas las anteriores- dice que estan CREADOS, no que se VEAN:

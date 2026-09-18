@@ -8195,6 +8195,11 @@ const ReportIcon = `
 // Tope del radio de una mancha del mapa de calor, en px de diagrama. Sin tope,
 // un subproceso grande generaria un circulo que tapa el diagrama entero.
 const MAX_BLOB_RADIUS = 240;
+// Limites del multiplicador de TAMANO de las manchas (botones «Radio + / −»). Por
+// debajo de 0.25 la mancha desaparece dentro de la figura; por encima de 3 se comen el
+// diagrama. El defecto es 1: la mancha cubre la figura, que es como se veia siempre.
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 3;
 
 // Diagnostico de datos: responde «¿tengo lo necesario para medir esto?» antes de
 // simular. La lista con la marca de verificacion se lee de un vistazo, que es
@@ -8302,6 +8307,11 @@ class SimulationController {
     this._chart = null;
     this._radius = 20;
     this._blur = 10;
+    // Multiplicador de tamano de las manchas (botones «Radio + / −»). 1 = tamano de
+    // siempre. Va APARTE de `_radius` a proposito: `_radius` es el ancla del reparto
+    // nucleo/desvanecido, y mezclar las dos cosas era lo que hacia que el boton de
+    // agrandar achicara.
+    this._scale = 1;
     this.simulationResults = null;
     this.simulationReports = [];
     this.overtimeReport = null;
@@ -8689,7 +8699,17 @@ class SimulationController {
   }
 
   adjustHeatmap(type, amount) {
-      if (type === 'radius') this._radius = Math.max(1, this._radius + amount);
+      if (type === 'radius') {
+        // TAMANO de las manchas: un multiplicador, no el radio base.
+        //
+        // Antes estos botones movian `_radius`, que ademas de ser el radio base es el
+        // ANCLA del reparto nucleo/desvanecido de la gradiente. Subirlo reducia el
+        // factor de cobertura (`(r+blur)/r`), asi que el total BAJABA: pulsar «Radio +»
+        // ACHICABA las manchas. Con un multiplicador aparte, los botones agrandan y
+        // achican siempre en la direccion que dicen, y la forma (cuanto del radio es
+        // nucleo solido) no cambia al cambiar el tamano.
+        this._scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this._scale + amount));
+      }
       else if (type === 'blur') this._blur = Math.max(0, this._blur + amount);
       if (this.lastMetric) this.showMetric(this.lastMetric);
   }
@@ -8705,18 +8725,24 @@ class SimulationController {
    * que la mancha cubra la figura de forma solida hay que escalar el radio total
    * en la misma proporcion que la figura:
    *   total = (radio + desenfoque) * (semiFigura / radio)
+   *
+   * Y ESE total se multiplica por la ESCALA del usuario (botones «Radio + / −»), que
+   * es lo que agranda y achica. El factor de cobertura se queda como esta: es lo que
+   * hace que la parte solida llegue al borde de la figura, y cambiarlo con el tamano
+   * era justo lo que invertia el sentido de los botones.
    */
   _blobRadius(element) {
-    const base = this._radius + this._blur;
+    const base = (this._radius + this._blur) * this._scale;
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:FlowNode')) return base;
+    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:FlowNode')) return Math.min(base, MAX_BLOB_RADIUS);
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
-    if (!half || half <= this._radius) return base;
+    if (!half || half <= this._radius) return Math.min(base, MAX_BLOB_RADIUS);
 
-    return Math.min(base * (half / this._radius), MAX_BLOB_RADIUS);
+    const cobertura = (this._radius + this._blur) * (half / this._radius);
+    return Math.min(cobertura * this._scale, MAX_BLOB_RADIUS);
   }
 
   /**
@@ -13179,8 +13205,8 @@ const HELP_SECTIONS = [
     items: [
       [ ClearIcon, 'Limpiar',
         'Quita el mapa de calor y las etiquetas del diagrama.' ],
-      [ RadiusPlusIcon, 'Radio + / −',
-        'Tamaño de las manchas de calor. Súbelo si el diagrama es grande y quieres ver la tendencia general.' ],
+      [ RadiusPlusIcon, 'Manchas más grandes / más pequeñas',
+        'Tamaño de las manchas de calor, en pasos del 25 %. Súbelo si el diagrama es grande y quieres ver la tendencia general, bájalo para mirar figura por figura sin que una mancha tape a la siguiente.' ],
       [ BlurPlusIcon, 'Desenfoque + / −',
         'Suavizado de las manchas. Más desenfoque = vista más difusa; menos = zonas más definidas.' ],
       [ ExportIcon, 'Exportar mapa de calor',
@@ -13309,8 +13335,8 @@ class SimulationPalette {
 
     this.addSeparator();
 
-    this.addControl(RadiusPlusIcon, 'Aumentar Radio', 'Aumentar radio de las manchas de calor (+5)', () => this._adjustCallback('radius', 5));
-    this.addControl(RadiusMinusIcon, 'Disminuir Radio', 'Disminuir radio de las manchas de calor (−5)', () => this._adjustCallback('radius', -5));
+    this.addControl(RadiusPlusIcon, 'Manchas más grandes', 'Agranda las manchas de calor (+25 %). Útil para ver la tendencia general de un diagrama grande', () => this._adjustCallback('radius', 0.25));
+    this.addControl(RadiusMinusIcon, 'Manchas más pequeñas', 'Achica las manchas de calor (−25 %). Útil para ver figura por figura sin que se tapen unas a otras', () => this._adjustCallback('radius', -0.25));
     this.addControl(BlurPlusIcon, 'Aumentar Desenfoque', 'Aumentar desenfoque de las manchas de calor (+5)', () => this._adjustCallback('blur', 5));
     this.addControl(BlurMinusIcon, 'Disminuir Desenfoque', 'Disminuir desenfoque de las manchas de calor (−5)', () => this._adjustCallback('blur', -5));
 
