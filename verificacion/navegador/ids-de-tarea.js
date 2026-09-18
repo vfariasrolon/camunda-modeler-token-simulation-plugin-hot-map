@@ -5,18 +5,16 @@
  *   - Que el overlay del ID se pinte y lleve el numero correcto.
  *   - Que a zoom 25 % SIGA VISIBLE y no encogido (scale.min), que es el punto:
  *     con `show: { minZoom }` desapareceria, el fallo que ya se revirtio una vez.
- *   - Que la forma del configurador sea la del diseno (id, idCorto, unidad,
- *     supuesto, carga), que es el contrato que consume la app de App Script.
+ *   - Que el JSON exportado tenga la forma del diseno (id, idCorto, unidad,
+ *     supuesto, carga) y NO se descargue vacio.
  *
- * Usa Overlays + Canvas + Injector REALES de diagram-js, no un stub. Construirlos
- * a mano deja dependencias sin cablear: `Canvas` resuelve `config`,
- * `graphicsFactory` y demas por el inyector.
+ * Usa Overlays + Canvas REALES de diagram-js, no un stub.
  */
 import Overlays from 'diagram-js/lib/features/overlays/Overlays';
 import Canvas from 'diagram-js/lib/core/Canvas';
 import ElementRegistry from 'diagram-js/lib/core/ElementRegistry';
 import EventBus from 'diagram-js/lib/core/EventBus';
-import { Injector } from 'didi/dist/index.js';
+import { Injector } from '/Users/Apple/proyectos/programacion/camunda/camunda-modeler-token-simulation-plugin-hot-map/node_modules/.pnpm/didi@10.2.2/node_modules/didi/dist/index.js';
 import { numerarTareas } from '@plugin/simulation/TaskIds.js';
 
 let fallos = 0;
@@ -26,10 +24,10 @@ const ok = (cond, etiqueta, detalle) => {
   if (!cond) fallos++;
 };
 
-const tarea = (id, nombre, x) => ({
+const tarea = (id, nombre, x, tipo) => ({
   id,
-  $type: 'bpmn:Task',
-  type: 'bpmn:Task',
+  $type: tipo || 'bpmn:Task',
+  type: tipo || 'bpmn:Task',
   x, y: 100, width: 100, height: 80,
   businessObject: { name: nombre },
   incoming: [], outgoing: []
@@ -81,8 +79,10 @@ try {
   canvas.findRoot = () => raiz;
   canvas.getRootElement = () => raiz;
 
-  const A = tarea('Activity_A', 'Cortar', 100);
-  const B = tarea('Activity_B', 'Soldar', 300);
+  // Subtipos REALES: en un diagrama de verdad casi ninguna tarea es `bpmn:Task`
+  // a secas, y ahi estaba el bug del «undefined».
+  const A = tarea('Activity_A', 'Cortar', 100, 'bpmn:UserTask');
+  const B = tarea('Activity_B', 'Soldar', 300, 'bpmn:ServiceTask');
   A.parent = raiz;
   B.parent = raiz;
   A.outgoing.push({ source: A, target: B });
@@ -94,6 +94,8 @@ try {
   const overlays = injector.get('overlays');
 
   // Diagnosticos del entorno: si algo de esto falla, el overlay se oculta solo.
+  ok(canvas.findRoot(A) === raiz, 'findRoot devuelve la raiz (si no, el overlay se oculta)');
+  ok(canvas.getRootElement() === raiz, 'getRootElement coincide con findRoot (condicion de visibilidad)');
 
   const tareas = [ A, B ];
 
@@ -115,12 +117,19 @@ try {
   ok([ ...badges ].map((b) => b.textContent).join(',') === '1,2',
     'con los numeros correctos', [ ...badges ].map((b) => b.textContent).join(','));
 
+  // El bug que llego a produccion: con subtipos (UserTask, ServiceTask) el badge
+  // pintaba «undefined». Ningun badge puede contener esa palabra.
+  ok(![ ...badges ].some((b) => /undefined/.test(b.textContent)),
+    'ningun circulo pinta «undefined» (el bug reportado)',
+    [ ...badges ].map((b) => b.textContent).join(','));
+
   // --- La CLAVE: a zoom 25 % el ID sigue visible ---
   // El overlay de la libreria usa show:{minZoom:0.5} y DESAPARECE. El nuestro no
   // lleva minZoom, asi que tiene que seguir visible a cualquier escala.
   canvas.zoom(0.25);
   eventBus.fire('canvas.viewbox.changed', { viewbox: canvas.viewbox() });
 
+  const caja = contenedor.querySelector('[data-overlay-id]') || contenedor;
   const visibles = [ ...contenedor.querySelectorAll('.task-id-badge') ].filter((b) => {
     const rect = b.getBoundingClientRect();
     const estilo = getComputedStyle(b);

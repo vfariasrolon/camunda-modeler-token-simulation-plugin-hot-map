@@ -136,6 +136,52 @@ console.log('\n== 6. Solo se numeran TAREAS (eventos y compuertas no) ==');
   ok(idCortoDe([ evento, compuerta, t ], 'E') === null, 'idCortoDe de un evento es null');
 }
 
+console.log('\n== 6b. TODOS los subtipos de tarea reciben numero (el bug del «undefined») ==');
+{
+  // Este es EL fallo que llego a produccion: `is(el,'bpmn:Task')` es JERARQUICO e
+  // incluye los subtipos, pero TaskIds comparaba el tipo EXACTO. La tarea entraba
+  // en la lista y no en el mapa -> el badge pintaba «undefined».
+  const subtipos = [
+    'bpmn:Task', 'bpmn:UserTask', 'bpmn:ServiceTask', 'bpmn:ManualTask',
+    'bpmn:ScriptTask', 'bpmn:SendTask', 'bpmn:ReceiveTask',
+    'bpmn:BusinessRuleTask', 'bpmn:CallActivity'
+  ];
+
+  // Se construye un diagrama EN CADENA con un tipo distinto en cada eslabon, para
+  // que cada uno reciba un numero y ninguno pueda colarse.
+  const eslabones = subtipos.map((tipo, i) => ({
+    id: 'N' + i, type: tipo, $type: tipo, businessObject: { name: 'T' + i }, incoming: [], outgoing: []
+  }));
+  for (let i = 0; i < eslabones.length - 1; i++) {
+    eslabones[i].outgoing.push({ source: eslabones[i], target: eslabones[i + 1] });
+    eslabones[i + 1].incoming.push({ source: eslabones[i], target: eslabones[i + 1] });
+  }
+
+  const n = numerarTareas(eslabones);
+
+  subtipos.forEach((tipo, i) => {
+    ok(n.get('N' + i) === i + 1, `«${tipo}» recibe numero`, String(n.get('N' + i)));
+  });
+
+  ok(n.size === subtipos.length, 'ninguna tarea se queda sin numero', `${n.size}/${subtipos.length}`);
+
+  // Ningun valor puede ser undefined/null: es lo que se pintaba en el badge.
+  const valores = [ ...n.values() ];
+  ok(valores.every((v) => Number.isInteger(v) && v > 0),
+    'ningun numero es undefined (que era lo que salia en el circulo azul)', JSON.stringify(valores));
+
+  // Y los que NO son tareas siguen fuera.
+  const noTareas = [
+    { id: 'X1', type: 'bpmn:StartEvent', $type: 'bpmn:StartEvent' },
+    { id: 'X2', type: 'bpmn:ExclusiveGateway', $type: 'bpmn:ExclusiveGateway' },
+    { id: 'X3', type: 'bpmn:EndEvent', $type: 'bpmn:EndEvent' },
+    { id: 'X4', type: 'bpmn:IntermediateCatchEvent', $type: 'bpmn:IntermediateCatchEvent' },
+    { id: 'X5', type: 'bpmn:SubProcess', $type: 'bpmn:SubProcess' }
+  ];
+  const n2 = numerarTareas(noTareas);
+  ok(n2.size === 0, 'un evento, una compuerta, un fin ni un subproceso se numeran', String(n2.size));
+}
+
 console.log('\n== 7. La etiqueta no puede quedarse vacia ==');
 {
   ok(etiquetaDe(tarea('T', 'Cortar'), 1) === '1 · Cortar', 'con numero y nombre: "1 · Cortar"', etiquetaDe(tarea('T', 'Cortar'), 1));
@@ -176,6 +222,22 @@ console.log('\n== 8. El cableado: el ID visible y el configurador estan conectad
 
   // Aviso si no hay tareas en vez de un archivo vacio.
   ok(/no tiene tareas que medir/.test(controlador), 'sin tareas avisa, no descarga un JSON vacio');
+
+  // --- El bug del «undefined»: la lista y el mapa tienen que usar EL MISMO criterio ---
+  // `_tareasNumerables` selecciona con `is(el, 'bpmn:Task')`, que es JERARQUICO.
+  // Si TaskIds comparase el tipo exacto, la lista tendria tareas que el mapa no
+  // conoce y el badge pintaria «undefined».
+  ok(/is\(el, 'bpmn:Task'\)/.test(controlador), 'la lista del controlador usa is(el, bpmn:Task) (jerarquico)');
+
+  const taskIds = leer('client/simulation/TaskIds.js');
+  ok(!/\$type === 'bpmn:Task'/.test(taskIds),
+    'TaskIds NO compara el tipo exacto (ese era el fallo)');
+  ok(/Task\$\/\.test\(tipo\)/.test(taskIds),
+    'y acepta los subtipos (UserTask, ServiceTask...) como tareas');
+
+  // La guarda: sin numero, no se pinta NADA. Nunca «undefined» en pantalla.
+  ok(/if \(numero == null\)/.test(controlador),
+    'hay guarda: sin numero, no se pinta el badge (antes salia «undefined»)');
 
   const paleta = leer('client/simulation/SimulationPalette.js');
   ok(/isMeasurementExport/.test(paleta) && /_measurementCallback\(\)/.test(paleta),

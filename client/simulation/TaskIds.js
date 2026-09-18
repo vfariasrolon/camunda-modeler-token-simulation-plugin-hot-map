@@ -20,8 +20,33 @@
  * tareas sin numerar.
  */
 
-/** Tipos que reciben numero. Solo tareas: los eventos y compuertas no se miden. */
-const ES_TAREA = (element) => Boolean(element) && element.$type === 'bpmn:Task';
+/**
+ * El tipo de una tarea, normalizado a familia.
+ *
+ * POR QUE NO SE COMPARA EL TIPO EXACTO: `bpmn:Task` es la RAIZ de una jerarquia
+ * (UserTask, ServiceTask, ManualTask, ScriptTask, SendTask, ReceiveTask,
+ * BusinessRuleTask, CallActivity...). El resto del plugin selecciona con
+ * `is(el, 'bpmn:Task')`, que en bpmn-js respeta la jerarquia y por tanto INCLUYE
+ * todas esas.
+ *
+ * Si aqui se comparase el tipo exacto, la lista de tareas y el mapa de numeros
+ * serian DISTINTOS: la tarea entraba en la lista pero no recibia numero, y el
+ * badge imprimia literalmente «undefined». Es el mismo fallo de jerarquia que ya
+ * aparecio antes en este proyecto, y en un diagrama real casi todas las tareas
+ * son de un subtipo, asi que se veia siempre.
+ *
+ * Se acepta tanto `element.type` (bpmn-js) como `$type` (objetos de prueba), y
+ * cualquier tipo que termine en `Task` o sea `bpmn:CallActivity` cuenta como
+ * tarea ejecutable.
+ */
+const ES_TAREA = (element) => {
+  if (!element) return false;
+  const tipo = element.type || element.$type;
+  if (!tipo) return false;
+
+  // `bpmn:Task` a secas o cualquier subtipo (`bpmn:UserTask`, `bpmn:ServiceTask`...).
+  return tipo === 'bpmn:Task' || /Task$/.test(tipo) || tipo === 'bpmn:CallActivity';
+};
 
 /**
  * Recorrido en anchura desde las tareas de inicio, para que el numero siga el

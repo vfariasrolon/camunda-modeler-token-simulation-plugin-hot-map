@@ -956,6 +956,15 @@ export default class SimulationController {
 
     tareas.forEach((tarea) => {
       const numero = numeros.get(tarea.id);
+
+      // GUARDA: si el mapa y la lista no coinciden, el badge pintaba literalmente
+      // «undefined» (paso con los subtipos de tarea, por un fallo de jerarquia de
+      // tipos). Aqui se prefiere NO pintar antes que pintar una mentira.
+      if (numero == null) {
+        console.warn('[IDs] tarea sin numero, no se pinta badge:', tarea.id, tarea.type);
+        return;
+      }
+
       const etiqueta = etiquetaDe(tarea, numero);
 
       this._overlays.add(tarea, 'task-id', {
