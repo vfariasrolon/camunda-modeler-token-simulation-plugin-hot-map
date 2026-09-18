@@ -67,15 +67,23 @@ console.log('\n== 3. Dos figuras cercanas SUMAN en las celdas que comparten ==')
   // centros tienen que caer dentro del mismo cuadro (por eso el desplazamiento de 10 y
   // no de 40 como parecia natural: dos centros a 40 px caen en celdas CONTIGUAS, y la
   // prueba pasaria por casualidad sin comprobar la suma).
-  const a = figura('A', 100, 100, 100, 80);   // centro (150, 140) -> celda (2, 2)
-  const b = figura('B', 110, 105, 100, 80);   // centro (160, 145) -> celda (2, 2)
+  const a = figura('A', 100, 100, 100, 80);   // centro (150, 140)
+  const b = figura('B', 110, 105, 100, 80);   // centro (160, 145), a 10 px del de A
+
+  // El indice de celda se DERIVA del lado, no se escribe a mano: al subir la resolucion
+  // (celdas mas chicas) los indices cambian, y una prueba con el numero fijo se rompe
+  // por el cambio de constante y no por un fallo del codigo, que es confundir al que lee.
+  const celdaDe = (punto) => ({ cx: Math.floor(punto / LADO_CELDA), cy: Math.floor(punto / LADO_CELDA) });
+  const centroA = centroDe(a);
+  const compartidaEsperada = celdaDe(centroA.x);
 
   const zonas = calcularZonas([ { element: a, masa: 10 } ]);
-  const soloUna = zonas.celdas.find((c) => c.cx === 2 && c.cy === 2).valor;
+  const soloUna = zonas.celdas.find((c) => c.cx === compartidaEsperada.cx && c.cy === compartidaEsperada.cy).valor;
 
   const dos = calcularZonas([ { element: a, masa: 10 }, { element: b, masa: 10 } ]);
-  const compartida = dos.celdas.find((c) => c.cx === 2 && c.cy === 2);
-  ok(Boolean(compartida), 'hay una celda donde caen las dos');
+  const compartida = dos.celdas.find((c) => c.cx === compartidaEsperada.cx && c.cy === compartidaEsperada.cy);
+  ok(Boolean(compartida), 'hay una celda donde caen las dos',
+    `centro de A en la celda ${compartidaEsperada.cx},${compartidaEsperada.cy}`);
 
   // La suma se ve: esa celda vale MAS que la de una sola figura.
   ok(compartida.valor > soloUna,
@@ -190,6 +198,29 @@ console.log('\n== 7. La geometria de las celdas es coherente ==');
   const dentro = zonas.celdas.some((c) => c.x <= 150 && 150 <= c.x + zonas.lado
     && c.y <= 140 && 140 <= c.y + zonas.lado);
   ok(dentro, 'y la celda del centro de la figura cae sobre la figura');
+}
+
+console.log('\n== 8. La RESOLUCION: que el detalle sea el que se pidio ==');
+{
+  // Una tarea estandar de 100x80 tiene que caer en MUCHAS celdas, no en unas pocas: si
+  // el detalle baja, el mapa se vuelve una cuadricula gruesa sin que nadie se entere.
+  const a = figura('A', 100, 100, 100, 80);
+  const zonas = calcularZonas([ { element: a, masa: 1000 } ]);
+  const celdasDentro = zonas.celdas.filter((c) => c.x >= 100 - zonas.lado && c.x <= 200
+    && c.y >= 100 - zonas.lado && c.y <= 180).length;
+
+  ok(zonas.lado <= 15,
+    'el lado de celda es de alta resolucion (<= 15 px)', `${zonas.lado} px`);
+  ok(celdasDentro >= 20,
+    'y una tarea estandar cae en muchas celdas (detalle real, no cuadricula gruesa)',
+    `${celdasDentro} celdas sobre la tarea`);
+
+  // El radio tiene que cubrir la figura: con celdas chicas un radio pequeno dejaria el
+  // centro marcado y los bordes vacios, que es volver al punto por figura.
+  const alcance = RADIO_MANCHA * zonas.lado;
+  ok(alcance >= 50,
+    'y el reparto alcanza a cubrir media figura (si no, la mancha seria un punto)',
+    `${alcance} px de radio para una figura de 100x80`);
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);

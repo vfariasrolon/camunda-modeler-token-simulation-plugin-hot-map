@@ -15,24 +15,32 @@
 /**
  * Lado de la celda, en px de diagrama.
  *
- * Ni muy chico ni muy grande, y las dos razones son de lectura:
- *   - chico (20 px): una tarea de 100x80 ocupa 25 celdas, el DOM se llena de nodos y
- *     el borde de cada celda compite con la figura.
- *   - grande (200 px): dos tareas que no tienen nada que ver caen en la misma celda y
- *     la mancha dice «aqui se trabaja» de un sitio donde no se trabajo.
- * 60 px deja una tarea estandar en unas 4 celdas y separa vecinas distintas.
+ * RESOLUCION A 5: 60 px dejaba el mapa tosco. Con 12 px la mancha tiene detalle de
+ * verdad (una tarea estandar de 100x80 cae en unas 60 celdas) y sigue sin llenar el DOM
+ * en un diagrama normal: 12 px es un quinto de lo que habia, o sea 25 veces mas celdas,
+ * asi que el tope de `MAX_CELDAS` y su ajuste automatico pasan a ser la red que evita
+ * que un diagrama grande cuelgue el navegador.
+ *
+ * El limite de lo util: por debajo de ~10 px la celda es mas pequena que el borde de una
+ * figura y la mancha empieza a parecer ruido en vez de zona. Si algun dia se quiere mas
+ * detalle, el camino es el mapa difuminado, no bajar mas la celda.
  */
-export const LADO_CELDA = 60;
+export const LADO_CELDA = 12;
 
 /**
  * Cuanto se reparte la masa de una figura alrededor de su centro, en celdas.
  *
- * 1 = solo la celda central (una tarea = un cuadro). 2 = tambien las de al lado, que
- * es lo que convierte cuadros sueltos en una mancha. Se reparte con un peso que baja
- * con la distancia, para que el centro pese mas que el borde y la union entre dos
- * tareas cercanas no salga con un escalon.
+ * CON CELDAS PEQUENAS ESTO IMPORTA MAS, no menos: con 60 px, radio 2 cubria 120 px de
+ * diagrama (mas ancho que una tarea) y las celdas se solapaban solas. Con 12 px, radio 2
+ * cubriria 24 px -menos que una tarea-, la mancha saldria con el centro marcado y los
+ * bordes de la figura vacios, y se volveria al problema del principio: un punto por
+ * figura en vez de una zona.
+ *
+ * 6 celdas dan 72 px de radio: cubre una tarea estandar con su borde difuminado y hace
+ * que dos tareas contiguas se unan sin escalon. Se queda por debajo del maximo util
+ * (radio mayor que media figura no aporta nada: solo engorda el difuminado).
  */
-export const RADIO_MANCHA = 2;
+export const RADIO_MANCHA = 6;
 
 /** Peso de una celda segun su distancia al centro (en celdas). */
 const pesoPorDistancia = (dx, dy) => {
