@@ -52,6 +52,11 @@ function crearCanvasFalso() {
   senuelo.appendChild(document.createElementNS(NS, 'defs'));
   contenedor.appendChild(senuelo);
 
+  // El svg del diagrama con sus <defs>: `SimpleHeatSVG` mete ahi sus filtros y sube por
+  // el arbol desde la CAPA para encontrarlo. Ese es el arbol real de diagram-js:
+  //   svg > defs, svg > g.viewport > g.layer-overlays
+  // Tenerlo asi importa: con la capa colgando de otro sitio, la cadena no llega y el
+  // mapa de circulos se queda sin sus defs (que es justo lo que el doble debe reproducir).
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('class', 'djs-svg');
   svg.appendChild(document.createElementNS(NS, 'defs'));
@@ -62,6 +67,10 @@ function crearCanvasFalso() {
   viewport.appendChild(capa);
   svg.appendChild(viewport);
   contenedor.appendChild(svg);
+
+  // La capa tiene que estar EN EL ARBOL: `_capaOverlays` exige `parentNode`, porque un
+  // <g> suelto no esta en el diagrama y sus coordenadas serian locales.
+  void capa.parentNode;
   document.body.appendChild(contenedor);
 
   // Los graficos de cada elemento: `canvas.getGraphics(element)` es lo que usa la
@@ -699,6 +708,57 @@ try {
   ok(celdaSobreLaTarea,
     'y hay una celda SOBRE el centro de la tarea (la mancha coincide con la figura)',
     `centro de Task_1 en (${centroX}, ${centroY})`);
+
+  // --- 16. LAS DOS VISTAS SEGUIDAS: el escenario que falla en el Modeler ---
+  //
+  // El reporte dice que los CIRCULOS SI funcionan y las CELDAS no, y que todo se pinta en
+  // 0,0. La diferencia entre las dos vistas estaba en como consiguen su contenedor, y en
+  // el orden en que se piden: el mapa por tareas crea/reutiliza la capa de overlays con
+  // `SimpleHeatSVG` y esta vista la pide DESPUES. Aqui se reproduce ese orden exacto, que
+  // es el que el usuario sigue al usar la app.
+  controller._elementRegistry = registro;
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 10, totalCost: 1000, totalProcessingTime: 600000 } ],
+    [ 'Task_2', { executionCount: 10, totalCost: 5000, totalProcessingTime: 600000 } ]
+  ]);
+
+  // 1) primero el mapa por TAREAS, como hace el usuario (los circulos).
+  // 1) el mapa por TAREAS, como hace el usuario. Su grupo tiene que quedar en la capa
+  // de overlays del diagrama; si no, sus circulos estarian en otro sistema de coordenadas.
+  controller.showMetric('cost');
+  const grupoCirculos = document.querySelector('.heatmap-layer');
+  ok(Boolean(grupoCirculos), 'el mapa por tareas crea su grupo de circulos');
+  ok(Boolean(grupoCirculos && grupoCirculos.parentNode
+    && grupoCirculos.parentNode.getAttribute('class') === 'layer-overlays'),
+    'y su grupo vive en la capa de overlays del diagrama',
+    grupoCirculos && grupoCirculos.parentNode
+      ? grupoCirculos.parentNode.getAttribute('class') : 'sin padre');
+
+  // 2) y DESPUES las zonas, que es el orden real del usuario.
+  controller.showMetric('zonas');
+  const grupo16 = document.querySelector('.heatmap-zones');
+  ok(Boolean(grupo16), 'y despues la vista de zonas pinta su rejilla');
+
+  // LA INVARIANTE, medida como se debe: se pregunta por la capa que usa CADA VISTA, en vez
+  // de comparar grupos del DOM. Comparar grupos no vale porque cada vista BORRA el grupo de
+  // la anterior al empezar (`clearOverlaysAndHeatmap`): el de los circulos ya no existe
+  // cuando se mira, y la comprobacion daria un falso fallo. La capa, en cambio, es la misma
+  // para las dos y es lo que les da el sistema de coordenadas.
+  const capaDeZonas = grupo16 && grupo16.parentNode;
+  ok(Boolean(capaDeZonas && capaDeZonas.getAttribute('class') === 'layer-overlays'),
+    'y las celdas viven en ESA MISMA capa de overlays, no en otra',
+    capaDeZonas ? capaDeZonas.getAttribute('class') : 'sin padre');
+
+  // Y la capa tiene que estar DENTRO del svg del diagrama: fuera de el, sus coordenadas
+  // serian locales y todo se apilaria en (0,0), que es el reporte.
+  const svg16 = canvas.contenedor.querySelector('svg.djs-svg');
+  ok(Boolean(svg16 && svg16.contains(capaDeZonas)),
+    'y la capa esta dentro del svg del diagrama (mismo sistema de coordenadas)');
+
+  // 3) y volver a los circulos no puede romper nada.
+  controller.showMetric('cost');
+  ok(Boolean(document.querySelector('.heatmap-layer circle')),
+    'y volver al mapa por tareas sigue pintando circulos');
 
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //

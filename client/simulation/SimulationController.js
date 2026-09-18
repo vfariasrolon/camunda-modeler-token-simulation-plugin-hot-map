@@ -1334,29 +1334,38 @@ export default class SimulationController {
   /**
    * La capa donde se dibujan los overlays del mapa.
    *
-   * POR QUE NO SE LLAMA A `getLayer('overlays')` DIRECTO: `getLayer` CREA la capa si no
-   * existe, con el indice por defecto, y LANZA si luego se pide con otro indice. Como esta
-   * capa no existia antes de estas vistas -el mapa por tareas usa `SimpleHeatSVG`, que
-   * tambien la pide-, dos vistas podian crearla/ pedirla con indices distintos y la
-   * segunda se caia a medias. Aqui se pide UNA vez, se recuerda, y si algo falla se cae al
-   * viewport en vez de dejar la vista sin pintar.
+   * SE PIDE EN CADA PINTADO, NO SE MEMORIZA. Guardarla en `this._overlaysLayer` y reusarla
+   * mientras tuviera padre estaba MAL por dos motivos, y el primero explica el reporte
+   * «todo se pinta en 0,0»:
+   *
+   *   1. `clearOverlaysAndHeatmap()` borra el grupo de overlays y `SimpleHeatSVG` se
+   *      recrea: la referencia guardada queda colgando de un nodo muerto, asi que las
+   *      celdas siguientes se dibujaban en un contenedor que YA NO ES el diagrama. Su
+   *      sintoma era inconfundible: todo en (0,0), la esquina superior izquierda, con los
+   *      valores apilados y sumados en el mismo sitio.
+   *   2. El `catch` caia al `viewport` «para no dejar la vista sin pintar». Fue una mala
+   *      idea: el viewport es el <g> que CONTIENE las capas y lleva su propio `transform`,
+   *      asi que NO es el mismo sistema de coordenadas. Pintar ahi es pintar mal; es mejor
+   *      no pintar y decir por que.
+   *
+   * Y es la razon de que los CIRCULOS si se vieran bien: `SimpleHeatSVG` pide la capa en
+   * cada instancia, y si no la consigue LANZA. Aqui se hace lo mismo: se pide cada vez, y
+   * si no se puede, se avisa en vez de inventarse un contenedor.
    */
   _capaOverlays() {
-    if (this._overlaysLayer && this._overlaysLayer.parentNode) return this._overlaysLayer;
-
     try {
-      this._overlaysLayer = this._canvas.getLayer('overlays');
+      const capa = this._canvas.getLayer('overlays');
+      // Sin padre no sirve: un <g> suelto no esta en el arbol del diagrama y sus
+      // coordenadas serian locales.
+      if (capa && capa.parentNode) return capa;
+      console.warn('[mapa] la capa de overlays no esta en el arbol del diagrama');
+      return null;
     } catch (err) {
-      // Ya existe con otro indice (u otra vista la creo): se usa el viewport, que es el
-      // <g> que CONTIENE todas las capas y por tanto esta en coordenadas del diagrama.
-      // Se avisa en consola porque es un caso raro: si aparece, hay dos vistas peleandose
-      // por la misma capa.
-      console.warn('[mapa] no se pudo obtener la capa de overlays, se usa el viewport', err);
-      const svg = this._canvas.getContainer().querySelector('svg');
-      this._overlaysLayer = (svg && svg.querySelector(':scope > g')) || null;
+      // Ya existe con otro indice: el mapa de calor y esta vista piden lo mismo, asi que
+      // esto solo pasa si algo la creo antes en otro sitio.
+      console.warn('[mapa] no se pudo obtener la capa de overlays', err);
+      return null;
     }
-
-    return this._overlaysLayer;
   }
 
   /** Quita los trazos de la vista de estructura, si los hubiera. */
@@ -1474,9 +1483,10 @@ export default class SimulationController {
     // mentiria sobre donde se trabajo.
     const lado = ladoQueCabe(conMasa, LADO_CELDA);
 
-    // El contenedor tiene que estar en el modo «mapa»: la clase hace visibles las
-    // celdas que se salgan de la caja del SVG (`overflow: visible`). Sin ella, parte de
-    // la mancha se RECORTA y parece que faltan zonas.
+    // El contenedor tiene que estar en el modo «mapa»: la clase hace visible lo que se
+    // salga de la caja del SVG (`overflow: visible`). Se PONE aqui tambien -y no solo en
+    // el mapa de tareas- porque `showMetric` limpia al empezar, y la limpieza la quita;
+    // sin esto, la mancha se recortaria por los bordes.
     domClasses(this._canvas.getContainer()).add('heatmap-shown');
 
     const zonas = calcularZonas(conMasa, {
@@ -1554,11 +1564,11 @@ export default class SimulationController {
       this._zonasGrupo.parentNode.removeChild(this._zonasGrupo);
     }
     this._zonasGrupo = null;
-    // Se quita tambien la clase del contenedor: si no, el siguiente mapa (el de tareas)
-    // heredaria el `overflow: visible` de esta vista sin necesitarlo.
-    if (this._canvas && this._canvas.getContainer) {
-      domClasses(this._canvas.getContainer()).remove('heatmap-shown');
-    }
+    // NO se toca la clase del contenedor. Es estado GLOBAL -la trae `overflow: visible`,
+    // que el mapa de tareas TAMBIEN necesita- y quitarla desde una vista dejaba a la otra
+    // sin ella: los circulos se pintaban con el SVG recortado y las celdas acababan sin
+    // una capa valida. El estado lo pone y lo quita `clearOverlaysAndHeatmap`, en el
+    // mismo sitio donde se destruye el mapa.
   }
 
   /** Leyenda de la vista de zonas: la unidad dicha, y el aviso de la resolucion. */
