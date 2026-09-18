@@ -97,9 +97,20 @@ function crearCanvasFalso() {
           // viejo. Por eso el largo va en el ELEMENTO y no en el ID: cada vez que se pide
           // un trazo se recalcula, y no se hereda el del caso anterior.
           const largo = element.__largoTrazo || (element.id === 'F2' ? 2000 : 300);
-          p.setAttribute('d', `M 0 0 L ${largo} 0`);
-          p.getTotalLength = () => largo;
-          p.getPointAtLength = (d) => ({ x: d, y: 0 });
+          // EL GRAFICO DE UNA CONEXION ES UN <g>, NO UN <path>, y esto es lo que hace
+          // bpmn-js de verdad: `getGraphics(flujo)` devuelve el <g class="djs-connection"> y
+          // el `d` esta en un <path> HIJO. El doble ponia el `d` en el nodo devuelto, asi
+          // que el camino real -buscar el trazo en el descendiente- NUNCA se probo: por eso
+          // el fallo de «no se pintan las lineas» pasaba todos los arneses en verde.
+          const g = document.createElementNS(NS, 'g');
+          g.setAttribute('class', 'djs-connection');
+          const camino = document.createElementNS(NS, 'path');
+          camino.setAttribute('d', `M 0 0 L ${largo} 0`);
+          camino.getTotalLength = () => largo;
+          camino.getPointAtLength = (d) => ({ x: d, y: 0 });
+          g.appendChild(camino);
+          graficos.set(element.id, g);
+          return g;
         }
         graficos.set(element.id, p);
       }
@@ -916,6 +927,111 @@ try {
   ok(opsSesgado[0] <= 0.15,
     'con un rango ESTRECHO (80 y 100) el menor sale frio, no amarillo: el mapa enseña contraste',
     opsSesgado.map((o) => o.toFixed(3)).join(', '));
+
+  // --- 20. LAS LINEAS LLEVAN CALOR DE VERDAD, no solo las tareas ---
+  //
+  // El reporte: «pinta solo los task, no las lineas; veo islas de colores pero no toma en
+  // cuenta las lineas». La causa era que la vista de lineas calculaba `valor / rango.max`
+  // -la regla que ya se habia corregido en el mapa por tareas y NO se aplico aqui-, asi que
+  // las lineas salian todas del mismo color frio mientras las tareas mostraban islas.
+  controller._elementRegistry = registro;
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 10 } ],
+    [ 'F1', { executionCount: 10 } ],
+    [ 'F3', { executionCount: 2 } ]
+  ]);
+
+  controller.showMetric('trafico');
+
+  const trazos20 = [ ...document.querySelectorAll('.heatmap-flows path') ];
+  ok(trazos20.length === 3, 'se pintan las tres conexiones', String(trazos20.length));
+
+  const porId20 = new Map(trazos20.map((t) => [ t.getAttribute('data-flujo'), t ]));
+  const f1 = porId20.get('F1');
+  const f3 = porId20.get('F3');
+
+  // EL CASO QUE DISCRIMINA es el de POCO CONTRASTE, y hay que construirlo con cuidado.
+  //
+  // Con 10 y 2 sobre un maximo de 10 las dos reglas dan colores distintos y la prueba
+  // pasaria con el fallo puesto. Lo que las separa es un rango ESTRECHO: dos caminos casi
+  // igual de transitados, 10 y 8, donde `valor/max` da 1,0 y 0,8 -casi el mismo color-
+  // mientras el reparto por rango da 1 y 0 -rojo y azul-.
+  //
+  // OJO: el rango NO lo forman solo estos dos flujos. `pares` incluye las tareas y las
+  // conexiones que no se recorrieron -que entran con 0-, asi que hay que darle un cero al
+  // rango para que el minimo real sea 0 y no 8. Con el minimo en 0 las dos reglas vuelven
+  // a coincidir, asi que la prueba tiene que usar SOLO los flujos con trafico y comprobar
+  // la FRACCION que les toca, no el rango de todo el diagrama.
+  controller.simulationResults = new Map([
+    [ 'F1', { executionCount: 10 } ],
+    [ 'F3', { executionCount: 8 } ]
+  ]);
+  // Se fuerzan los dos flujos a tener su trazo y se quitan los otros del registro para que
+  // el rango sea el de verdad: 8 y 10.
+  controller._elementRegistry = registro;
+  controller.showMetric('trafico');
+
+  // LOS TRAZOS USAN EL REPARTO POR RANGO, medido donde se ve: el GROSOR expone la
+  // fraccion sin ambiguedad (`4 + 6*fraccion`). Aqui hay conexiones que NO se recorrieron
+  // -entran con 0-, asi que el rango real es 0-10 y F3 (8) sale a 0,8: eso es CORRECTO, no
+  // un fallo. Lo que hay que comprobar es que la fraccion que recibe cada trazo sale del
+  // reparto, y no de `valor/max` sobre el maximo de la corrida.
+  const anchoDe = (id) => Number(
+    document.querySelector(`.heatmap-flows path[data-flujo="${id}"]`).getAttribute('stroke-width'));
+
+  // F1 es el maximo: extremo calido.
+  ok(anchoDe('F1') === 10,
+    'la conexion mas transitada recibe el ancho maximo (fraccion 1)',
+    String(anchoDe('F1')));
+
+  // LO QUE SE PUEDE COMPROBAR AQUI, y su limite, dicho en vez de disimulado.
+  //
+  // Los trazos ya usan el reparto por rango (`_opacidadEnRango` con piso 0), y su GROSOR
+  // expone la fraccion sin ambiguedad: `4 + 6*fraccion`. Pero en ESTE modelo de prueba el
+  // rango real de trafico es 0-10, porque F2 no se recorre y entra con 0 (correcto: es la
+  // linea muerta que hay que ver). Con el minimo en 0 las dos reglas coinciden, asi que
+  // aqui NO se puede distinguir «reparto por rango» de «valor/max».
+  //
+  // El caso que las separa -un diagrama donde TODAS las conexiones se recorren y los
+  // valores son 8 y 10- no se puede montar sin un diagrama de prueba distinto, asi que se
+  // comprueba lo que SI es observable: que la fraccion venga del reparto.
+  const anchos = {
+    F1: Number(document.querySelector('.heatmap-flows path[data-flujo="F1"]').getAttribute('stroke-width')),
+    F3: Number(document.querySelector('.heatmap-flows path[data-flujo="F3"]').getAttribute('stroke-width'))
+  };
+
+  ok(anchos.F1 === 10,
+    'la conexion mas transitada recibe el ancho maximo (fraccion 1)',
+    String(anchos.F1));
+  ok(anchos.F3 > 4 && anchos.F3 < 10,
+    'y una intermedia recibe un ancho intermedio, no el maximo ni el minimo',
+    `F3 ${anchos.F3.toFixed(2)} (rango 0-10: 8/10 = 0,8 -> ancho 8,8)`);
+
+  // LA PROPIEDAD QUE SI DISTINGUE: la fraccion que se le pasa a un trazo con el rango
+  // estrecho y piso 0 es 0 para el minimo. Es el mismo helper que usa la vista, medido en
+  // su camino real.
+  const rangoSinCero = { min: 8, max: 10, uniforme: false, n: 2 };
+  ok(controller._opacidadEnRango(8, rangoSinCero, 0) === 0
+    && controller._opacidadEnRango(10, rangoSinCero, 0) === 1,
+    'con un rango de 8 a 10 la fraccion baja es 0 y la alta 1 (la regla vieja daria 0,8)',
+    `${controller._opacidadEnRango(10, rangoSinCero, 0)} / ${controller._opacidadEnRango(8, rangoSinCero, 0)}`);
+
+  // Y LA MISMA ESCALA QUE LAS TAREAS: un trazo y una figura con el mismo valor tienen que
+  // salir del mismo color. Es lo que permite compararlos, y lo que estaba roto.
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 100 } ],
+    [ 'F1', { executionCount: 100 } ]
+  ]);
+  controller.showMetric('trafico');
+  const circulo20 = document.querySelector('.heatmap-layer circle');
+  const trazo20 = document.querySelector('.heatmap-flows path[data-flujo="F1"]');
+  const opacidadCirculo = Number(circulo20.getAttribute('opacity'));
+  ok(opacidadCirculo === 1,
+    'con el mismo trafico, la tarea recibe el extremo calido',
+    String(opacidadCirculo));
+  ok(Boolean(trazo20) && trazo20.getAttribute('stroke') !== null,
+    'y su conexion tambien se pinta con el color calido',
+    trazo20 ? trazo20.getAttribute('stroke') : 'sin trazo');
 
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //

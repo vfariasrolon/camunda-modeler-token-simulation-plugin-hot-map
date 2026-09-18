@@ -3,10 +3,15 @@
 // Codigo REAL del plugin, copiado por build.mjs. Lo que se prueba es la ARITMETICA:
 // una celda mal sumada pinta una zona donde no se trabajo, y eso no se ve mirando el
 // dibujo (se ve bonito igual), asi que tiene que fallar aqui.
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   LADO_CELDA, RADIO_MINIMO, RADIO_MAXIMO, radioDe, MAX_CELDAS,
   centroDe, repartirMasa, calcularZonas, celdasQueOcupa, ladoQueCabe
 } from './HeatmapZones.mjs';
+
+const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 let fallos = 0;
 const ok = (cond, etiqueta, detalle) => {
@@ -278,6 +283,39 @@ console.log('\n== 9. La mancha NO se sale de las figuras (el fallo del espacio v
   ok(radioDe({ width: 4, height: 4 }) === RADIO_MINIMO,
     'y un minimo para que una figura diminuta siga viendose', String(radioDe({ width: 4, height: 4 })));
   ok(radioDe({}) === RADIO_MINIMO, 'sin caja conocida no revienta', String(radioDe({})));
+}
+
+console.log('\n== 10. La vista de LINEAS se encuentra por su NOMBRE ==');
+{
+  // El usuario -que conoce el producto- pregunto «¿hay manera de colorear las LINEAS?» sin
+  // encontrar la vista que ya lo hacia, porque se llamaba «Vista de estructura». Un rotulo
+  // que no se encuentra por lo que hace es una funcion escondida.
+  //
+  // Se comprueba en el FUENTE de la paleta y no en un DOM: este arnes es de Node, y el
+  // titulo con el que se registra la entrada es exactamente el texto que ve el usuario.
+  const ruta = join(RAIZ, 'client', 'simulation', 'SimulationPalette.js');
+  const fuente = readFileSync(ruta, 'utf8');
+
+  const conLineas = fuente.split('\n').filter((l) => /title: '[^']*l[íi]nea/i.test(l));
+  ok(conLineas.length > 0,
+    'hay una entrada de la paleta que se encuentra buscando «lineas»',
+    conLineas.length ? conLineas[0].trim().slice(0, 60) : 'NINGUNA entrada la menciona');
+
+  // Y la vista que hay detras existe y pinta trazos: el rotulo no puede prometer algo que
+  // el codigo no haga.
+  const controlador = readFileSync(join(RAIZ, 'client', 'simulation', 'SimulationController.js'), 'utf8');
+  ok(/metric === 'trafico'/.test(controlador) && /_pintarFlujos\(/.test(controlador),
+    'y esa entrada tiene detras la vista que pinta los trazos, no solo un titulo');
+
+  // El nombre viejo ya no se USA como titulo: si volviera a ser el rotulo, la funcion
+  // volveria a estar escondida. Se mira solo en los TITULOS y no en todo el archivo, porque
+  // el comentario que explica el cambio SI debe poder nombrar el nombre viejo.
+  const titulos = fuente.split('\n')
+    .filter((l) => /title: '/.test(l))
+    .map((l) => l.trim());
+  ok(!titulos.some((t) => /Vista de estructura/.test(t)),
+    'y el nombre viejo ya no se usa como titulo, para que nadie la busque por ahi',
+    String(titulos.length) + ' titulos revisados');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);

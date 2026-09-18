@@ -648,12 +648,12 @@ export default class SimulationController {
    * Con `uniforme` (todos los valores iguales) no hay contraste que repartir: manda el
    * extremo frio, que es lo que significa «no hay diferencias».
    */
-  _opacidadEnRango(valor, rango) {
+  _opacidadEnRango(valor, rango, piso = OPACIDAD_MINIMA) {
     if (!rango || rango.uniforme) return opacidadDe(valor, rango ? rango.max : 0, true);
     const f = fraccionDe(valor, rango.min, rango.max);
     // `fraccionDe` devuelve null sin contraste; aqui ya se comprobo `uniforme`, asi que es
     // una red por si el rango llega incompleto.
-    return f == null ? OPACIDAD_UNIFORME : Math.min(1, Math.max(OPACIDAD_MINIMA, f));
+    return f == null ? OPACIDAD_UNIFORME : Math.min(1, Math.max(piso, f));
   }
 
   _pushPoint(dataPoints, element, value, opacidad) {
@@ -1321,11 +1321,16 @@ export default class SimulationController {
 
     const valores = new Map(pares.map((p) => [ p.element.id, p.value ]));
 
+    let sinTrazo = 0;
     this._getFlujosDelDiagrama().forEach((flujo) => {
-      const grafico = this._canvas.getGraphics(flujo);
-      if (!grafico || !grafico.getAttribute) return;
+      if (!this._trazoDe(flujo)) {
+        // Se CUENTA en vez de salir en silencio: si un diagrama no pinta ninguna linea,
+        // esto es lo que lo explica en consola.
+        sinTrazo++;
+        return;
+      }
 
-      const d = grafico.getAttribute('d');
+      const d = this._trazoDe(flujo);
       if (!d) return;
 
       const valor = valores.has(flujo.id) ? valores.get(flujo.id) : 0;
@@ -1342,14 +1347,62 @@ export default class SimulationController {
         trazo.setAttribute('stroke-width', '2');
         trazo.setAttribute('stroke-dasharray', '6 5');
       } else {
-        const fraccion = rango.uniforme ? 0 : valor / (rango.max || 1);
+        // LA MISMA ESCALA QUE LAS MANCHAS, y esto es el arreglo de «no pone nada de calor
+        // sobre las lineas»: aqui se calculaba `valor / rango.max`, que es la regla que ya
+        // se corrigio en el mapa por tareas y que NO se aplico en este sitio. Con ella, el
+        // minimo de una corrida cae en la banda plana azul -o directamente en 0 si el rango
+        // es uniforme-, asi que las lineas salian todas del mismo color frio mientras las
+        // tareas, que si usan el reparto, mostraban islas de color. Se veian tareas y no
+        // caminos.
+        //
+        // Con `_opacidadEnRango` las dos cosas usan el MISMO reparto entre minimo y maximo,
+        // que es lo que permite comparar un trazo con una tarea.
+        // PISO EN 0, y es un detalle que importa: en una MANCHA el suelo de 0,10 existe
+        // para que un valor bajo siga viendose -una mancha invisible parece «sin analizar»-,
+        // pero en un TRAZO es danino: aplasta todo el extremo frio al mismo valor y las
+        // lineas dejan de distinguirse entre si. Aqui la visibilidad la da el GROSOR -de 4 a
+        // 10 px-, asi que la fraccion puede llegar a 0 y la linea sigue viendose.
+        const fraccion = this._opacidadEnRango(valor, rango, 0);
         trazo.setAttribute('stroke', colorDeValor(fraccion));
-        trazo.setAttribute('stroke-width', `${4 + 6 * (rango.uniforme ? 0.35 : fraccion)}`);
-        trazo.setAttribute('stroke-opacity', '0.55');
+        trazo.setAttribute('stroke-width', `${4 + 6 * fraccion}`);
+        trazo.setAttribute('stroke-opacity', '0.9');
       }
 
       grupo.appendChild(trazo);
     });
+
+    if (sinTrazo) {
+      console.warn(`[mapa] ${sinTrazo} conexion(es) sin trazo legible: no se pudieron pintar.`
+        + ' Su grafico no expone un <path> con `d`, que es lo que se clona.');
+    }
+  }
+
+  /**
+   * El `d` del trazo de una conexion.
+   *
+   * `canvas.getGraphics(flujo)` NO devuelve el `<path>`: devuelve el `<g class="djs-connection">`
+   * que lo CONTIENE. La documentacion de diagram-js lo dice tal cual: «getGraphics(rootElement);
+   * // <g ...>». Buscar `d` en ese grupo da undefined -un <g> no tiene `d`-, asi que la vista
+   * salia por el `if (!d) return` en TODAS las conexiones y NO pintaba ninguna linea: es
+   * exactamente el reporte «solo veo islas de colores, no toma en cuenta las lineas».
+   *
+   * Se busca el `d` en el propio nodo y, si no esta, en un descendiente. El arnes daba un
+   * `d` de mentira en el nodo devuelto, asi que este camino nunca se probo de verdad.
+   */
+  _trazoDe(flujo) {
+    const grafico = this._canvas.getGraphics(flujo);
+    if (!grafico || !grafico.getAttribute) return null;
+
+    const propio = grafico.getAttribute('d');
+    if (propio) return propio;
+
+    const caminos = grafico.querySelectorAll ? grafico.querySelectorAll('path[d]') : [];
+    for (const camino of caminos) {
+      const d = camino.getAttribute('d');
+      if (d) return d;
+    }
+
+    return null;
   }
 
   /**

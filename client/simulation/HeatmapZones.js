@@ -314,17 +314,38 @@ export const celdasQueOcupa = (elementos, lado = LADO_CELDA) => {
 /**
  * Techo de celdas a pintar, para que un diagrama enorme no cuelgue el navegador.
  *
- * 6000 nodos SVG se pintan sin que se note. Por encima se AVISA y se sube el tamaño
- * de celda, que es la unica salida que conserva el mapa: recortar zonas seria mentir
- * sobre donde se trabajo.
+ * SUBIDO DE 6000 A 12000. El valor viejo estaba mal calibrado y se notaba en los diagramas
+ * grandes: 6000 celdas de 12 px cubren solo 930x930 px de diagrama, asi que un diagrama de
+ * 5000x3000 pedia 104.918 celdas y el ajuste automatico lo mandaba al PRIMER salto, 72 px,
+ * perdiendo toda la resolucion. El usuario lo vio tal cual: «pusiste 72».
+ *
+ * 12000 rects SVG son unos 0,5 s de creacion y ~12 MB: se pinta sin que se note, y duplica
+ * el area que cabe a resolucion completa (de 930x930 a 1300x1300 px). Por encima se sigue
+ * subiendo el tamaño de celda, que es la unica salida que conserva el mapa entero: recortar
+ * zonas mentiria sobre donde se trabajo.
  */
-export const MAX_CELDAS = 6000;
+export const MAX_CELDAS = 12000;
 
-/** Lado de celda que deja el mapa dentro del tope. Sube de 60 en 60 hasta que quepa. */
+/**
+ * Lado de celda que deja el mapa dentro del tope.
+ *
+ * SUBE EN ESCALONES PROPORCIONALES, NO DE 60 EN 60, y ese es el arreglo de «pusiste 72»:
+ * con saltos de 60, el primero iba de 12 a 72 -SEIS VECES la resolucion de golpe- porque 12
+ * y 72 son multiplos de 60. Un diagrama grande perdia todo el detalle en un solo salto en
+ * vez de degradarse.
+ *
+ * Ahora cada escalon multiplica el lado por 1,25: 12 -> 15 -> 18,75 -> 23,4... Asi el
+ * diagrama mas grande posible se sigue degradando, pero poco a poco y de forma predecible,
+ * y un diagrama mediano conserva una resolucion mucho mejor que 72 px.
+ */
+export const FACTOR_ESCALON = 1.25;
+
 export const ladoQueCabe = (elementos, lado = LADO_CELDA) => {
   let actual = lado;
-  while (celdasQueOcupa(elementos, actual) > MAX_CELDAS && actual < 1200) {
-    actual += 60;
+  // El tope de 2000 px evita un bucle infinito si `celdasQueOcupa` devolviera algo raro:
+  // con celdas de 2000 px cualquier diagrama cabe.
+  while (celdasQueOcupa(elementos, actual) > MAX_CELDAS && actual < 2000) {
+    actual = Math.round(actual * FACTOR_ESCALON * 100) / 100;
   }
   return actual;
 };

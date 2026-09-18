@@ -110,6 +110,8 @@ const HELP_SECTIONS = [
     items: [
       [ ClearIcon, 'Limpiar',
         'Quita el mapa de calor y las etiquetas del diagrama.' ],
+      [ FlowIcon, 'Líneas y tareas por tráfico',
+        'Colorea las <strong>líneas</strong> del diagrama según cuántos tokens las recorrieron, además de las tareas. Es la única vista que enseña el CAMINO del trabajo: las líneas muy transitadas engordan y se ponen rojas, y las que no se recorrieron quedan en gris discontinuo.' ],
       [ RadiusPlusIcon, 'Manchas más grandes / más pequeñas',
         'Tamaño de las manchas de calor, en pasos del 25 %. Súbelo si el diagrama es grande y quieres ver la tendencia general, bájalo para mirar figura por figura sin que una mancha tape a la siguiente.' ],
       [ BlurPlusIcon, 'Desenfoque + / −',
@@ -253,9 +255,14 @@ export default class SimulationPalette {
       icon: ZonesIcon,
       metric: 'zonas'
     });
+    // EL NOMBRE DICE LO QUE HACE. Antes se llamaba «Vista de estructura: por dónde pasa el
+    // trabajo», y el usuario -que conoce el producto- pregunto «¿hay manera de colorear las
+    // LINEAS?» sin encontrar esta entrada: «estructura» no dice «lineas». La vista ya hacia
+    // exactamente lo que pedia, pintando conexiones Y figuras en la misma escala; lo que
+    // fallaba era el rotulo.
     this.addEntry({
-      title: 'Vista de estructura: por dónde pasa el trabajo',
-      tooltip: 'Pinta las CONEXIONES según cuántos tokens las recorrieron, además de las figuras. Las conexiones por las que NO pasó nada salen en gris discontinuo: esa es la lectura que el mapa por tareas no puede dar, porque una línea no tiene tiempo ni costo.',
+      title: 'Colorear LÍNEAS y tareas según el tráfico',
+      tooltip: 'Pinta las CONEXIONES (las líneas) según cuántos tokens las recorrieron, con más grosor y más calor cuanta más carga, y las tareas con la misma escala para que se puedan comparar. Las conexiones por las que NO pasó nada salen en gris discontinuo: por ahí no pasó el trabajo, y una rama que no se usa es capacidad que se paga y no se aprovecha.',
       icon: FlowIcon,
       metric: 'trafico'
     });

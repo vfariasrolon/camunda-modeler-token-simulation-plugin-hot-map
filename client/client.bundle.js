@@ -6480,6 +6480,7 @@ function textoDeEscala(metric, rango) {
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   FACTOR_ESCALON: () => (/* binding */ FACTOR_ESCALON),
 /* harmony export */   LADO_CELDA: () => (/* binding */ LADO_CELDA),
 /* harmony export */   MAX_CELDAS: () => (/* binding */ MAX_CELDAS),
 /* harmony export */   RADIO_MAXIMO: () => (/* binding */ RADIO_MAXIMO),
@@ -6808,17 +6809,38 @@ const celdasQueOcupa = (elementos, lado = LADO_CELDA) => {
 /**
  * Techo de celdas a pintar, para que un diagrama enorme no cuelgue el navegador.
  *
- * 6000 nodos SVG se pintan sin que se note. Por encima se AVISA y se sube el tamaño
- * de celda, que es la unica salida que conserva el mapa: recortar zonas seria mentir
- * sobre donde se trabajo.
+ * SUBIDO DE 6000 A 12000. El valor viejo estaba mal calibrado y se notaba en los diagramas
+ * grandes: 6000 celdas de 12 px cubren solo 930x930 px de diagrama, asi que un diagrama de
+ * 5000x3000 pedia 104.918 celdas y el ajuste automatico lo mandaba al PRIMER salto, 72 px,
+ * perdiendo toda la resolucion. El usuario lo vio tal cual: «pusiste 72».
+ *
+ * 12000 rects SVG son unos 0,5 s de creacion y ~12 MB: se pinta sin que se note, y duplica
+ * el area que cabe a resolucion completa (de 930x930 a 1300x1300 px). Por encima se sigue
+ * subiendo el tamaño de celda, que es la unica salida que conserva el mapa entero: recortar
+ * zonas mentiria sobre donde se trabajo.
  */
-const MAX_CELDAS = 6000;
+const MAX_CELDAS = 12000;
 
-/** Lado de celda que deja el mapa dentro del tope. Sube de 60 en 60 hasta que quepa. */
+/**
+ * Lado de celda que deja el mapa dentro del tope.
+ *
+ * SUBE EN ESCALONES PROPORCIONALES, NO DE 60 EN 60, y ese es el arreglo de «pusiste 72»:
+ * con saltos de 60, el primero iba de 12 a 72 -SEIS VECES la resolucion de golpe- porque 12
+ * y 72 son multiplos de 60. Un diagrama grande perdia todo el detalle en un solo salto en
+ * vez de degradarse.
+ *
+ * Ahora cada escalon multiplica el lado por 1,25: 12 -> 15 -> 18,75 -> 23,4... Asi el
+ * diagrama mas grande posible se sigue degradando, pero poco a poco y de forma predecible,
+ * y un diagrama mediano conserva una resolucion mucho mejor que 72 px.
+ */
+const FACTOR_ESCALON = 1.25;
+
 const ladoQueCabe = (elementos, lado = LADO_CELDA) => {
   let actual = lado;
-  while (celdasQueOcupa(elementos, actual) > MAX_CELDAS && actual < 1200) {
-    actual += 60;
+  // El tope de 2000 px evita un bucle infinito si `celdasQueOcupa` devolviera algo raro:
+  // con celdas de 2000 px cualquier diagrama cabe.
+  while (celdasQueOcupa(elementos, actual) > MAX_CELDAS && actual < 2000) {
+    actual = Math.round(actual * FACTOR_ESCALON * 100) / 100;
   }
   return actual;
 };
@@ -9237,12 +9259,12 @@ class SimulationController {
    * Con `uniforme` (todos los valores iguales) no hay contraste que repartir: manda el
    * extremo frio, que es lo que significa «no hay diferencias».
    */
-  _opacidadEnRango(valor, rango) {
+  _opacidadEnRango(valor, rango, piso = _HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.OPACIDAD_MINIMA) {
     if (!rango || rango.uniforme) return (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.opacidadDe)(valor, rango ? rango.max : 0, true);
     const f = (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.fraccionDe)(valor, rango.min, rango.max);
     // `fraccionDe` devuelve null sin contraste; aqui ya se comprobo `uniforme`, asi que es
     // una red por si el rango llega incompleto.
-    return f == null ? _HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.OPACIDAD_UNIFORME : Math.min(1, Math.max(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.OPACIDAD_MINIMA, f));
+    return f == null ? _HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.OPACIDAD_UNIFORME : Math.min(1, Math.max(piso, f));
   }
 
   _pushPoint(dataPoints, element, value, opacidad) {
@@ -9910,11 +9932,16 @@ class SimulationController {
 
     const valores = new Map(pares.map((p) => [ p.element.id, p.value ]));
 
+    let sinTrazo = 0;
     this._getFlujosDelDiagrama().forEach((flujo) => {
-      const grafico = this._canvas.getGraphics(flujo);
-      if (!grafico || !grafico.getAttribute) return;
+      if (!this._trazoDe(flujo)) {
+        // Se CUENTA en vez de salir en silencio: si un diagrama no pinta ninguna linea,
+        // esto es lo que lo explica en consola.
+        sinTrazo++;
+        return;
+      }
 
-      const d = grafico.getAttribute('d');
+      const d = this._trazoDe(flujo);
       if (!d) return;
 
       const valor = valores.has(flujo.id) ? valores.get(flujo.id) : 0;
@@ -9931,14 +9958,62 @@ class SimulationController {
         trazo.setAttribute('stroke-width', '2');
         trazo.setAttribute('stroke-dasharray', '6 5');
       } else {
-        const fraccion = rango.uniforme ? 0 : valor / (rango.max || 1);
+        // LA MISMA ESCALA QUE LAS MANCHAS, y esto es el arreglo de «no pone nada de calor
+        // sobre las lineas»: aqui se calculaba `valor / rango.max`, que es la regla que ya
+        // se corrigio en el mapa por tareas y que NO se aplico en este sitio. Con ella, el
+        // minimo de una corrida cae en la banda plana azul -o directamente en 0 si el rango
+        // es uniforme-, asi que las lineas salian todas del mismo color frio mientras las
+        // tareas, que si usan el reparto, mostraban islas de color. Se veian tareas y no
+        // caminos.
+        //
+        // Con `_opacidadEnRango` las dos cosas usan el MISMO reparto entre minimo y maximo,
+        // que es lo que permite comparar un trazo con una tarea.
+        // PISO EN 0, y es un detalle que importa: en una MANCHA el suelo de 0,10 existe
+        // para que un valor bajo siga viendose -una mancha invisible parece «sin analizar»-,
+        // pero en un TRAZO es danino: aplasta todo el extremo frio al mismo valor y las
+        // lineas dejan de distinguirse entre si. Aqui la visibilidad la da el GROSOR -de 4 a
+        // 10 px-, asi que la fraccion puede llegar a 0 y la linea sigue viendose.
+        const fraccion = this._opacidadEnRango(valor, rango, 0);
         trazo.setAttribute('stroke', (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.colorDeValor)(fraccion));
-        trazo.setAttribute('stroke-width', `${4 + 6 * (rango.uniforme ? 0.35 : fraccion)}`);
-        trazo.setAttribute('stroke-opacity', '0.55');
+        trazo.setAttribute('stroke-width', `${4 + 6 * fraccion}`);
+        trazo.setAttribute('stroke-opacity', '0.9');
       }
 
       grupo.appendChild(trazo);
     });
+
+    if (sinTrazo) {
+      console.warn(`[mapa] ${sinTrazo} conexion(es) sin trazo legible: no se pudieron pintar.`
+        + ' Su grafico no expone un <path> con `d`, que es lo que se clona.');
+    }
+  }
+
+  /**
+   * El `d` del trazo de una conexion.
+   *
+   * `canvas.getGraphics(flujo)` NO devuelve el `<path>`: devuelve el `<g class="djs-connection">`
+   * que lo CONTIENE. La documentacion de diagram-js lo dice tal cual: «getGraphics(rootElement);
+   * // <g ...>». Buscar `d` en ese grupo da undefined -un <g> no tiene `d`-, asi que la vista
+   * salia por el `if (!d) return` en TODAS las conexiones y NO pintaba ninguna linea: es
+   * exactamente el reporte «solo veo islas de colores, no toma en cuenta las lineas».
+   *
+   * Se busca el `d` en el propio nodo y, si no esta, en un descendiente. El arnes daba un
+   * `d` de mentira en el nodo devuelto, asi que este camino nunca se probo de verdad.
+   */
+  _trazoDe(flujo) {
+    const grafico = this._canvas.getGraphics(flujo);
+    if (!grafico || !grafico.getAttribute) return null;
+
+    const propio = grafico.getAttribute('d');
+    if (propio) return propio;
+
+    const caminos = grafico.querySelectorAll ? grafico.querySelectorAll('path[d]') : [];
+    for (const camino of caminos) {
+      const d = camino.getAttribute('d');
+      if (d) return d;
+    }
+
+    return null;
   }
 
   /**
@@ -14146,6 +14221,8 @@ const HELP_SECTIONS = [
     items: [
       [ ClearIcon, 'Limpiar',
         'Quita el mapa de calor y las etiquetas del diagrama.' ],
+      [ FlowIcon, 'Líneas y tareas por tráfico',
+        'Colorea las <strong>líneas</strong> del diagrama según cuántos tokens las recorrieron, además de las tareas. Es la única vista que enseña el CAMINO del trabajo: las líneas muy transitadas engordan y se ponen rojas, y las que no se recorrieron quedan en gris discontinuo.' ],
       [ RadiusPlusIcon, 'Manchas más grandes / más pequeñas',
         'Tamaño de las manchas de calor, en pasos del 25 %. Súbelo si el diagrama es grande y quieres ver la tendencia general, bájalo para mirar figura por figura sin que una mancha tape a la siguiente.' ],
       [ BlurPlusIcon, 'Desenfoque + / −',
@@ -14289,9 +14366,14 @@ class SimulationPalette {
       icon: ZonesIcon,
       metric: 'zonas'
     });
+    // EL NOMBRE DICE LO QUE HACE. Antes se llamaba «Vista de estructura: por dónde pasa el
+    // trabajo», y el usuario -que conoce el producto- pregunto «¿hay manera de colorear las
+    // LINEAS?» sin encontrar esta entrada: «estructura» no dice «lineas». La vista ya hacia
+    // exactamente lo que pedia, pintando conexiones Y figuras en la misma escala; lo que
+    // fallaba era el rotulo.
     this.addEntry({
-      title: 'Vista de estructura: por dónde pasa el trabajo',
-      tooltip: 'Pinta las CONEXIONES según cuántos tokens las recorrieron, además de las figuras. Las conexiones por las que NO pasó nada salen en gris discontinuo: esa es la lectura que el mapa por tareas no puede dar, porque una línea no tiene tiempo ni costo.',
+      title: 'Colorear LÍNEAS y tareas según el tráfico',
+      tooltip: 'Pinta las CONEXIONES (las líneas) según cuántos tokens las recorrieron, con más grosor y más calor cuanta más carga, y las tareas con la misma escala para que se puedan comparar. Las conexiones por las que NO pasó nada salen en gris discontinuo: por ahí no pasó el trabajo, y una rama que no se usa es capacidad que se paga y no se aprovecha.',
       icon: FlowIcon,
       metric: 'trafico'
     });
