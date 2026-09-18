@@ -39,7 +39,11 @@ mkdirSync(join(TRABAJO, 'dist'), { recursive: true });
 
 const casos = [
   { nombre: 'mapa de calor (color y opacidad)', entry: 'mapa-de-calor.js' },
-  { nombre: 'IDs de tarea (overlay y zoom)', entry: 'ids-de-tarea.js' }
+  { nombre: 'IDs de tarea (overlay y zoom)', entry: 'ids-de-tarea.js' },
+  // El editor de datos es el archivo mas GRANDE del plugin (3000+ lineas) y hasta
+  // ahora su unico arnes vivia en /tmp, asi que se perdia al reiniciar. Aqui queda
+  // versionado: es la red que hace falta antes de reestructurar sus pestanas.
+  { nombre: 'panel de datos (tareas, global y CSV)', entry: 'panel-de-datos.js' }
 ];
 
 let fallos = 0;
@@ -79,7 +83,9 @@ module.exports = {
 
   writeFileSync(join(TRABAJO, 'index.html'), `<!DOCTYPE html>
 <html lang="es"><head><meta charset="utf-8"><title>${caso.nombre}</title></head>
-<body><pre id="informe">(sin ejecutar)</pre>
+<body>
+<div id="lienzo"></div>
+<pre id="informe">(sin ejecutar)</pre>
 <script>
 window.addEventListener('error', (e) => {
   const p = document.getElementById('informe');

@@ -1,7 +1,7 @@
 # Verificación
 
-Arneses que comprueban el **motor real** del plugin: 14 ficheros, **503 comprobaciones**, más
-2 arneses de **navegador** que montan diagram-js de verdad.
+Arneses que comprueban el **motor real** del plugin: 15 ficheros, **683 comprobaciones**, más
+3 arneses de **navegador** que montan diagram-js de verdad.
 
 ```bash
 pnpm run verificar             # lógica (Node, rápido)
@@ -41,7 +41,8 @@ zoom **no era de lógica, era del ciclo de eventos**: ningún arnés de Node lo 
 | Arnés | Qué cubre | Checks |
 |---|---|---|
 | `mapa-de-calor.js` | El filtro SVG real: la tabla de color da azul en 0 y rojo en 255, y el caso uniforme sale con opacidad fría | 14 |
-| `ids-de-tarea.js` | Que el ID se pinte, que a zoom 25 % **siga visible** (contraste: un overlay con `minZoom` se oculta) y que se compense x1.4 | 11 |
+| `ids-de-tarea.js` | Que el ID se pinte, que a zoom 25 % **siga visible** (contraste: un overlay con `minZoom` se oculta) y que se compense x1.4 | 14 |
+| `panel-de-datos.js` | El editor de datos (el archivo **más grande del plugin**): Tareas, Global y los ciclos de **ida y vuelta del CSV**. Incluye el guardián de los **30 campos globales**, que caza un campo perdido en una reestructuración | 115 |
 
 ---
 
