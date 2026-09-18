@@ -63,10 +63,27 @@ function crearCanvasFalso() {
   svg.appendChild(viewport);
   contenedor.appendChild(svg);
   document.body.appendChild(contenedor);
+
+  // Los graficos de cada elemento: `canvas.getGraphics(element)` es lo que usa la
+  // vista de estructura para clonar el trazo de una conexion. Se devuelve un <path>
+  // con su `d`, que es lo unico que se lee.
+  const graficos = new Map();
+
   return {
     contenedor,
     getContainer: () => contenedor,
-    getLayer: (name) => (name === 'overlays' ? capa : null)
+    getLayer: (name) => (name === 'overlays' ? capa : null),
+    getGraphics: (element) => {
+      if (!graficos.has(element.id)) {
+        const p = document.createElementNS(NS, 'path');
+        // Una conexion de verdad tiene su trazo; una figura (tarea) no lleva `d`, y
+        // ese caso hay que conservarlo: si el arnes diera `d` a todo, la vista
+        // pintaria tareas como si fuesen lineas y la prueba no lo notaria.
+        if (element.__esFlujo) p.setAttribute('d', 'M 0 0 L 100 100');
+        graficos.set(element.id, p);
+      }
+      return graficos.get(element.id);
+    }
   };
 }
 
@@ -107,7 +124,15 @@ try {
   const t3 = elemento('Task_3', 'bpmn:Task', 500, 100, { pool: 'X', quantityRequired: 2 });
   const gw = elemento('Gateway_1', 'bpmn:Gateway', 700, 100);
   const fin = elemento('End_1', 'bpmn:EndEvent', 900, 100);
-  const elementos = [ t1, t2, t3, gw, fin ];
+
+  // CONEXIONES. `F2` es la rama que NO se recorre: existe en el diagrama y no tiene
+  // entrada en los resultados, que es justo el caso que la vista de estructura tiene
+  // que enseñar en gris en vez de dejar desaparecer.
+  const flujosDePrueba = [ 'F1', 'F2', 'F3' ].map((id) => Object.assign(
+    elemento(id, 'bpmn:SequenceFlow', 0, 0), { __esFlujo: true }
+  ));
+
+  const elementos = [ t1, t2, t3, gw, fin, ...flujosDePrueba ];
 
   const registro = {
     forEach: (fn) => elementos.forEach(fn),
@@ -357,6 +382,76 @@ try {
     'y el cambio llega al SVG: el circulo dibujado crece con el boton',
     `${rDibujado} -> ${rDibujadoGrande}`);
   controller._scale = 1;
+
+  // --- 12. LA VISTA DE ESTRUCTURA: el tráfico sobre las conexiones ---
+  //
+  // Lo que el mapa por tareas NO puede dar: por dónde pasa el trabajo. Una conexión no
+  // tiene tiempo ni costo, así que su única lectura es cuántos tokens la recorrieron.
+  // Y lo que sí es exclusivo de esta vista: las conexiones por las que NO pasó nada.
+  controller._elementRegistry = registro;
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 10, totalCost: 1000 } ],
+    [ 'Task_2', { executionCount: 10, totalCost: 5000 } ],
+    [ 'Gateway_1', { executionCount: 10, totalCost: 100 } ],
+    // F1 se recorre 10 veces y F3 solo 2: el rango tiene contraste, así que las dos
+    // tienen que salir con color y distinto. F2 no aparece: no se recorrió nunca.
+    [ 'F1', { executionCount: 10 } ],
+    [ 'F3', { executionCount: 2 } ]
+  ]);
+
+  controller.showMetric('trafico');
+
+  const grupoFlujos = document.querySelector('.heatmap-flows');
+  ok(Boolean(grupoFlujos), 'la vista de estructura crea su grupo de trazos');
+
+  const trazos = grupoFlujos ? [ ...grupoFlujos.querySelectorAll('path') ] : [];
+  ok(trazos.length === 3, 'pinta las TRES conexiones del diagrama', String(trazos.length));
+
+  const porId = new Map(trazos.map((t) => [ t.getAttribute('data-flujo'), t ]));
+
+  // Las recorridas, con color de la escala y grosor por tráfico.
+  const tF1 = porId.get('F1');
+  const tF3 = porId.get('F3');
+  ok(tF1 && /^rgb\(/.test(tF1.getAttribute('stroke')),
+    'una conexión recorrida lleva el color de la escala', tF1 ? tF1.getAttribute('stroke') : 'sin F1');
+  ok(tF1.getAttribute('stroke') !== tF3.getAttribute('stroke'),
+    'y la que más tráfico tiene NO sale del mismo color que la de menos',
+    `${tF1.getAttribute('stroke')} vs ${tF3.getAttribute('stroke')}`);
+  ok(Number(tF1.getAttribute('stroke-width')) > Number(tF3.getAttribute('stroke-width')),
+    'el trazo más transitado es más grueso', `${tF1.getAttribute('stroke-width')} vs ${tF3.getAttribute('stroke-width')}`);
+
+  // LA RAMA MUERTA, que es el hallazgo que justifica la vista.
+  const tF2 = porId.get('F2');
+  ok(Boolean(tF2), 'la conexión SIN tráfico también se pinta (no desaparece del mapa)');
+  ok(tF2.classList.contains('flujo-sin-trafico'),
+    'y se marca aparte, en su propio estilo', tF2.getAttribute('class') || 'sin clase');
+  ok(tF2.getAttribute('stroke-dasharray') !== null,
+    'con trazo discontinuo, para no confundirla con «poco tráfico»');
+  ok(tF2.getAttribute('stroke') !== tF1.getAttribute('stroke'),
+    'y con un color que no es el de la escala', tF2.getAttribute('stroke'));
+
+  // Un trazo por conexión, no por figura: los círculos son de las figuras y el trazo
+  // del flujo es del flujo. Si se cruzaran, una tarea tendría trazo o una línea mancha.
+  ok(!grupoFlujos.querySelector('[data-flujo="Task_1"]'), 'las figuras NO llevan trazo');
+  ok(document.querySelectorAll('.heatmap-layer circle').length === 3,
+    'y las conexiones NO llevan mancha (3 figuras, 3 círculos)',
+    String(document.querySelectorAll('.heatmap-layer circle').length));
+
+  // La leyenda dice las dos cosas, y avisa de las ramas muertas.
+  const leyendaEstructura = canvas.contenedor.querySelector('.heatmap-legend');
+  ok(/Estructura/.test(leyendaEstructura.textContent), 'la leyenda se declara como vista de estructura',
+    leyendaEstructura.textContent.slice(0, 60));
+  ok(/1/.test(leyendaEstructura.querySelector('.heatmap-legend-warn')
+    ? leyendaEstructura.querySelector('.heatmap-legend-warn').textContent : ''),
+    'y avisa de la conexión sin tráfico');
+  ok(/capacidad que se paga y no se aprovecha/.test(leyendaEstructura.textContent),
+    'explicando la consecuencia, no solo el hecho');
+
+  // Cambiar de vista LIMPIA los trazos: si quedaran, el diagrama seguiría pintado con
+  // una lectura que ya no es la activa.
+  controller.showMetric('cost');
+  ok(!document.querySelector('.heatmap-flows'),
+    'al cambiar de métrica los trazos se van con el mapa');
 
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //

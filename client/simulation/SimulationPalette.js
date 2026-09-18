@@ -31,6 +31,8 @@ const OvertimeIcon = '<path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.
 // --- Otros ---
 const FrequencyIcon = '<path d="M5 9.2h3V19H5V9.2zM10.6 5h2.8v14h-2.8V5zm5.6 8H19v6h-2.8v-6z"/>';
 const GroupIcon = '<path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>';
+// Tres lineas que se ensanchan: el trazo de una conexion por la que pasa mas trabajo.
+const FlowIcon = '<path d="M2 6.5h20v2.2H2V6.5zm2 5.4h16v2.2H4v-2.2zM7 17.3h10v2.2H7v-2.2z"/>';
 
 // --- Controles ---
 const ClearIcon = '<path d="M15 16h4v2h-4v-2zm0-8h7v2h-7V8zm0 4h6v2h-6v-2zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12V5z"/>';
@@ -221,6 +223,18 @@ export default class SimulationPalette {
         tooltip: 'Número de recursos configurados para cada tarea',
         icon: GroupIcon,
         metric: 'resourceQuantity'
+    });
+
+    this.addSeparator();
+
+    // VISTA DE ESTRUCTURA. Va aparte de las metricas por tarea porque NO es una
+    // metrica mas: mide otra cosa (pasos por la conexion) sobre otros objetos (las
+    // lineas), y su lectura es «por donde pasa el trabajo y por donde no».
+    this.addEntry({
+      title: 'Vista de estructura: por dónde pasa el trabajo',
+      tooltip: 'Pinta las CONEXIONES según cuántos tokens las recorrieron, además de las figuras. Las conexiones por las que NO pasó nada salen en gris discontinuo: esa es la lectura que el mapa por tareas no puede dar, porque una línea no tiene tiempo ni costo.',
+      icon: FlowIcon,
+      metric: 'trafico'
     });
 
     this.addSeparator();

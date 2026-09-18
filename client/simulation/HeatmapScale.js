@@ -109,6 +109,68 @@ export function gradienteCss(gradiente = GRADIENTE_ESCALA) {
   return `linear-gradient(to right, ${partes.join(', ')})`;
 }
 
+/**
+ * Los nombres de color del degradado, en RGB, para poder INTERPOLAR.
+ *
+ * Hace falta porque el mapa de calor tiene dos formas de pintar y una sola escala:
+ * las manchas (circulos) se colorean con el filtro SVG, que recorre la tabla del
+ * degradado, pero las CONEXIONES son trazos y necesitan un color concreto. Se
+ * interpola sobre las mismas paradas, asi que un trazo y una mancha con el mismo
+ * valor reciben el mismo color.
+ *
+ * Si un color no esta en la tabla (alguien cambia la paleta por un hex), se
+ * devuelve la parada TAL CUAL en vez de interpolar: un color raro es mejor que un
+ * negro por accidente.
+ */
+const RGB = {
+  blue: [ 0, 0, 255 ], cyan: [ 0, 255, 255 ], lime: [ 0, 255, 0 ],
+  yellow: [ 255, 255, 0 ], red: [ 255, 0, 0 ], orange: [ 255, 165, 0 ],
+  white: [ 255, 255, 255 ], black: [ 0, 0, 0 ]
+};
+
+const rgbDe = (color) => {
+  const nombre = String(color).trim().toLowerCase();
+  if (RGB[nombre]) return RGB[nombre];
+  const hex = /^#([0-9a-f]{6})$/.exec(nombre);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return [ (n >> 16) & 255, (n >> 8) & 255, n & 255 ];
+  }
+  return null;
+};
+
+/**
+ * Color de un valor, en la MISMA escala que las manchas.
+ *
+ * `fraccion` es la posicion en la escala (0..1), no el valor: quien llama ya
+ * conoce el rango de la corrida. Por debajo de la primera parada la escala es
+ * plana (todo frio), que es lo que hace que un mapa sin diferencias no salga rojo.
+ */
+export function colorDeValor(fraccion, gradiente = GRADIENTE_ESCALA) {
+  const paradas = paradasOrdenadas(gradiente);
+  if (!paradas.length) return 'blue';
+
+  const f = Math.min(1, Math.max(0, Number(fraccion) || 0));
+  if (f <= paradas[0]) return gradiente[paradas[0]];
+
+  for (let i = 0; i < paradas.length - 1; i++) {
+    const a = paradas[i];
+    const b = paradas[i + 1];
+    if (f <= b) {
+      const desde = gradiente[a];
+      const hasta = gradiente[b];
+      const t = (f - a) / (b - a);
+      const ca = rgbDe(desde);
+      const cb = rgbDe(hasta);
+      if (!ca || !cb) return hasta;
+      const mezcla = ca.map((v, j) => Math.round(v + (cb[j] - v) * t));
+      return `rgb(${mezcla[0]}, ${mezcla[1]}, ${mezcla[2]})`;
+    }
+  }
+
+  return gradiente[paradas[paradas.length - 1]];
+}
+
 // Etiqueta y formato de cada métrica del mapa de calor.
 //
 // Cubre TODAS las que ofrece la paleta. El arnés comprueba que no falte ninguna:
@@ -126,7 +188,13 @@ export const ESCALA_POR_METRICA = {
   reworkTime: { etiqueta: 'Tiempo de reparación', formatea: (v) => formatMilliseconds(v) },
   overtime: { etiqueta: 'Horas extras', formatea: (v) => formatMilliseconds(v) },
   waitTimeCost: { etiqueta: 'Costo de tiempos muertos', formatea: (v) => formatCurrency(v) },
-  resourceQuantity: { etiqueta: 'Cantidad de recursos', formatea: (v) => String(Math.round(v)) }
+  resourceQuantity: { etiqueta: 'Cantidad de recursos', formatea: (v) => String(Math.round(v)) },
+  // TRAFICO: cuantas veces se recorrio cada conexion (y cada figura) en la corrida.
+  // Existe porque el mapa por tareas no puede contestar «por donde pasa el trabajo»:
+  // una linea no tiene tiempo ni costo, solo paso. El motor ya lo cuenta para cada
+  // flujo al elegir la salida (`findNextElements`), asi que la vista de estructura no
+  // necesita tocar el motor.
+  trafico: { etiqueta: 'Tráfico (pasos por la conexión)', formatea: (v) => `${Math.round(v)} pasos` }
 };
 
 /** Escala de una métrica. Cae a una genérica si algún día se añade una nueva. */

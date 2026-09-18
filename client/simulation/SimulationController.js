@@ -8,7 +8,7 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
 import { describeLabor } from './LaborRules.js';
-import { rangoDeValores, opacidadDe, textoDeEscala, gradienteCss, colorFrio, GRADIENTE_ESCALA } from './HeatmapScale.js';
+import { rangoDeValores, opacidadDe, textoDeEscala, gradienteCss, colorFrio, colorDeValor, GRADIENTE_ESCALA } from './HeatmapScale.js';
 import { numerarTareas, etiquetaDe } from './TaskIds.js';
 import {
   COLOR_PLAN, compararPlanes, notasDeEficiencia, fechasUnidas,
@@ -157,6 +157,16 @@ const isSimulatedElement = (element) => {
   if (isLabel(element)) return false;
   return HEATMAP_TYPES.some((type) => is(element, type));
 };
+
+/**
+ * ¿Se le puede pintar una mancha a este elemento?
+ *
+ * Las CONEXIONES entran en el mapa de estructura -se les clona el trazo- pero no
+ * llevan mancha: un circulo sobre una linea no dice nada. Por eso hay dos preguntas
+ * distintas: `isSimulatedElement` (lo que el mapa colorea) y esta (quien ademas puede
+ * recibir un circulo).
+ */
+const esPintable = (element) => isSimulatedElement(element);
 
 export default class SimulationController {
   constructor(canvas, eventBus, simulationPalette, simulationEngine, elementRegistry, overlays, tokenSimulationPalette, notifications, chartPanel, dataTablePanel, matrixLoader) {
@@ -923,6 +933,53 @@ export default class SimulationController {
     // eso no se sabe hasta haber visto todos los valores.
     const pares = [];
 
+    // TRAFICO: una linea no tiene tiempo ni costo, tiene PASOS. Aqui las conexiones
+    // entran en la MISMA lista que las figuras, asi que el rango -y por tanto la
+    // escala- es uno solo: un trazo y una tarea con los mismos pasos salen del mismo
+    // color. Separarlos en dos rangos haria que dos cosas distintas pareciesen
+    // comparables.
+    if (metric === 'trafico') {
+      // OJO CON EL FILTRO: aqui NO se usa `_pintable`, que es el del mapa por tareas
+      // y deja fuera justo lo que esta vista viene a medir. Las conexiones TAMBIEN
+      // entran. Se comprueba «tiene valor acumulable y se puede dibujar», que es
+      // distinto: una tarea lleva mancha y una conexion trazo, pero las dos llevan
+      // trafico, y ese trafico va en la MISMA escala para que se puedan comparar.
+      this.simulationResults.forEach((result, elementId) => {
+        const element = this._elementRegistry.get(elementId);
+        if (!element || isLabel(element)) return;
+        if (!this._esTrafizable(element)) return;
+        pares.push({ element, value: result.executionCount || 0 });
+      });
+
+      // Las conexiones SIN ENTRADA en los resultados tambien cuentan: son justo las
+      // que no se recorrieron, y son el hallazgo de esta vista. Si solo se dibujaran
+      // las que tienen resultado, la rama muerta desapareceria del mapa.
+      const enResultados = new Set(pares.map((p) => p.element.id));
+      this._getFlujosDelDiagrama().forEach((flujo) => {
+        if (!enResultados.has(flujo.id)) pares.push({ element: flujo, value: 0 });
+      });
+
+      const rangoTrafico = rangoDeValores(pares.map((p) => p.value));
+      this._pintarFlujos(pares.filter((p) => is(p.element, 'bpmn:SequenceFlow')), rangoTrafico);
+
+      // Los circulos van SOLO sobre las figuras: la lista de pares mezcla las dos
+      // cosas a proposito (para el rango), pero una linea no lleva mancha.
+      const soloFiguras = pares.filter((p) => !is(p.element, 'bpmn:SequenceFlow'));
+      const dataPointsT = [];
+      soloFiguras.forEach(({ element, value }) => {
+        this._pushPoint(dataPointsT, element, value, opacidadDe(value, rangoTrafico.max, rangoTrafico.uniforme));
+      });
+
+      this.createHeatmap();
+      this._heatmap.gradient(GRADIENTE_ESCALA);
+      this._heatmap.data(dataPointsT).max(rangoTrafico.max || 1).radius(this._radius, this._blur).draw();
+
+      const sinTrafico = pares.filter((p) => p.value <= 0 && is(p.element, 'bpmn:SequenceFlow')).length;
+      if (rangoTrafico.n > 0) this._leyendaEstructura(metric, rangoTrafico, sinTrafico);
+      this.showOverlays(metric);
+      return;
+    }
+
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
         if (is(element, 'bpmn:Task') && !isLabel(element)) {
@@ -1182,6 +1239,131 @@ export default class SimulationController {
       <div class="heatmap-legend-bar" style="background: ${barra};"></div>
       <div class="heatmap-legend-detail">${texto.detalle}</div>
       <div class="heatmap-legend-note">${texto.nota}</div>
+    `;
+  }
+
+  /**
+   * Vista de ESTRUCTURA: el trafico pintado sobre las CONEXIONES, no solo sobre las
+   * figuras.
+   *
+   * POR QUE HACIA FALTA: el mapa por tareas contesta «cuanto cuesta / cuanto espera
+   * esta tarea», pero no «por donde pasa el trabajo». Y una conexion NO TIENE tiempo
+   * ni costo: el unico dato que se acumula para una linea es cuantas veces se recorrio
+   * (lo cuenta el motor en `findNextElements` al elegir la salida). Esto no es el mismo
+   * mapa en otro sitio, es OTRA LECTURA de la misma corrida.
+   *
+   * Los trazos se clonan en la capa de overlays -la misma de los circulos- y NO se
+   * tocan los del diagrama: asi no hay ningun estilo original que guardar y restaurar
+   * mal, y el resaltado de seleccion del Modeler sigue siendo suyo.
+   *
+   * Las conexiones con CERO pasos van aparte, en gris discontinuo y NO en el extremo
+   * frio de la escala. Es el hallazgo mas util de esta vista -una rama que no se
+   * dispara es capacidad que se paga y no se usa- y con el azul se confundiria con
+   * «poco trafico», que es otra cosa.
+   */
+  _pintarFlujos(pares, rango) {
+    this._limpiarFlujos();
+
+    const grupo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    grupo.setAttribute('class', 'heatmap-flows');
+    this._canvas.getLayer('overlays').appendChild(grupo);
+    this._flujosGrupo = grupo;
+
+    const valores = new Map(pares.map((p) => [ p.element.id, p.value ]));
+
+    this._getFlujosDelDiagrama().forEach((flujo) => {
+      const grafico = this._canvas.getGraphics(flujo);
+      if (!grafico || !grafico.getAttribute) return;
+
+      const d = grafico.getAttribute('d');
+      if (!d) return;
+
+      const valor = valores.has(flujo.id) ? valores.get(flujo.id) : 0;
+      const trazo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      trazo.setAttribute('d', d);
+      trazo.setAttribute('fill', 'none');
+      trazo.setAttribute('stroke-linecap', 'round');
+      trazo.setAttribute('stroke-linejoin', 'round');
+      trazo.setAttribute('data-flujo', flujo.id);
+
+      if (valor <= 0) {
+        trazo.setAttribute('class', 'flujo-sin-trafico');
+        trazo.setAttribute('stroke', '#9aa5b1');
+        trazo.setAttribute('stroke-width', '2');
+        trazo.setAttribute('stroke-dasharray', '6 5');
+      } else {
+        const fraccion = rango.uniforme ? 0 : valor / (rango.max || 1);
+        trazo.setAttribute('stroke', colorDeValor(fraccion));
+        trazo.setAttribute('stroke-width', `${4 + 6 * (rango.uniforme ? 0.35 : fraccion)}`);
+        trazo.setAttribute('stroke-opacity', '0.55');
+      }
+
+      grupo.appendChild(trazo);
+    });
+  }
+
+  /** Quita los trazos de la vista de estructura, si los hubiera. */
+  _limpiarFlujos() {
+    if (this._flujosGrupo && this._flujosGrupo.parentNode) {
+      this._flujosGrupo.parentNode.removeChild(this._flujosGrupo);
+    }
+    this._flujosGrupo = null;
+  }
+
+  /** ¿Esta figura puede recibir una mancha? Las conexiones no: solo trazo. */
+  _pintable(element) {
+    return esPintable(element);
+  }
+
+  /**
+   * ¿Este elemento PUEDE llevar tráfico? Figuras y conexiones, pero no etiquetas ni
+   * elementos de otra piscina (un participante no transporta nada).
+   *
+   * Es una pregunta DISTINTA de `_pintable`, y confundirlas fue el primer error de
+   * esta vista: `_pintable` deja fuera las conexiones -a proposito, porque no llevan
+   * mancha- y usarlo para decidir qué tiene tráfico dejaba TODAS las líneas en gris,
+   * como si ninguna se hubiera recorrido. La vista de estructura existe justamente
+   * para las conexiones.
+   */
+  _esTrafizable(element) {
+    return is(element, 'bpmn:SequenceFlow') || esPintable(element);
+  }
+
+  /**
+   * Los flujos que se pueden pintar. Se filtran por su tipo REAL (`bpmn:SequenceFlow`)
+   * y no por «todo lo que tenga trazo»: pintar tambien las asociaciones o los flujos
+   * de mensaje haria parecer que el trabajo se mueve por donde no se mueve.
+   */
+  _getFlujosDelDiagrama() {
+    return this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:SequenceFlow'));
+  }
+
+  /**
+   * Leyenda de la vista de estructura: la misma escala, mas el aviso de lo que NO se
+   * recorrio. Sin ese aviso, una linea gris se lee como «sin datos» en vez de como
+   * «por aqui no paso nada», que es el hallazgo.
+   */
+  _leyendaEstructura(metric, rango, sinTrafico) {
+    const contenedor = this._canvas.getContainer();
+    let leyenda = contenedor.querySelector('.heatmap-legend');
+    if (!leyenda) {
+      leyenda = domify('<div class="heatmap-legend"></div>');
+      contenedor.appendChild(leyenda);
+    }
+
+    const texto = textoDeEscala(metric, rango);
+    const barra = texto.uniforme ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA);
+    const aviso = sinTrafico > 0
+      ? `<div class="heatmap-legend-warn"><strong>${sinTrafico}</strong> conexión(es) sin tráfico, en gris`
+        + ' discontinuo: por ahí no pasó el trabajo. Una rama que no se usa es capacidad que se paga y no se aprovecha.</div>'
+      : '';
+
+    leyenda.innerHTML = `
+      <div class="heatmap-legend-title">Estructura · ${texto.titulo}</div>
+      <div class="heatmap-legend-bar" style="background: ${barra};"></div>
+      <div class="heatmap-legend-detail">${texto.detalle}</div>
+      <div class="heatmap-legend-note">Trazos = conexiones · Círculos = figuras. ${texto.nota}</div>
+      ${aviso}
     `;
   }
 
@@ -2754,6 +2936,9 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       this._heatmap.destroy();
       this._heatmap = null;
     }
+    // Los trazos de la vista de estructura se van con el mapa: si quedaran, cambiar
+    // de metrica dejaria las lineas pintadas de una lectura que ya no es la activa.
+    this._limpiarFlujos();
     const contenedor = this._canvas.getContainer();
     domClasses(contenedor).remove('heatmap-shown');
     const leyenda = contenedor.querySelector('.heatmap-legend');

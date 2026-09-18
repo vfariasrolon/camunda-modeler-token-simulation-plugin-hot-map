@@ -224,6 +224,38 @@
     overflow: visible !important;
 }
 
+/* TRAZOS DE LA VISTA DE ESTRUCTURA.
+   Se clonan en la capa de overlays, asi que heredan el zoom del diagrama sin tocar
+   los trazos originales. `pointer-events: none` para no interceptar la seleccion ni
+   el zoom: son una lectura, no un control. */
+.heatmap-flows {
+    pointer-events: none;
+}
+
+.heatmap-flows path {
+    transition: stroke-width .12s ease;
+}
+
+/* Lo que NO se recorrio. Va con su propio color y no con el extremo frio de la
+   escala: «poco trafico» y «ningun trafico» son cosas distintas, y una rama muerta
+   es el hallazgo que justifica esta vista. */
+.heatmap-flows path.flujo-sin-trafico {
+    opacity: .9;
+}
+
+/* Aviso de las conexiones sin trafico en la leyenda. Va destacado porque es la
+   lectura que el mapa por tareas no puede dar. */
+.heatmap-legend-warn {
+    margin-top: 8px;
+    padding: 7px 9px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #7c2d12;
+    background: #fff7ed;
+    border-left: 3px solid #c2410c;
+    border-radius: 4px;
+}
+
 .heatmap-shown .heatmap-canvas {
     position: absolute;
     top: 0;

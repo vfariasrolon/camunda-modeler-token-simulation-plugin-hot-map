@@ -128,7 +128,7 @@ window.addEventListener('error', (e) => {
   const checks = (salida.match(/^\s+(OK|FALLO)\s/gm) || []).length;
 
   console.log(`${paso ? 'OK   ' : 'FALLA'}  ${caso.nombre}  (${checks} comprobaciones)`);
-  if (!paso) salida.split('\n').filter((l) => l.includes('FALLO') || l.includes('ERROR')).forEach((l) => console.log(`        ${l.trim()}`));
+  if (!paso) salida.split('\n').filter((l) => l.includes('FALLO') || l.includes('ERROR') || l.includes('DIAG')).forEach((l) => console.log(`        ${l.trim()}`));
 }
 
 console.log('');
