@@ -5,6 +5,9 @@
  * webpack para el plugin.
  */
 import DataTablePanel from '@plugin/simulation/DataTablePanel.js';
+// El mismo lector que usa el motor, para comprobar el MODELO y no la pantalla: es la
+// unica forma de saber si el autoguardado llego de verdad al diagrama.
+import { getSimulationData } from '@plugin/simulation/util.js';
 
 const resultados = [];
 let fallos = 0;
@@ -36,19 +39,29 @@ const aCsv = (rows) => rows.map((row) => row.map(csvEscape).join(',')).join('\r\
 const PROPS = 'camunda:Properties';
 const esProps = (t) => t === PROPS;
 
+// Todo objeto de moddle expone `get(nombre)`, y el codigo navega con eso:
+// businessObject.get('extensionElements').get('values'). Sin `get` en el doble,
+// setSimulationData() revienta y el autoguardado no se puede probar de verdad.
+const conGet = (obj) => Object.assign(obj, { get(prop) { return this[prop]; } });
+
 function elemento(id, name, simData, tipo) {
   const t = tipo || 'bpmn:Task';
-  const bo = {
+  const bo = conGet({
     name,
     $instanceOf: (x) => x === t || esProps(x)
-  };
+  });
   if (simData !== undefined) {
-    bo.extensionElements = {
-      values: [ {
+    // Cada nivel del arbol es un objeto de moddle y setSimulationData() navega por los
+    // tres con get(): extensionElements.get('values') y properties.get('values').
+    bo.extensionElements = conGet({
+      values: [ conGet({
+        // `$type` ademas de `$instanceOf`: el codigo busca las Properties por `$type`,
+        // y sin el crearia una SEGUNDA camunda:Properties en cada guardado.
+        $type: PROPS,
         $instanceOf: esProps,
-        values: [ { name: 'simulationData', value: JSON.stringify(simData) } ]
-      } ]
-    };
+        values: [ conGet({ name: 'simulationData', value: JSON.stringify(simData) }) ]
+      }) ]
+    });
   }
   return { id, businessObject: bo };
 }
@@ -64,18 +77,35 @@ function registro(elementos) {
 
 const notificaciones = [];
 
+// Cada llamada a modeling.updateProperties. Sirve para comprobar QUE se escribio de
+// verdad al autoguardar; el modelo final se mira con getSimulationData().
+const escriturasModelo = [];
+const olvidarEscrituras = () => { escriturasModelo.length = 0; };
+
 function crearPanel(elementos) {
   const canvas = { getContainer: () => document.getElementById('lienzo') };
   const eventBus = { on: () => {}, fire: () => {} };
   const overlays = { add: () => 'ov-1', remove: () => {} };
   const selection = { get: () => [] };
-  const modeling = { updateProperties: () => {} };
-  const bpmnFactory = { create: (tipo, attrs) => Object.assign({ $type: tipo, $instanceOf: () => true }, attrs) };
+  const modeling = {
+    updateProperties: (el, props) => {
+      escriturasModelo.push({ el, props });
+      Object.assign(el.businessObject, props);
+    }
+  };
+  const bpmnFactory = {
+    create: (tipo, attrs) => Object.assign(
+      { $type: tipo, $instanceOf: () => true, get(prop) { return this[prop]; } }, attrs
+    )
+  };
 
   const panel = new DataTablePanel(
     canvas, eventBus, registro(elementos), modeling, bpmnFactory,
     { showNotification: (n) => notificaciones.push(n) },
-    { triggerAction: () => {} }, overlays, selection
+    // `trigger`, no `triggerAction`: es lo que llama _ofrecerDesactivarModo. Con el
+    // nombre equivocado el boton «Desactivar modo y reintentar» lanzaba un TypeError
+    // y el reintento no se ejecutaba nunca.
+    { trigger: () => {} }, overlays, selection
   );
   panel._init();
   return panel;
@@ -492,6 +522,132 @@ error = null;
 try { panel._applyCsv(csvFRviejo.replace(',0.1,', ',1.5,')); } catch (e) { error = e.message; }
 check('CSV heredado: un 1,5 en «tasa_fallo» se explica como fracción',
   Boolean(error) && /fracción/.test(error), error);
+
+// --- 6c. Autoguardado al SALIR del campo ------------------------------------
+//
+// Lo que se prueba aqui es que NO hace falta pulsar «Guardar todo»: al dispararse
+// `change` -que en una caja de texto significa «salgo del campo»- la tarea tiene que
+// quedar escrita en el diagrama, con la casilla en verde como unico aviso. Y que una
+// fila con el valor mal NO bloquea el guardado de otra fila que si esta bien.
+panel._activeTab = 'tasks';
+panel._renderTasks();
+olvidarEscrituras();
+
+escribir('Task_1', 'processingTime.value', 33);
+const guardadoTask1 = getSimulationData(panel._elementRegistry.get('Task_1'));
+check('Autoguardado: al salir del campo la tarea ya está en el diagrama',
+  guardadoTask1.processingTime.value === 33,
+  JSON.stringify(guardadoTask1.processingTime));
+check('Autoguardado: no hizo falta pulsar «Guardar todo»',
+  escriturasModelo.length === 1 && escriturasModelo[0].el.id === 'Task_1',
+  `${escriturasModelo.length} escrituras`);
+
+check('Autoguardado: la casilla editada se pinta en verde',
+  celda('Task_1', 'processingTime.value').classList.contains('guardado')
+  && !celda('Task_1', 'processingTime.value').classList.contains('invalido'),
+  celda('Task_1', 'processingTime.value').className);
+
+check('Autoguardado: las casillas que no se tocaron no se pintan',
+  !celda('Task_1', 'reworkTime.value').classList.contains('guardado')
+  && !celda('Task_2', 'processingTime.value').classList.contains('guardado'));
+
+// Se guarda la FILA ENTERA, no solo el campo tocado: lo que se ve en las demas
+// casillas de esa fila tiene que estar tambien en el diagrama, o el mapa de calor
+// simularia con valores que ya no son los de pantalla.
+escribir('Task_1', 'reworkTime.value', 7);
+const escritoTask1 = JSON.parse(escriturasModelo[escriturasModelo.length - 1]
+  .props.extensionElements.values[0].values[0].value);
+check('Autoguardado: escribe la fila entera, no solo la casilla tocada',
+  escritoTask1.processingTime.value === 33 && escritoTask1.reworkTime.value === 7,
+  `${escritoTask1.processingTime.value} / ${escritoTask1.reworkTime.value}`);
+
+// Un valor invalido: rojo, sin escribir y SIN re-renderizar (si el panel reaccionara
+// reconstruyendo la tabla, la casilla se rellenaria sola con el valor viejo y el usuario
+// perderia lo que estaba escribiendo).
+// Se vacia la casilla porque es el estado real de «estoy reescribiendo esto»: un
+// <input type=number> no admite texto, asi que el caso a medias es el vacio.
+escribir('Task_1', 'processingTime.value', '');
+check('Autoguardado: una casilla vacía deja el campo en rojo y sin guardar',
+  celda('Task_1', 'processingTime.value').classList.contains('invalido')
+  && !celda('Task_1', 'processingTime.value').classList.contains('guardando'),
+  celda('Task_1', 'processingTime.value').className);
+check('Autoguardado: la casilla no se rellena sola ni se pierde lo que había',
+  celda('Task_1', 'processingTime.value').value === ''
+  && getSimulationData(panel._elementRegistry.get('Task_1')).processingTime.value === 33,
+  celda('Task_1', 'processingTime.value').value);
+
+// LA CLAVE: la fila roja no bloquea a las demas.
+escribir('Task_2', 'processingTime.value', 44);
+check('Autoguardado: una fila en rojo no impide guardar otra fila',
+  getSimulationData(panel._elementRegistry.get('Task_2')).processingTime.value === 44
+  && celda('Task_2', 'processingTime.value').classList.contains('guardado'),
+  JSON.stringify(getSimulationData(panel._elementRegistry.get('Task_2')).processingTime));
+
+// Y una fila roja NO impide exportar el CSV, que sale del modelo: el CSV lleva el
+// ultimo valor bueno guardado, no el texto invalido que hay en pantalla.
+const csvConRojos = panel._csvForActiveTab();
+check('Autoguardado: el CSV exporta lo GUARDADO, no lo que hay a medio escribir',
+  String(csvConRojos.find((r) => r[0] === 'Task_1')[csvConRojos[0].indexOf('tiempo_proceso')]) === '33',
+  String(csvConRojos.find((r) => r[0] === 'Task_1')[csvConRojos[0].indexOf('tiempo_proceso')]));
+
+// Al corregir, la casilla deja el rojo y vuelve a quedar guardada.
+escribir('Task_1', 'processingTime.value', 35);
+check('Autoguardado: al corregir el valor, la casilla pasa a verde',
+  celda('Task_1', 'processingTime.value').classList.contains('guardado')
+  && !celda('Task_1', 'processingTime.value').classList.contains('invalido')
+  && getSimulationData(panel._elementRegistry.get('Task_1')).processingTime.value === 35);
+
+// Elegir piscina habilita la cantidad SIN re-renderizar (el autoguardado no
+// re-renderiza, asi que si no se hiciera aqui quedaria muerta para siempre).
+check('Autoguardado: sin piscina la cantidad está deshabilitada',
+  celda('Task_1', 'resources.quantityRequired').disabled);
+escribir('Task_1', 'resources.pool', 'Soldadores');
+check('Autoguardado: elegir piscina habilita la cantidad sin re-renderizar',
+  !celda('Task_1', 'resources.quantityRequired').disabled
+  && getSimulationData(panel._elementRegistry.get('Task_1')).resources.pool === 'Soldadores');
+
+// Modo solo lectura (Token Simulation): el panel no puede dar por guardado lo que no
+// esta guardado. Se sustituye `modeling` por uno que lanza lo mismo que DisableModeling.
+//
+// OJO con lo que se comprueba: `setSimulationData` asigna el valor en el objeto moddle
+// ANTES de llamar a updateProperties, asi que el valor queda en MEMORIA aunque la
+// escritura no se confirme. Es el mismo comportamiento que ya tenia «Guardar todo», no
+// algo que traiga el autoguardado; por eso aqui se comprueba lo que si importa: que el
+// panel NO lo de por guardado, que ofrezca desactivar el modo, y que al desactivarlo la
+// escritura se confirme sin haber perdido nada.
+const escriturasAntesDeLeer = escriturasModelo.length;
+const modelingBueno = panel._modeling;
+panel._modeling = { updateProperties: () => { throw new Error('model is read-only'); } };
+escribir('Task_3', 'processingTime.value', 9);
+
+check('Autoguardado en solo lectura: NO se confirma ninguna escritura',
+  escriturasModelo.length === escriturasAntesDeLeer,
+  `${escriturasModelo.length - escriturasAntesDeLeer} confirmadas`);
+check('Autoguardado en solo lectura: la casilla se queda en amarillo, sin verde falso',
+  celda('Task_3', 'processingTime.value').classList.contains('guardando')
+  && !celda('Task_3', 'processingTime.value').classList.contains('guardado')
+  && !celda('Task_3', 'processingTime.value').classList.contains('invalido'),
+  celda('Task_3', 'processingTime.value').className);
+check('Autoguardado en solo lectura: se ofrece desactivar el modo',
+  Boolean(document.querySelector('.btn-desactivar')));
+
+// Y al desactivarlo se reintenta ESA fila: la escritura se confirma.
+panel._modeling = modelingBueno;
+document.querySelector('.btn-desactivar').click();
+check('Autoguardado en solo lectura: al desactivar el modo se reintenta y confirma',
+  escriturasModelo.length > escriturasAntesDeLeer
+  && getSimulationData(panel._elementRegistry.get('Task_3')).processingTime.value === 9
+  && celda('Task_3', 'processingTime.value').classList.contains('guardado'),
+  JSON.stringify(getSimulationData(panel._elementRegistry.get('Task_3')).processingTime));
+check('Autoguardado en solo lectura: la oferta desaparece después de reintentar',
+  !document.querySelector('.btn-desactivar'));
+
+// El botón de guardar todo sigue estando y sigue guardando lo que quede pendiente.
+panel._renderTasks();
+escribir('Task_2', 'reworkTime.value', 11);
+panel.save();
+check('«Guardar todo» sigue vivo y guarda de una vez',
+  getSimulationData(panel._elementRegistry.get('Task_2')).reworkTime.value === 11);
 
 // --- 7. pestaña Global: tabla de lotes ------------------------------------
 

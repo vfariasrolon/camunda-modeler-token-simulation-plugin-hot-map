@@ -1010,7 +1010,7 @@ export default class DataTablePanel {
                 <td>${p('processingTime.mode', d.processingTime.mode, 'moda')}</td>
                 <td>${p('processingTime.max', d.processingTime.max, 'máx')}</td>
                 <td><span class="pct">
-                  <input type="number" step="any" min="0" max="100" class="cell"
+                  <input type="number" step="any" min="0" max="100" class="cell mini"
                     data-field="failureRate" value="${pctATexto(d.failureRate)}">
                   <span class="pct-signo">%</span>
                 </span></td>
@@ -1070,6 +1070,7 @@ export default class DataTablePanel {
 
     this._bindBarrera();
     this._bindAyudaDeColumnas();
+    this._bindAutoguardado();
   }
 
   /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
@@ -1139,6 +1140,111 @@ export default class DataTablePanel {
       domEvent.bind(select, 'change', sincronizar);
       sincronizar();
     });
+  }
+
+  /**
+   * Enlaza el AUTOGUARDADO de la pestaña Tareas: al salir de un campo se guarda su
+   * tarea, sin pasar por «Guardar todo».
+   *
+   * Por que `change` y no `input`: en una caja de texto `change` salta al SALIR del
+   * campo, que es justo lo que se pidio (no guardar en cada tecla, cuando el valor
+   * esta a medias y es invalido), y en un desplegable o una casilla salta al elegir,
+   * sin esperar a nada.
+   *
+   * Por que SOLO en Tareas: una fila de esta tabla se valida sola -sus campos no
+   * dependen de las demas-, y eso es lo que permite guardarla mientras otra fila esta
+   * a medio escribir. En Flujos, en cambio, el reparto tiene que sumar 100 % ENTRE
+   * VARIAS filas: guardar una sola dejaria el descuadre a proposito. En Piscinas los
+   * nombres no se pueden repetir. Esas dos siguen con «Guardar todo».
+   */
+  _bindAutoguardado() {
+    this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
+      // Elegir piscina habilita la cantidad. Antes eso solo se veia al guardar y
+      // re-renderizar; el autoguardado NO re-renderiza (si lo hiciera perderia el
+      // foco y lo que se este tecleando), asi que sin esto la cantidad se quedaria
+      // muerta para siempre.
+      const selPool = tr.querySelector('[data-field="resources.pool"]');
+      if (selPool) {
+        domEvent.bind(selPool, 'change', () => {
+          const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
+          if (!cant) return;
+          cant.disabled = selPool.value === '';
+          cant.title = cant.disabled ? 'Elige primero una piscina' : '';
+        });
+      }
+
+      tr.querySelectorAll('[data-field]').forEach((campo) => {
+        domEvent.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
+      });
+    });
+  }
+
+  /**
+   * Guarda UNA fila de Tareas y pinta la casilla con el resultado del intento.
+   *
+   * El color es el aviso, y sin el el autoguardado seria peor que no tenerlo: no se
+   * sabria si lo escrito llego al diagrama o se quedo solo en pantalla.
+   *   amarillo -> se esta comprobando
+   *   verde    -> el valor esta ya en el diagrama
+   *   rojo     -> NO se guardo, y el motivo sale en la barra de estado
+   * El amarillo se ve de verdad cuando el guardado NO puede terminar (modo Token
+   * Simulation activo): al guardar bien dura un instante, porque lectura y escritura
+   * son la misma tarea del navegador y no se llega a pintar.
+   *
+   * El verde se queda: mientras no se vuelva a tocar el campo significa «esto que se ve
+   * aqui es lo que hay guardado». Vuelve a amarillo en cuanto se edita otra vez.
+   */
+  _autoguardarFila(tr, campo) {
+    domClasses(campo).remove('invalido');
+    domClasses(campo).remove('guardado');
+    domClasses(campo).add('guardando');
+
+    let fila;
+    try {
+      fila = this._datosDeFila(tr);
+    } catch (err) {
+      // Se queda en rojo y SIN guardar, y el texto del usuario no se toca para que
+      // pueda corregirlo. Una fila invalida no bloquea a las demas.
+      domClasses(campo).remove('guardando');
+      domClasses(campo).add('invalido');
+      this._setStatus(err.message, 'error');
+      return;
+    }
+
+    if (!fila) {
+      domClasses(campo).remove('guardando');
+      return;
+    }
+
+    try {
+      setSimulationData(fila.element, fila.data, {
+        modeling: this._modeling,
+        bpmnFactory: this._bpmnFactory
+      });
+    } catch (err) {
+      const soloLectura = /read-only/i.test(String(err && err.message));
+
+      if (soloLectura) {
+        // Amarillo: NO esta guardado y hace falta una accion. El boton desactiva el
+        // modo y reintenta ESTA fila, que se vuelve a leer entonces (por si mientras
+        // tanto se escribio algo mas). Sin notificacion: saltaria en cada campo.
+        this._ofrecerDesactivarModo(
+          'El diagrama está en solo lectura porque el modo Token Simulation está activo.'
+          + ' Desactívalo y lo que has escrito se guardará tal cual.',
+          () => this._autoguardarFila(tr, campo)
+        );
+        return;
+      }
+
+      domClasses(campo).remove('guardando');
+      domClasses(campo).add('invalido');
+      this._setStatus(`No se pudo guardar: ${err.message || err}`, 'error');
+      return;
+    }
+
+    domClasses(campo).remove('guardando');
+    domClasses(campo).add('guardado');
+    this._setStatus(`Guardado: ${this._label(fila.element)}.`, 'ok');
   }
 
   /**
@@ -1880,6 +1986,176 @@ export default class DataTablePanel {
   }
 
   /**
+   * Lee UNA fila de la tabla de Tareas y devuelve `{ element, data }`, o null si la
+   * fila no tiene elemento.
+   *
+   * Existe separado de `_collect` por el AUTOGUARDADO: `_collect` lee la pestaña
+   * ENTERA y lanza al primer problema, asi que una fila a medio escribir -una caja de
+   * texto vacia mientras se teclea- bloquearia el guardado de otra fila que si esta
+   * bien. Aqui cada fila se lee y se valida por su cuenta.
+   */
+  _datosDeFila(tr) {
+    const el = this._elementRegistry.get(tr.dataset.elId);
+    if (!el) return null;
+
+    const name = this._label(el);
+    const val = (f) => {
+      const input = tr.querySelector(`[data-field="${f}"]`);
+      return input ? input.value : '';
+    };
+    const num = (f, etiqueta) => this._num(val(f), `${name} · ${etiqueta}`);
+
+    const distribucion = val('processingTime.distribution') || 'fixed';
+    const unit = val('processingTime.unit');
+    const unitRetrabajo = val('reworkTime.unit');
+
+    // La casilla esta en % (0-100) pero el motor guarda la FRACCION (0-1). La
+    // conversion vive en el unico sitio que lee la casilla, para que no haya dos
+    // verdades sobre que significa el numero que hay escrito.
+    const failurePct = num('failureRate', 'tasa de fallo (%)');
+    if (failurePct < 0 || failurePct > 100) {
+      throw new Error(
+        `${name}: la tasa de fallo debe estar entre 0 y 100 % (has puesto ${failurePct})`
+      );
+    }
+    const failure = failurePct / 100;
+
+    // El tiempo de proceso se lee SEGUN la distribucion elegida: con
+    // triangular mandan min/moda/max y el campo "Tiempo" no se lee en
+    // absoluto. Leer los dos seria peor que no leer ninguno: se guardaria
+    // un valor que el motor va a ignorar.
+    let processingTime;
+    if (distribucion === 'triangular') {
+      const min = num('processingTime.min', 'mínimo');
+      const mode = num('processingTime.mode', 'moda');
+      const max = num('processingTime.max', 'máximo');
+
+      if (!(min <= mode && mode <= max)) {
+        throw new Error(
+          `${name}: en la distribución triangular debe cumplirse mínimo ≤ moda ≤ máximo `
+          + `(has puesto ${min}, ${mode}, ${max})`
+        );
+      }
+      processingTime = { distribution: 'triangular', min, mode, max, unit };
+    } else {
+      const value = num('processingTime.value', 'tiempo de proceso');
+      if (value < 0) throw new Error(`${name}: el tiempo de proceso no puede ser negativo`);
+      processingTime = { distribution: 'fixed', value, unit };
+    }
+
+    const reworkValue = num('reworkTime.value', 'retrabajo');
+    if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
+
+    // Recurso: '(ninguno)' deja el campo vacio, que es lo que el motor lee
+    // como "sin restriccion de recursos".
+    const pool = val('resources.pool');
+    const cantRaw = val('resources.quantityRequired');
+    let recurso = null;
+    if (pool) {
+      const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `${name} · cantidad de recurso`);
+      if (!(cantidad >= 1)) {
+        throw new Error(`${name}: la cantidad de recurso debe ser un número mayor o igual que 1`);
+      }
+      if (!this._getPools().some((p) => p.name === pool)) {
+        throw new Error(
+          `${name}: la piscina «${pool}» no está dada de alta. Créala en la pestaña Recursos antes de asignarla.`
+        );
+      }
+      recurso = { pool, quantityRequired: cantidad };
+    }
+
+    const current = this._taskData(el);
+    const datos = {
+      ...current,
+      processingTime,
+      // Se conserva la distribucion del retrabajo que hubiera: la tabla
+      // todavia no la edita, y forzarla a "fixed" destruiria un triangular
+      // configurado. Mismo error que tenia el modal del lapiz.
+      reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
+      failureRate: failure
+    };
+    // delete y no null: el motor comprueba `data.resources && data.resources.pool`,
+    // asi que un objeto con pool vacio pasaria el primer filtro. Ademas el
+    // JSON no arrastra claves muertas.
+    if (recurso) datos.resources = recurso;
+    else delete datos.resources;
+
+    // Frecuencia y barrera. `_taskData` devuelve los valores por defecto para
+    // poder pintarlos, asi que hay que BORRARLOS del resultado: si no, cada
+    // tarea guardada arrastraria un `frequency: "token"` y una barrera que
+    // nunca se pidio, y el XML engordaria en cada guardado.
+    const frecuencia = val('frequency') === 'lot' ? 'lot' : 'token';
+
+    if (frecuencia === 'lot') {
+      const disp = num('barrier.availableProbability', 'disponibilidad de la barrera');
+      if (disp < 0 || disp > 1) {
+        throw new Error(`${name}: la disponibilidad de la barrera debe estar entre 0 y 1`);
+      }
+      const esperaMin = num('barrier.waitMin', 'espera mínima de la barrera');
+      const esperaModa = num('barrier.waitMode', 'espera modal de la barrera');
+      const esperaMax = num('barrier.waitMax', 'espera máxima de la barrera');
+      if (!(esperaMin <= esperaModa && esperaModa <= esperaMax)) {
+        throw new Error(
+          `${name}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo `
+          + `(has puesto ${esperaMin}, ${esperaModa}, ${esperaMax})`
+        );
+      }
+      const tolerancia = num('barrier.toleranceMinutes', 'tolerancia de la barrera');
+      if (tolerancia < 0) throw new Error(`${name}: la tolerancia no puede ser negativa`);
+
+      datos.frequency = 'lot';
+      datos.barrier = {
+        availableProbability: disp,
+        waitMin: esperaMin,
+        waitMode: esperaModa,
+        waitMax: esperaMax,
+        toleranceMinutes: tolerancia
+      };
+    } else {
+      // Una tarea por token no tiene barrera: el motor ni la lee.
+      delete datos.frequency;
+      delete datos.barrier;
+    }
+
+    // CARGA FISICA. Una casilla vacia se guarda como AUSENTE, no como 0: un 0
+    // dice «esta tarea no mueve peso» y el vacio dice «no lo sabemos», y el
+    // diagnostico de datos los distingue. Las claves vacias se OMITEN en vez de
+    // guardarse como `null` (un JSON con nulls es mas dificil de leer a mano y
+    // el motor los trataria igual, pero ensucia el XML).
+    const cargaOpcional = (campo, etiqueta) => {
+      const bruto = val(`carga.${campo}`);
+      if (String(bruto).trim() === '') return undefined;
+      const n = this._num(bruto, `${name} · ${etiqueta}`);
+      if (n < 0) throw new Error(`${name}: ${etiqueta} no puede ser negativo`);
+      return n;
+    };
+    const carga = {};
+    const masa = cargaOpcional('masaCargadaKg', 'masa cargada');
+    const arrastre = cargaOpcional('masaArrastradaKg', 'masa arrastrada');
+    const distancia = cargaOpcional('distanciaM', 'distancia');
+    if (masa !== undefined) carga.masaCargadaKg = masa;
+    if (arrastre !== undefined) carga.masaArrastradaKg = arrastre;
+    if (distancia !== undefined) carga.distanciaM = distancia;
+
+    delete datos.carga;
+    if (Object.keys(carga).length) datos.carga = carga;
+
+    // HABILIDAD exigida. Se admite una o varias separadas por comas, y se
+    // guarda `habilidad` (singular) cuando es una sola porque es el caso
+    // comun y asi el XML queda legible.
+    const habilidadBruta = String(val('habilidad') == null ? '' : val('habilidad')).trim();
+    delete datos.habilidad;
+    delete datos.habilidades;
+    if (habilidadBruta) {
+      const lista = habilidadBruta.split(',').map((h) => h.trim()).filter(Boolean);
+      if (lista.length === 1) datos.habilidad = lista[0];
+      else if (lista.length > 1) datos.habilidades = lista;
+    }
+
+    return { element: el, data: datos };
+  }
+
+  /**
    * Reune los cambios de la pestaña activa. Lanza Error con el primer problema
    * encontrado para no escribir datos a medias.
    */
@@ -1888,164 +2164,8 @@ export default class DataTablePanel {
 
     if (this._activeTab === 'tasks') {
       this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
-        const el = this._elementRegistry.get(tr.dataset.elId);
-        if (!el) return;
-
-        const name = this._label(el);
-        const val = (f) => {
-          const input = tr.querySelector(`[data-field="${f}"]`);
-          return input ? input.value : '';
-        };
-        const num = (f, etiqueta) => this._num(val(f), `${name} · ${etiqueta}`);
-
-        const distribucion = val('processingTime.distribution') || 'fixed';
-        const unit = val('processingTime.unit');
-        const unitRetrabajo = val('reworkTime.unit');
-
-        // La casilla esta en % (0-100) pero el motor guarda la FRACCION (0-1). La
-        // conversion vive en el unico sitio que lee la casilla, para que no haya dos
-        // verdades sobre que significa el numero que hay escrito.
-        const failurePct = num('failureRate', 'tasa de fallo (%)');
-        if (failurePct < 0 || failurePct > 100) {
-          throw new Error(
-            `${name}: la tasa de fallo debe estar entre 0 y 100 % (has puesto ${failurePct})`
-          );
-        }
-        const failure = failurePct / 100;
-
-        // El tiempo de proceso se lee SEGUN la distribucion elegida: con
-        // triangular mandan min/moda/max y el campo "Tiempo" no se lee en
-        // absoluto. Leer los dos seria peor que no leer ninguno: se guardaria
-        // un valor que el motor va a ignorar.
-        let processingTime;
-        if (distribucion === 'triangular') {
-          const min = num('processingTime.min', 'mínimo');
-          const mode = num('processingTime.mode', 'moda');
-          const max = num('processingTime.max', 'máximo');
-
-          if (!(min <= mode && mode <= max)) {
-            throw new Error(
-              `${name}: en la distribución triangular debe cumplirse mínimo ≤ moda ≤ máximo `
-              + `(has puesto ${min}, ${mode}, ${max})`
-            );
-          }
-          processingTime = { distribution: 'triangular', min, mode, max, unit };
-        } else {
-          const value = num('processingTime.value', 'tiempo de proceso');
-          if (value < 0) throw new Error(`${name}: el tiempo de proceso no puede ser negativo`);
-          processingTime = { distribution: 'fixed', value, unit };
-        }
-
-        const reworkValue = num('reworkTime.value', 'retrabajo');
-        if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
-
-        // Recurso: '(ninguno)' deja el campo vacio, que es lo que el motor lee
-        // como "sin restriccion de recursos".
-        const pool = val('resources.pool');
-        const cantRaw = val('resources.quantityRequired');
-        let recurso = null;
-        if (pool) {
-          const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `${name} · cantidad de recurso`);
-          if (!(cantidad >= 1)) {
-            throw new Error(`${name}: la cantidad de recurso debe ser un número mayor o igual que 1`);
-          }
-          if (!this._getPools().some((p) => p.name === pool)) {
-            throw new Error(
-              `${name}: la piscina «${pool}» no está dada de alta. Créala en la pestaña Recursos antes de asignarla.`
-            );
-          }
-          recurso = { pool, quantityRequired: cantidad };
-        }
-
-        const current = this._taskData(el);
-        const datos = {
-          ...current,
-          processingTime,
-          // Se conserva la distribucion del retrabajo que hubiera: la tabla
-          // todavia no la edita, y forzarla a "fixed" destruiria un triangular
-          // configurado. Mismo error que tenia el modal del lapiz.
-          reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
-          failureRate: failure
-        };
-        // delete y no null: el motor comprueba `data.resources && data.resources.pool`,
-        // asi que un objeto con pool vacio pasaria el primer filtro. Ademas el
-        // JSON no arrastra claves muertas.
-        if (recurso) datos.resources = recurso;
-        else delete datos.resources;
-
-        // Frecuencia y barrera. `_taskData` devuelve los valores por defecto para
-        // poder pintarlos, asi que hay que BORRARLOS del resultado: si no, cada
-        // tarea guardada arrastraria un `frequency: "token"` y una barrera que
-        // nunca se pidio, y el XML engordaria en cada guardado.
-        const frecuencia = val('frequency') === 'lot' ? 'lot' : 'token';
-
-        if (frecuencia === 'lot') {
-          const disp = num('barrier.availableProbability', 'disponibilidad de la barrera');
-          if (disp < 0 || disp > 1) {
-            throw new Error(`${name}: la disponibilidad de la barrera debe estar entre 0 y 1`);
-          }
-          const esperaMin = num('barrier.waitMin', 'espera mínima de la barrera');
-          const esperaModa = num('barrier.waitMode', 'espera modal de la barrera');
-          const esperaMax = num('barrier.waitMax', 'espera máxima de la barrera');
-          if (!(esperaMin <= esperaModa && esperaModa <= esperaMax)) {
-            throw new Error(
-              `${name}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo `
-              + `(has puesto ${esperaMin}, ${esperaModa}, ${esperaMax})`
-            );
-          }
-          const tolerancia = num('barrier.toleranceMinutes', 'tolerancia de la barrera');
-          if (tolerancia < 0) throw new Error(`${name}: la tolerancia no puede ser negativa`);
-
-          datos.frequency = 'lot';
-          datos.barrier = {
-            availableProbability: disp,
-            waitMin: esperaMin,
-            waitMode: esperaModa,
-            waitMax: esperaMax,
-            toleranceMinutes: tolerancia
-          };
-        } else {
-          // Una tarea por token no tiene barrera: el motor ni la lee.
-          delete datos.frequency;
-          delete datos.barrier;
-        }
-
-        // CARGA FISICA. Una casilla vacia se guarda como AUSENTE, no como 0: un 0
-        // dice «esta tarea no mueve peso» y el vacio dice «no lo sabemos», y el
-        // diagnostico de datos los distingue. Las claves vacias se OMITEN en vez de
-        // guardarse como `null` (un JSON con nulls es mas dificil de leer a mano y
-        // el motor los trataria igual, pero ensucia el XML).
-        const cargaOpcional = (campo, etiqueta) => {
-          const bruto = val(`carga.${campo}`);
-          if (String(bruto).trim() === '') return undefined;
-          const n = this._num(bruto, `${name} · ${etiqueta}`);
-          if (n < 0) throw new Error(`${name}: ${etiqueta} no puede ser negativo`);
-          return n;
-        };
-        const carga = {};
-        const masa = cargaOpcional('masaCargadaKg', 'masa cargada');
-        const arrastre = cargaOpcional('masaArrastradaKg', 'masa arrastrada');
-        const distancia = cargaOpcional('distanciaM', 'distancia');
-        if (masa !== undefined) carga.masaCargadaKg = masa;
-        if (arrastre !== undefined) carga.masaArrastradaKg = arrastre;
-        if (distancia !== undefined) carga.distanciaM = distancia;
-
-        delete datos.carga;
-        if (Object.keys(carga).length) datos.carga = carga;
-
-        // HABILIDAD exigida. Se admite una o varias separadas por comas, y se
-        // guarda `habilidad` (singular) cuando es una sola porque es el caso
-        // comun y asi el XML queda legible.
-        const habilidadBruta = String(val('habilidad') == null ? '' : val('habilidad')).trim();
-        delete datos.habilidad;
-        delete datos.habilidades;
-        if (habilidadBruta) {
-          const lista = habilidadBruta.split(',').map((h) => h.trim()).filter(Boolean);
-          if (lista.length === 1) datos.habilidad = lista[0];
-          else if (lista.length > 1) datos.habilidades = lista;
-        }
-
-        writes.push({ element: el, data: datos });
+        const fila = this._datosDeFila(tr);
+        if (fila) writes.push(fila);
       });
       return writes;
     }

@@ -864,3 +864,25 @@
   padding: 0;
   border: none;
 }
+
+/* ---------------------------------------------------------------------------
+   Autoguardado al salir del campo (pestaña Tareas).
+   El color de la casilla es el unico aviso de si lo escrito llego al diagrama:
+   sin el, el autoguardado no se distingue de no guardar nada.
+   --------------------------------------------------------------------------- */
+.sim-data-table-panel .cell.guardando {
+  background: #fff8e1;
+  border-color: #e0b34a;
+}
+
+.sim-data-table-panel .cell.guardado {
+  background: #e9f6ea;
+  border-color: #74b378;
+}
+
+/* Se queda en rojo a proposito: mientras el valor siga mal, esa fila NO esta
+   guardada, y el rojo es lo unico que lo dice. */
+.sim-data-table-panel .cell.invalido {
+  background: #fdecea;
+  border-color: #cf4b45;
+}

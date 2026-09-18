@@ -2857,7 +2857,7 @@ class DataTablePanel {
                 <td>${p('processingTime.mode', d.processingTime.mode, 'moda')}</td>
                 <td>${p('processingTime.max', d.processingTime.max, 'máx')}</td>
                 <td><span class="pct">
-                  <input type="number" step="any" min="0" max="100" class="cell"
+                  <input type="number" step="any" min="0" max="100" class="cell mini"
                     data-field="failureRate" value="${pctATexto(d.failureRate)}">
                   <span class="pct-signo">%</span>
                 </span></td>
@@ -2917,6 +2917,7 @@ class DataTablePanel {
 
     this._bindBarrera();
     this._bindAyudaDeColumnas();
+    this._bindAutoguardado();
   }
 
   /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
@@ -2986,6 +2987,111 @@ class DataTablePanel {
       min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(select, 'change', sincronizar);
       sincronizar();
     });
+  }
+
+  /**
+   * Enlaza el AUTOGUARDADO de la pestaña Tareas: al salir de un campo se guarda su
+   * tarea, sin pasar por «Guardar todo».
+   *
+   * Por que `change` y no `input`: en una caja de texto `change` salta al SALIR del
+   * campo, que es justo lo que se pidio (no guardar en cada tecla, cuando el valor
+   * esta a medias y es invalido), y en un desplegable o una casilla salta al elegir,
+   * sin esperar a nada.
+   *
+   * Por que SOLO en Tareas: una fila de esta tabla se valida sola -sus campos no
+   * dependen de las demas-, y eso es lo que permite guardarla mientras otra fila esta
+   * a medio escribir. En Flujos, en cambio, el reparto tiene que sumar 100 % ENTRE
+   * VARIAS filas: guardar una sola dejaria el descuadre a proposito. En Piscinas los
+   * nombres no se pueden repetir. Esas dos siguen con «Guardar todo».
+   */
+  _bindAutoguardado() {
+    this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
+      // Elegir piscina habilita la cantidad. Antes eso solo se veia al guardar y
+      // re-renderizar; el autoguardado NO re-renderiza (si lo hiciera perderia el
+      // foco y lo que se este tecleando), asi que sin esto la cantidad se quedaria
+      // muerta para siempre.
+      const selPool = tr.querySelector('[data-field="resources.pool"]');
+      if (selPool) {
+        min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(selPool, 'change', () => {
+          const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
+          if (!cant) return;
+          cant.disabled = selPool.value === '';
+          cant.title = cant.disabled ? 'Elige primero una piscina' : '';
+        });
+      }
+
+      tr.querySelectorAll('[data-field]').forEach((campo) => {
+        min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
+      });
+    });
+  }
+
+  /**
+   * Guarda UNA fila de Tareas y pinta la casilla con el resultado del intento.
+   *
+   * El color es el aviso, y sin el el autoguardado seria peor que no tenerlo: no se
+   * sabria si lo escrito llego al diagrama o se quedo solo en pantalla.
+   *   amarillo -> se esta comprobando
+   *   verde    -> el valor esta ya en el diagrama
+   *   rojo     -> NO se guardo, y el motivo sale en la barra de estado
+   * El amarillo se ve de verdad cuando el guardado NO puede terminar (modo Token
+   * Simulation activo): al guardar bien dura un instante, porque lectura y escritura
+   * son la misma tarea del navegador y no se llega a pintar.
+   *
+   * El verde se queda: mientras no se vuelva a tocar el campo significa «esto que se ve
+   * aqui es lo que hay guardado». Vuelve a amarillo en cuanto se edita otra vez.
+   */
+  _autoguardarFila(tr, campo) {
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('invalido');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('guardando');
+
+    let fila;
+    try {
+      fila = this._datosDeFila(tr);
+    } catch (err) {
+      // Se queda en rojo y SIN guardar, y el texto del usuario no se toca para que
+      // pueda corregirlo. Una fila invalida no bloquea a las demas.
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('invalido');
+      this._setStatus(err.message, 'error');
+      return;
+    }
+
+    if (!fila) {
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
+      return;
+    }
+
+    try {
+      (0,_util__WEBPACK_IMPORTED_MODULE_0__.setSimulationData)(fila.element, fila.data, {
+        modeling: this._modeling,
+        bpmnFactory: this._bpmnFactory
+      });
+    } catch (err) {
+      const soloLectura = /read-only/i.test(String(err && err.message));
+
+      if (soloLectura) {
+        // Amarillo: NO esta guardado y hace falta una accion. El boton desactiva el
+        // modo y reintenta ESTA fila, que se vuelve a leer entonces (por si mientras
+        // tanto se escribio algo mas). Sin notificacion: saltaria en cada campo.
+        this._ofrecerDesactivarModo(
+          'El diagrama está en solo lectura porque el modo Token Simulation está activo.'
+          + ' Desactívalo y lo que has escrito se guardará tal cual.',
+          () => this._autoguardarFila(tr, campo)
+        );
+        return;
+      }
+
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('invalido');
+      this._setStatus(`No se pudo guardar: ${err.message || err}`, 'error');
+      return;
+    }
+
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('guardado');
+    this._setStatus(`Guardado: ${this._label(fila.element)}.`, 'ok');
   }
 
   /**
@@ -3727,6 +3833,176 @@ class DataTablePanel {
   }
 
   /**
+   * Lee UNA fila de la tabla de Tareas y devuelve `{ element, data }`, o null si la
+   * fila no tiene elemento.
+   *
+   * Existe separado de `_collect` por el AUTOGUARDADO: `_collect` lee la pestaña
+   * ENTERA y lanza al primer problema, asi que una fila a medio escribir -una caja de
+   * texto vacia mientras se teclea- bloquearia el guardado de otra fila que si esta
+   * bien. Aqui cada fila se lee y se valida por su cuenta.
+   */
+  _datosDeFila(tr) {
+    const el = this._elementRegistry.get(tr.dataset.elId);
+    if (!el) return null;
+
+    const name = this._label(el);
+    const val = (f) => {
+      const input = tr.querySelector(`[data-field="${f}"]`);
+      return input ? input.value : '';
+    };
+    const num = (f, etiqueta) => this._num(val(f), `${name} · ${etiqueta}`);
+
+    const distribucion = val('processingTime.distribution') || 'fixed';
+    const unit = val('processingTime.unit');
+    const unitRetrabajo = val('reworkTime.unit');
+
+    // La casilla esta en % (0-100) pero el motor guarda la FRACCION (0-1). La
+    // conversion vive en el unico sitio que lee la casilla, para que no haya dos
+    // verdades sobre que significa el numero que hay escrito.
+    const failurePct = num('failureRate', 'tasa de fallo (%)');
+    if (failurePct < 0 || failurePct > 100) {
+      throw new Error(
+        `${name}: la tasa de fallo debe estar entre 0 y 100 % (has puesto ${failurePct})`
+      );
+    }
+    const failure = failurePct / 100;
+
+    // El tiempo de proceso se lee SEGUN la distribucion elegida: con
+    // triangular mandan min/moda/max y el campo "Tiempo" no se lee en
+    // absoluto. Leer los dos seria peor que no leer ninguno: se guardaria
+    // un valor que el motor va a ignorar.
+    let processingTime;
+    if (distribucion === 'triangular') {
+      const min = num('processingTime.min', 'mínimo');
+      const mode = num('processingTime.mode', 'moda');
+      const max = num('processingTime.max', 'máximo');
+
+      if (!(min <= mode && mode <= max)) {
+        throw new Error(
+          `${name}: en la distribución triangular debe cumplirse mínimo ≤ moda ≤ máximo `
+          + `(has puesto ${min}, ${mode}, ${max})`
+        );
+      }
+      processingTime = { distribution: 'triangular', min, mode, max, unit };
+    } else {
+      const value = num('processingTime.value', 'tiempo de proceso');
+      if (value < 0) throw new Error(`${name}: el tiempo de proceso no puede ser negativo`);
+      processingTime = { distribution: 'fixed', value, unit };
+    }
+
+    const reworkValue = num('reworkTime.value', 'retrabajo');
+    if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
+
+    // Recurso: '(ninguno)' deja el campo vacio, que es lo que el motor lee
+    // como "sin restriccion de recursos".
+    const pool = val('resources.pool');
+    const cantRaw = val('resources.quantityRequired');
+    let recurso = null;
+    if (pool) {
+      const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `${name} · cantidad de recurso`);
+      if (!(cantidad >= 1)) {
+        throw new Error(`${name}: la cantidad de recurso debe ser un número mayor o igual que 1`);
+      }
+      if (!this._getPools().some((p) => p.name === pool)) {
+        throw new Error(
+          `${name}: la piscina «${pool}» no está dada de alta. Créala en la pestaña Recursos antes de asignarla.`
+        );
+      }
+      recurso = { pool, quantityRequired: cantidad };
+    }
+
+    const current = this._taskData(el);
+    const datos = {
+      ...current,
+      processingTime,
+      // Se conserva la distribucion del retrabajo que hubiera: la tabla
+      // todavia no la edita, y forzarla a "fixed" destruiria un triangular
+      // configurado. Mismo error que tenia el modal del lapiz.
+      reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
+      failureRate: failure
+    };
+    // delete y no null: el motor comprueba `data.resources && data.resources.pool`,
+    // asi que un objeto con pool vacio pasaria el primer filtro. Ademas el
+    // JSON no arrastra claves muertas.
+    if (recurso) datos.resources = recurso;
+    else delete datos.resources;
+
+    // Frecuencia y barrera. `_taskData` devuelve los valores por defecto para
+    // poder pintarlos, asi que hay que BORRARLOS del resultado: si no, cada
+    // tarea guardada arrastraria un `frequency: "token"` y una barrera que
+    // nunca se pidio, y el XML engordaria en cada guardado.
+    const frecuencia = val('frequency') === 'lot' ? 'lot' : 'token';
+
+    if (frecuencia === 'lot') {
+      const disp = num('barrier.availableProbability', 'disponibilidad de la barrera');
+      if (disp < 0 || disp > 1) {
+        throw new Error(`${name}: la disponibilidad de la barrera debe estar entre 0 y 1`);
+      }
+      const esperaMin = num('barrier.waitMin', 'espera mínima de la barrera');
+      const esperaModa = num('barrier.waitMode', 'espera modal de la barrera');
+      const esperaMax = num('barrier.waitMax', 'espera máxima de la barrera');
+      if (!(esperaMin <= esperaModa && esperaModa <= esperaMax)) {
+        throw new Error(
+          `${name}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo `
+          + `(has puesto ${esperaMin}, ${esperaModa}, ${esperaMax})`
+        );
+      }
+      const tolerancia = num('barrier.toleranceMinutes', 'tolerancia de la barrera');
+      if (tolerancia < 0) throw new Error(`${name}: la tolerancia no puede ser negativa`);
+
+      datos.frequency = 'lot';
+      datos.barrier = {
+        availableProbability: disp,
+        waitMin: esperaMin,
+        waitMode: esperaModa,
+        waitMax: esperaMax,
+        toleranceMinutes: tolerancia
+      };
+    } else {
+      // Una tarea por token no tiene barrera: el motor ni la lee.
+      delete datos.frequency;
+      delete datos.barrier;
+    }
+
+    // CARGA FISICA. Una casilla vacia se guarda como AUSENTE, no como 0: un 0
+    // dice «esta tarea no mueve peso» y el vacio dice «no lo sabemos», y el
+    // diagnostico de datos los distingue. Las claves vacias se OMITEN en vez de
+    // guardarse como `null` (un JSON con nulls es mas dificil de leer a mano y
+    // el motor los trataria igual, pero ensucia el XML).
+    const cargaOpcional = (campo, etiqueta) => {
+      const bruto = val(`carga.${campo}`);
+      if (String(bruto).trim() === '') return undefined;
+      const n = this._num(bruto, `${name} · ${etiqueta}`);
+      if (n < 0) throw new Error(`${name}: ${etiqueta} no puede ser negativo`);
+      return n;
+    };
+    const carga = {};
+    const masa = cargaOpcional('masaCargadaKg', 'masa cargada');
+    const arrastre = cargaOpcional('masaArrastradaKg', 'masa arrastrada');
+    const distancia = cargaOpcional('distanciaM', 'distancia');
+    if (masa !== undefined) carga.masaCargadaKg = masa;
+    if (arrastre !== undefined) carga.masaArrastradaKg = arrastre;
+    if (distancia !== undefined) carga.distanciaM = distancia;
+
+    delete datos.carga;
+    if (Object.keys(carga).length) datos.carga = carga;
+
+    // HABILIDAD exigida. Se admite una o varias separadas por comas, y se
+    // guarda `habilidad` (singular) cuando es una sola porque es el caso
+    // comun y asi el XML queda legible.
+    const habilidadBruta = String(val('habilidad') == null ? '' : val('habilidad')).trim();
+    delete datos.habilidad;
+    delete datos.habilidades;
+    if (habilidadBruta) {
+      const lista = habilidadBruta.split(',').map((h) => h.trim()).filter(Boolean);
+      if (lista.length === 1) datos.habilidad = lista[0];
+      else if (lista.length > 1) datos.habilidades = lista;
+    }
+
+    return { element: el, data: datos };
+  }
+
+  /**
    * Reune los cambios de la pestaña activa. Lanza Error con el primer problema
    * encontrado para no escribir datos a medias.
    */
@@ -3735,164 +4011,8 @@ class DataTablePanel {
 
     if (this._activeTab === 'tasks') {
       this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
-        const el = this._elementRegistry.get(tr.dataset.elId);
-        if (!el) return;
-
-        const name = this._label(el);
-        const val = (f) => {
-          const input = tr.querySelector(`[data-field="${f}"]`);
-          return input ? input.value : '';
-        };
-        const num = (f, etiqueta) => this._num(val(f), `${name} · ${etiqueta}`);
-
-        const distribucion = val('processingTime.distribution') || 'fixed';
-        const unit = val('processingTime.unit');
-        const unitRetrabajo = val('reworkTime.unit');
-
-        // La casilla esta en % (0-100) pero el motor guarda la FRACCION (0-1). La
-        // conversion vive en el unico sitio que lee la casilla, para que no haya dos
-        // verdades sobre que significa el numero que hay escrito.
-        const failurePct = num('failureRate', 'tasa de fallo (%)');
-        if (failurePct < 0 || failurePct > 100) {
-          throw new Error(
-            `${name}: la tasa de fallo debe estar entre 0 y 100 % (has puesto ${failurePct})`
-          );
-        }
-        const failure = failurePct / 100;
-
-        // El tiempo de proceso se lee SEGUN la distribucion elegida: con
-        // triangular mandan min/moda/max y el campo "Tiempo" no se lee en
-        // absoluto. Leer los dos seria peor que no leer ninguno: se guardaria
-        // un valor que el motor va a ignorar.
-        let processingTime;
-        if (distribucion === 'triangular') {
-          const min = num('processingTime.min', 'mínimo');
-          const mode = num('processingTime.mode', 'moda');
-          const max = num('processingTime.max', 'máximo');
-
-          if (!(min <= mode && mode <= max)) {
-            throw new Error(
-              `${name}: en la distribución triangular debe cumplirse mínimo ≤ moda ≤ máximo `
-              + `(has puesto ${min}, ${mode}, ${max})`
-            );
-          }
-          processingTime = { distribution: 'triangular', min, mode, max, unit };
-        } else {
-          const value = num('processingTime.value', 'tiempo de proceso');
-          if (value < 0) throw new Error(`${name}: el tiempo de proceso no puede ser negativo`);
-          processingTime = { distribution: 'fixed', value, unit };
-        }
-
-        const reworkValue = num('reworkTime.value', 'retrabajo');
-        if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
-
-        // Recurso: '(ninguno)' deja el campo vacio, que es lo que el motor lee
-        // como "sin restriccion de recursos".
-        const pool = val('resources.pool');
-        const cantRaw = val('resources.quantityRequired');
-        let recurso = null;
-        if (pool) {
-          const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `${name} · cantidad de recurso`);
-          if (!(cantidad >= 1)) {
-            throw new Error(`${name}: la cantidad de recurso debe ser un número mayor o igual que 1`);
-          }
-          if (!this._getPools().some((p) => p.name === pool)) {
-            throw new Error(
-              `${name}: la piscina «${pool}» no está dada de alta. Créala en la pestaña Recursos antes de asignarla.`
-            );
-          }
-          recurso = { pool, quantityRequired: cantidad };
-        }
-
-        const current = this._taskData(el);
-        const datos = {
-          ...current,
-          processingTime,
-          // Se conserva la distribucion del retrabajo que hubiera: la tabla
-          // todavia no la edita, y forzarla a "fixed" destruiria un triangular
-          // configurado. Mismo error que tenia el modal del lapiz.
-          reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
-          failureRate: failure
-        };
-        // delete y no null: el motor comprueba `data.resources && data.resources.pool`,
-        // asi que un objeto con pool vacio pasaria el primer filtro. Ademas el
-        // JSON no arrastra claves muertas.
-        if (recurso) datos.resources = recurso;
-        else delete datos.resources;
-
-        // Frecuencia y barrera. `_taskData` devuelve los valores por defecto para
-        // poder pintarlos, asi que hay que BORRARLOS del resultado: si no, cada
-        // tarea guardada arrastraria un `frequency: "token"` y una barrera que
-        // nunca se pidio, y el XML engordaria en cada guardado.
-        const frecuencia = val('frequency') === 'lot' ? 'lot' : 'token';
-
-        if (frecuencia === 'lot') {
-          const disp = num('barrier.availableProbability', 'disponibilidad de la barrera');
-          if (disp < 0 || disp > 1) {
-            throw new Error(`${name}: la disponibilidad de la barrera debe estar entre 0 y 1`);
-          }
-          const esperaMin = num('barrier.waitMin', 'espera mínima de la barrera');
-          const esperaModa = num('barrier.waitMode', 'espera modal de la barrera');
-          const esperaMax = num('barrier.waitMax', 'espera máxima de la barrera');
-          if (!(esperaMin <= esperaModa && esperaModa <= esperaMax)) {
-            throw new Error(
-              `${name}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo `
-              + `(has puesto ${esperaMin}, ${esperaModa}, ${esperaMax})`
-            );
-          }
-          const tolerancia = num('barrier.toleranceMinutes', 'tolerancia de la barrera');
-          if (tolerancia < 0) throw new Error(`${name}: la tolerancia no puede ser negativa`);
-
-          datos.frequency = 'lot';
-          datos.barrier = {
-            availableProbability: disp,
-            waitMin: esperaMin,
-            waitMode: esperaModa,
-            waitMax: esperaMax,
-            toleranceMinutes: tolerancia
-          };
-        } else {
-          // Una tarea por token no tiene barrera: el motor ni la lee.
-          delete datos.frequency;
-          delete datos.barrier;
-        }
-
-        // CARGA FISICA. Una casilla vacia se guarda como AUSENTE, no como 0: un 0
-        // dice «esta tarea no mueve peso» y el vacio dice «no lo sabemos», y el
-        // diagnostico de datos los distingue. Las claves vacias se OMITEN en vez de
-        // guardarse como `null` (un JSON con nulls es mas dificil de leer a mano y
-        // el motor los trataria igual, pero ensucia el XML).
-        const cargaOpcional = (campo, etiqueta) => {
-          const bruto = val(`carga.${campo}`);
-          if (String(bruto).trim() === '') return undefined;
-          const n = this._num(bruto, `${name} · ${etiqueta}`);
-          if (n < 0) throw new Error(`${name}: ${etiqueta} no puede ser negativo`);
-          return n;
-        };
-        const carga = {};
-        const masa = cargaOpcional('masaCargadaKg', 'masa cargada');
-        const arrastre = cargaOpcional('masaArrastradaKg', 'masa arrastrada');
-        const distancia = cargaOpcional('distanciaM', 'distancia');
-        if (masa !== undefined) carga.masaCargadaKg = masa;
-        if (arrastre !== undefined) carga.masaArrastradaKg = arrastre;
-        if (distancia !== undefined) carga.distanciaM = distancia;
-
-        delete datos.carga;
-        if (Object.keys(carga).length) datos.carga = carga;
-
-        // HABILIDAD exigida. Se admite una o varias separadas por comas, y se
-        // guarda `habilidad` (singular) cuando es una sola porque es el caso
-        // comun y asi el XML queda legible.
-        const habilidadBruta = String(val('habilidad') == null ? '' : val('habilidad')).trim();
-        delete datos.habilidad;
-        delete datos.habilidades;
-        if (habilidadBruta) {
-          const lista = habilidadBruta.split(',').map((h) => h.trim()).filter(Boolean);
-          if (lista.length === 1) datos.habilidad = lista[0];
-          else if (lista.length > 1) datos.habilidades = lista;
-        }
-
-        writes.push({ element: el, data: datos });
+        const fila = this._datosDeFila(tr);
+        if (fila) writes.push(fila);
       });
       return writes;
     }
@@ -23718,7 +23838,29 @@ ___CSS_LOADER_EXPORT___.push([module.id, `/* Panel de edicion de datos de simula
   padding: 0;
   border: none;
 }
-`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n/* --- pestaña Global: descansos y curva de arranque --- */\n\n.sim-data-table-panel .subtitulo {\n  margin: 22px 0 4px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Casilla booleana con su etiqueta a la derecha. */\n.sim-data-table-panel .casilla {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12.5px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .casilla input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .data-table td.centro {\n  text-align: center;\n}\n\n.sim-data-table-panel .data-table td.centro input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */\n.sim-data-table-panel .caja-curva {\n  display: inline-block;\n  padding: 6px 10px;\n  background: #fbfcfe;\n  border: 1px solid #dfe5ec;\n  border-radius: 6px;\n}\n\n.sim-data-table-panel .curva-arranque {\n  display: block;\n  width: 320px;\n  max-width: 100%;\n  height: auto;\n}\n\n.sim-data-table-panel .curva-arranque .eje {\n  stroke: #c9d3de;\n  stroke-width: 1;\n}\n\n.sim-data-table-panel .curva-arranque .referencia {\n  stroke: #c62828;\n  stroke-width: 1;\n  stroke-dasharray: 5 4;\n  opacity: .6;\n}\n\n.sim-data-table-panel .curva-arranque .linea {\n  fill: none;\n  stroke: #1565c0;\n  stroke-width: 2;\n  stroke-linejoin: round;\n}\n\n.sim-data-table-panel .curva-arranque .rotulo {\n  font-size: 9px;\n  fill: #8a94a0;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Tabla de miembros dentro de una piscina: va ANIDADA en la celda de la piscina,\n   asi que se pinta como una tarjeta sin bordes de tabla para que no compita\n   visualmente con la tabla de fuera. */\n.sim-data-table-panel .celda-miembros {\n  padding: 4px 6px;\n}\n\n.sim-data-table-panel .tabla-miembros {\n  width: 100%;\n  border-collapse: collapse;\n  margin-bottom: 4px;\n}\n\n.sim-data-table-panel .tabla-miembros th {\n  position: static;\n  background: #eef2f7;\n  border: 1px solid #e2e8f0;\n  padding: 3px 5px;\n  font-size: 10.5px;\n  font-weight: 600;\n  color: #5a6b81;\n  text-align: left;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .tabla-miembros td {\n  border: 1px solid #eef1f5;\n  padding: 2px 4px;\n}\n\n.sim-data-table-panel .tabla-miembros input {\n  width: 100%;\n  min-width: 56px;\n}\n\n.sim-data-table-panel .btn-anadir-miembro {\n  padding: 2px 8px;\n  font-size: 11px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 3px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-miembro:hover {\n  background: #e3f0ff;\n}\n\n.sim-data-table-panel .btn-quitar-miembro {\n  border: none;\n  background: transparent;\n  cursor: pointer;\n  color: #999;\n  font-size: 14px;\n  line-height: 1;\n  padding: 0 4px;\n}\n\n.sim-data-table-panel .btn-quitar-miembro:hover {\n  color: #c62828;\n}\n\n/* Encabezado del bloque de carga fisica (Tareas). Como el de la barrera: a dos\n   lineas, porque con `nowrap` empujaria la tabla. */\n.sim-data-table-panel .data-table th.col-carga {\n  font-weight: 500;\n  font-size: 11.5px;\n  line-height: 1.3;\n  white-space: normal;\n  border-left: 2px solid #ddd;\n  color: #555;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* Encabezado del bloque de barrera (Tareas). Va a dos lineas: con `nowrap`\n   empujaria la tabla y obligaria a desplazarse para ver el resto de columnas. */\n.sim-data-table-panel .data-table th.col-barrera {\n  font-weight: 500;\n  font-size: 11.5px;\n  line-height: 1.3;\n  white-space: normal;\n  border-left: 2px solid #ddd;\n  color: #555;\n}\n\n/* La columna de frecuencia abre el bloque, asi que se marca igual que su\n   encabezado: agrupa «frecuencia + barrera» frente al resto de la fila. */\n.sim-data-table-panel .data-table td.col-freq {\n  border-left: 2px solid #eee;\n}\n\n/* Tabla de vigencias de las reglas laborales: ocho columnas numericas muy\n   estrechas. Se centran y se les pone un ancho minimo menor que el de la\n   triangular, porque aqui los valores son de uno o dos digitos. */\n.sim-data-table-panel .filas-regla .cell.mini {\n  min-width: 48px;\n}\n\n.sim-data-table-panel .filas-regla input[type=\"date\"] {\n  min-width: 128px;\n}\n\n/* --- ayuda por pestana --- */\n\n/* El bloque de ayuda vive entre las pestanas y el cuerpo: se despliega a lo\n   ancho y NO se va con el scroll del cuerpo, porque es una referencia que se\n   consulta mientras se rellena. */\n.sim-data-table-panel .panel-ayuda {\n  padding: 14px 20px;\n  background: #f7faff;\n  border-bottom: 1px solid #dbe6f5;\n  max-height: 46vh;\n  overflow: auto;\n}\n\n.sim-data-table-panel .panel-ayuda.hidden {\n  display: none;\n}\n\n.sim-data-table-panel .panel-ayuda h4 {\n  margin: 0 0 10px;\n  font-size: 13.5px;\n  color: #1565c0;\n}\n\n.sim-data-table-panel .panel-ayuda h5 {\n  margin: 0 0 6px;\n  font-size: 12px;\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n  color: #5a6b81;\n}\n\n/* Dos columnas: «que se declara» y «que se mide con ello». Van juntas a\n   proposito, porque la segunda es la razon de ser de la primera. */\n.sim-data-table-panel .panel-ayuda .columnas {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 20px;\n  margin-bottom: 12px;\n}\n\n.sim-data-table-panel .panel-ayuda ul {\n  margin: 0;\n  padding-left: 18px;\n  font-size: 12.5px;\n  line-height: 1.55;\n  color: #333;\n}\n\n.sim-data-table-panel .panel-ayuda li {\n  margin-bottom: 4px;\n}\n\n.sim-data-table-panel .panel-ayuda code {\n  background: #e8eef7;\n  padding: 1px 4px;\n  border-radius: 3px;\n  font-size: 11.5px;\n}\n\n/* La trampa, marcada aparte: es lo que se salta al leer deprisa. */\n.sim-data-table-panel .panel-ayuda .ojo-titulo {\n  color: #a35b00;\n}\n\n.sim-data-table-panel .panel-ayuda ul.ojo li {\n  color: #7a4a00;\n}\n\n/* Boton de ayuda: mismo aspecto que el de graficos, para que se reconozca. */\n.sim-data-table-panel .btn-ayuda {\n  border: none;\n  background: transparent;\n  cursor: pointer;\n  color: #1565c0;\n  padding: 3px 5px;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .btn-ayuda:hover {\n  background: #e3f0ff;\n}\n\n.sim-data-table-panel .btn-ayuda svg {\n  width: 16px;\n  height: 16px;\n  display: block;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n\n/* ---------------------------------------------------------------------------\n * La ayuda de un campo: el boton «?» y su caja.\n *\n * Va al lado de la etiqueta y no como texto fijo: con 30 campos, un parrafo por campo\n * llena la pantalla y se acaba ignorando. El «?» se pulsa en el momento de la duda.\n * ------------------------------------------------------------------------- */\n.sim-data-table-panel .campo-nombre {\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .btn-ayuda-campo {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 16px;\n  height: 16px;\n  margin-left: 5px;\n  padding: 0;\n  border: 1px solid #b9c2cb;\n  border-radius: 50%;\n  background: #fff;\n  color: #6b7785;\n  font-size: 11px;\n  font-weight: 700;\n  line-height: 1;\n  cursor: pointer;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .btn-ayuda-campo:hover {\n  background: #eef4fb;\n  border-color: #7ba7d4;\n  color: #1565c0;\n}\n\n/* Marcado mientras su ayuda esta desplegada, para que se vea de donde salio el texto. */\n.sim-data-table-panel .btn-ayuda-campo.activo {\n  background: #1565c0;\n  border-color: #1565c0;\n  color: #fff;\n}\n\n.sim-data-table-panel .ayuda-campo {\n  margin-top: 5px;\n  padding: 6px 8px;\n  background: #eef4fb;\n  border-left: 3px solid #1565c0;\n  border-radius: 0 4px 4px 0;\n  color: #3b4753;\n  font-size: 12px;\n  line-height: 1.5;\n  font-weight: 400;\n}\n\n.sim-data-table-panel .ayuda-campo.hidden {\n  display: none;\n}\n\n/* El «?» de una COLUMNA de la tabla de Tareas, y su fila de ayuda.\n   Mismo aspecto que el de los campos de Global, pero sobre la cabecera. */\n.sim-data-table-panel .btn-ayuda-col {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 14px;\n  height: 14px;\n  margin-left: 4px;\n  padding: 0;\n  border: 1px solid #c3ccd5;\n  border-radius: 50%;\n  background: #fff;\n  color: #79858f;\n  font-size: 10px;\n  font-weight: 700;\n  line-height: 1;\n  cursor: pointer;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .btn-ayuda-col:hover {\n  background: #eef4fb;\n  border-color: #7ba7d4;\n  color: #1565c0;\n}\n\n.sim-data-table-panel .btn-ayuda-col.activo {\n  background: #1565c0;\n  border-color: #1565c0;\n  color: #fff;\n}\n\n/* La fila compartida: el texto de la columna que se haya pulsado. */\n.sim-data-table-panel .fila-ayuda-col.hidden {\n  display: none;\n}\n\n.sim-data-table-panel .fila-ayuda-col td {\n  padding: 0;\n  border: none;\n}\n"],"sourceRoot":""}]);
+
+/* ---------------------------------------------------------------------------
+   Autoguardado al salir del campo (pestaña Tareas).
+   El color de la casilla es el unico aviso de si lo escrito llego al diagrama:
+   sin el, el autoguardado no se distingue de no guardar nada.
+   --------------------------------------------------------------------------- */
+.sim-data-table-panel .cell.guardando {
+  background: #fff8e1;
+  border-color: #e0b34a;
+}
+
+.sim-data-table-panel .cell.guardado {
+  background: #e9f6ea;
+  border-color: #74b378;
+}
+
+/* Se queda en rojo a proposito: mientras el valor siga mal, esa fila NO esta
+   guardada, y el rojo es lo unico que lo dice. */
+.sim-data-table-panel .cell.invalido {
+  background: #fdecea;
+  border-color: #cf4b45;
+}
+`, "",{"version":3,"sources":["webpack://./client/simulation/data-table.css"],"names":[],"mappings":"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","sourcesContent":["/* Panel de edicion de datos de simulacion por tabla.\n   Comparte lenguaje visual con el panel de graficos (.simulation-chart-panel):\n   panel blanco, borde #ccc, radio 8px, centrado horizontalmente y anclado abajo. */\n\n.sim-data-table-panel {\n  position: absolute;\n  bottom: 16px;\n  /* Centrado horizontal. Antes se anclaba abajo a la derecha con 1180px de\n     ancho, que se quedaba corto para las columnas de Tareas (ahora 12) y\n     dejaba el panel pegado al borde. */\n  left: 50%;\n  transform: translateX(-50%);\n  /* `%` y NO `vw`: el contenedor del lienzo es mas estrecho que la ventana\n     (Camunda reserva la paleta y el panel de propiedades), asi que\n     `calc(100vw - 60px)` desbordaba el lienzo. Con `%` se mide el contenedor\n     real, y el margen de 48px garantiza que no toque los bordes. */\n  width: min(1560px, calc(100% - 48px));\n  max-height: calc(100% - 32px);\n  /* border-box para que `width` incluya borde y padding: asi el margen de 48px\n     es el margen real a cada lado y no se lo come el relleno. */\n  box-sizing: border-box;\n  display: none;\n  flex-direction: column;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 8px;\n  box-shadow: 0 10px 30px rgba(0, 0, 0, .22);\n  z-index: 101;\n  font-size: 13px;\n  color: #333;\n}\n\n.sim-data-table-panel.open {\n  display: flex;\n}\n\n/* --- cabecera --- */\n.sim-data-table-panel .panel-header {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 8px 8px 0 0;\n}\n\n.sim-data-table-panel .panel-title {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  font-weight: 600;\n  font-size: 13.5px;\n  flex: 1;\n}\n\n.sim-data-table-panel .panel-title svg {\n  width: 18px;\n  height: 18px;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.sim-data-table-panel .panel-actions button {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  height: 32px;\n  padding: 0;\n  background: none;\n  border: none;\n  border-radius: 4px;\n  color: #444;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-actions button:hover {\n  background: #eee;\n  color: #111;\n}\n\n.sim-data-table-panel .panel-actions button svg {\n  width: 20px;\n  height: 20px;\n  display: block;\n  fill: currentColor;\n}\n\n.sim-data-table-panel .panel-actions button.btn-close:hover {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* --- pestañas --- */\n.sim-data-table-panel .panel-tabs {\n  display: flex;\n  gap: 2px;\n  padding: 0 20px;\n  border-bottom: 1px solid #eee;\n  background: #fafafa;\n}\n\n.sim-data-table-panel .panel-tabs button {\n  padding: 9px 16px;\n  background: none;\n  border: none;\n  border-bottom: 2px solid transparent;\n  font-size: 13px;\n  font-weight: 500;\n  color: #666;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .panel-tabs button:hover {\n  color: #111;\n}\n\n.sim-data-table-panel .panel-tabs button.active {\n  color: #1565c0;\n  border-bottom-color: #1565c0;\n}\n\n/* --- cuerpo --- */\n.sim-data-table-panel .panel-body {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 16px 20px;\n}\n\n.sim-data-table-panel .empty {\n  margin: 24px 0;\n  text-align: center;\n  color: #777;\n  line-height: 1.6;\n}\n\n.sim-data-table-panel .hint {\n  margin: 12px 0 0;\n  font-size: 12px;\n  color: #666;\n  line-height: 1.5;\n}\n\n.sim-data-table-panel .hint code {\n  background: #eef;\n  padding: 1px 4px;\n  border-radius: 3px;\n}\n\n/* --- tabla --- */\n.sim-data-table-panel .data-table {\n  width: 100%;\n  border-collapse: collapse;\n}\n\n.sim-data-table-panel .data-table th {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  background: #f2f2f2;\n  border: 1px solid #ddd;\n  padding: 8px 10px;\n  text-align: left;\n  font-weight: 600;\n  font-size: 12px;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .data-table td {\n  border: 1px solid #e6e6e6;\n  padding: 5px 8px;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .data-table tbody tr:nth-child(even) {\n  background: #fafafa;\n}\n\n.sim-data-table-panel .data-table tbody tr:hover {\n  background: #f0f6ff;\n}\n\n.sim-data-table-panel .data-table td.col-name,\n.sim-data-table-panel .data-table th.col-name {\n  max-width: 260px;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* --- pestaña Flujos: reparto de compuertas --- */\n\n/* La celda de la compuerta lleva el nombre Y el indicador de suma. Se usa flex\n   para que el nombre se recorte con puntos suspensivos si es largo pero el\n   indicador NO se recorte nunca: es el dato que avisa de un reparto mal cuadrado. */\n.sim-data-table-panel .data-table td.col-gw,\n.sim-data-table-panel .data-table th.col-gw {\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  min-width: 230px;\n  max-width: 360px;\n}\n\n.sim-data-table-panel .col-gw .gw-nombre {\n  flex: 0 1 auto;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* Marca de continuacion: la salida pertenece a la compuerta de la fila de arriba. */\n.sim-data-table-panel .continuacion {\n  color: #9e9e9e;\n  padding-left: 8px;\n}\n\n/* Indicador de la suma por compuerta. */\n.sim-data-table-panel .suma {\n  flex: none;\n  padding: 1px 7px;\n  font-size: 11px;\n  font-weight: 600;\n  border-radius: 10px;\n  background: #eee;\n  color: #555;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .suma.ok {\n  background: #e6f4ea;\n  color: #0a7d32;\n}\n\n.sim-data-table-panel .suma.mal {\n  background: #fdecea;\n  color: #c62828;\n}\n\n/* Fila que abre el grupo de una compuerta: separa visualmente un reparto del siguiente. */\n.sim-data-table-panel .data-table tbody tr.grupo-inicio > td {\n  border-top: 2px solid #e0e0e0;\n}\n\n/* Valor de reparto, con el signo % como sufijo en vez de dentro del campo. */\n.sim-data-table-panel .pct {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n}\n\n.sim-data-table-panel .pct .cell.mini {\n  min-width: 64px;\n  text-align: right;\n}\n\n.sim-data-table-panel .pct-signo {\n  font-size: 12px;\n  color: #777;\n}\n\n.sim-data-table-panel .cell:disabled {\n  background: #f4f4f4;\n  color: #888;\n  cursor: not-allowed;\n}\n\n/* --- pestaña Global: descansos y curva de arranque --- */\n\n.sim-data-table-panel .subtitulo {\n  margin: 22px 0 4px;\n  font-size: 13px;\n  color: #1565c0;\n  border-bottom: 1px solid #eee;\n  padding-bottom: 4px;\n}\n\n/* Casilla booleana con su etiqueta a la derecha. */\n.sim-data-table-panel .casilla {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12.5px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .casilla input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .data-table td.centro {\n  text-align: center;\n}\n\n.sim-data-table-panel .data-table td.centro input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Caja de la curva de arranque: se dibuja en SVG propio, sin libreria. */\n.sim-data-table-panel .caja-curva {\n  display: inline-block;\n  padding: 6px 10px;\n  background: #fbfcfe;\n  border: 1px solid #dfe5ec;\n  border-radius: 6px;\n}\n\n.sim-data-table-panel .curva-arranque {\n  display: block;\n  width: 320px;\n  max-width: 100%;\n  height: auto;\n}\n\n.sim-data-table-panel .curva-arranque .eje {\n  stroke: #c9d3de;\n  stroke-width: 1;\n}\n\n.sim-data-table-panel .curva-arranque .referencia {\n  stroke: #c62828;\n  stroke-width: 1;\n  stroke-dasharray: 5 4;\n  opacity: .6;\n}\n\n.sim-data-table-panel .curva-arranque .linea {\n  fill: none;\n  stroke: #1565c0;\n  stroke-width: 2;\n  stroke-linejoin: round;\n}\n\n.sim-data-table-panel .curva-arranque .rotulo {\n  font-size: 9px;\n  fill: #8a94a0;\n}\n\n.sim-data-table-panel .data-table td.col-campo {\n  width: 46%;\n  color: #444;\n}\n\n.sim-data-table-panel .cell {\n  width: 100%;\n  min-width: 84px;\n  padding: 5px 7px;\n  font-size: 12.5px;\n  font-family: inherit;\n  color: #212121;\n  background: #fff;\n  border: 1px solid #ccc;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .cell:focus {\n  outline: 2px solid #90caf9;\n  outline-offset: -1px;\n  border-color: #90caf9;\n}\n\n/* Casillas de \"dias laborables\": una por dia, en linea. */\n.sim-data-table-panel .dias {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px 12px;\n}\n\n.sim-data-table-panel .dias label {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  font-size: 12.5px;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .dias input[type=\"checkbox\"] {\n  margin: 0;\n  cursor: pointer;\n}\n\n/* Aviso de que falta el evento raiz (visible en Tareas y Flujos). */\n.sim-data-table-panel .aviso-raiz {\n  margin: 0 0 12px;\n  padding: 9px 12px;\n  font-size: 12.5px;\n  line-height: 1.5;\n  color: #7a5b00;\n  background: #fff8e1;\n  border: 1px solid #ffe082;\n  border-left: 3px solid #f9a825;\n  border-radius: 4px;\n}\n\n/* Botones para crear la configuracion raiz. */\n.sim-data-table-panel .raices {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  max-width: 460px;\n  margin: 14px auto;\n}\n\n.sim-data-table-panel .btn-raiz {\n  padding: 10px 14px;\n  font-size: 13px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-raiz:hover {\n  background: #e3f0ff;\n  border-color: #1565c0;\n}\n\n/* Tabla de miembros dentro de una piscina: va ANIDADA en la celda de la piscina,\n   asi que se pinta como una tarjeta sin bordes de tabla para que no compita\n   visualmente con la tabla de fuera. */\n.sim-data-table-panel .celda-miembros {\n  padding: 4px 6px;\n}\n\n.sim-data-table-panel .tabla-miembros {\n  width: 100%;\n  border-collapse: collapse;\n  margin-bottom: 4px;\n}\n\n.sim-data-table-panel .tabla-miembros th {\n  position: static;\n  background: #eef2f7;\n  border: 1px solid #e2e8f0;\n  padding: 3px 5px;\n  font-size: 10.5px;\n  font-weight: 600;\n  color: #5a6b81;\n  text-align: left;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .tabla-miembros td {\n  border: 1px solid #eef1f5;\n  padding: 2px 4px;\n}\n\n.sim-data-table-panel .tabla-miembros input {\n  width: 100%;\n  min-width: 56px;\n}\n\n.sim-data-table-panel .btn-anadir-miembro {\n  padding: 2px 8px;\n  font-size: 11px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px solid #90caf9;\n  border-radius: 3px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-miembro:hover {\n  background: #e3f0ff;\n}\n\n.sim-data-table-panel .btn-quitar-miembro {\n  border: none;\n  background: transparent;\n  cursor: pointer;\n  color: #999;\n  font-size: 14px;\n  line-height: 1;\n  padding: 0 4px;\n}\n\n.sim-data-table-panel .btn-quitar-miembro:hover {\n  color: #c62828;\n}\n\n/* Encabezado del bloque de carga fisica (Tareas). Como el de la barrera: a dos\n   lineas, porque con `nowrap` empujaria la tabla. */\n.sim-data-table-panel .data-table th.col-carga {\n  font-weight: 500;\n  font-size: 11.5px;\n  line-height: 1.3;\n  white-space: normal;\n  border-left: 2px solid #ddd;\n  color: #555;\n}\n\n/* Campos compactos de la distribucion triangular (min / moda / max). */\n.sim-data-table-panel .cell.mini {\n  min-width: 56px;\n  padding: 5px 4px;\n  text-align: center;\n}\n\n/* Encabezado del bloque de barrera (Tareas). Va a dos lineas: con `nowrap`\n   empujaria la tabla y obligaria a desplazarse para ver el resto de columnas. */\n.sim-data-table-panel .data-table th.col-barrera {\n  font-weight: 500;\n  font-size: 11.5px;\n  line-height: 1.3;\n  white-space: normal;\n  border-left: 2px solid #ddd;\n  color: #555;\n}\n\n/* La columna de frecuencia abre el bloque, asi que se marca igual que su\n   encabezado: agrupa «frecuencia + barrera» frente al resto de la fila. */\n.sim-data-table-panel .data-table td.col-freq {\n  border-left: 2px solid #eee;\n}\n\n/* Tabla de vigencias de las reglas laborales: ocho columnas numericas muy\n   estrechas. Se centran y se les pone un ancho minimo menor que el de la\n   triangular, porque aqui los valores son de uno o dos digitos. */\n.sim-data-table-panel .filas-regla .cell.mini {\n  min-width: 48px;\n}\n\n.sim-data-table-panel .filas-regla input[type=\"date\"] {\n  min-width: 128px;\n}\n\n/* --- ayuda por pestana --- */\n\n/* El bloque de ayuda vive entre las pestanas y el cuerpo: se despliega a lo\n   ancho y NO se va con el scroll del cuerpo, porque es una referencia que se\n   consulta mientras se rellena. */\n.sim-data-table-panel .panel-ayuda {\n  padding: 14px 20px;\n  background: #f7faff;\n  border-bottom: 1px solid #dbe6f5;\n  max-height: 46vh;\n  overflow: auto;\n}\n\n.sim-data-table-panel .panel-ayuda.hidden {\n  display: none;\n}\n\n.sim-data-table-panel .panel-ayuda h4 {\n  margin: 0 0 10px;\n  font-size: 13.5px;\n  color: #1565c0;\n}\n\n.sim-data-table-panel .panel-ayuda h5 {\n  margin: 0 0 6px;\n  font-size: 12px;\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n  color: #5a6b81;\n}\n\n/* Dos columnas: «que se declara» y «que se mide con ello». Van juntas a\n   proposito, porque la segunda es la razon de ser de la primera. */\n.sim-data-table-panel .panel-ayuda .columnas {\n  display: grid;\n  grid-template-columns: 1fr 1fr;\n  gap: 20px;\n  margin-bottom: 12px;\n}\n\n.sim-data-table-panel .panel-ayuda ul {\n  margin: 0;\n  padding-left: 18px;\n  font-size: 12.5px;\n  line-height: 1.55;\n  color: #333;\n}\n\n.sim-data-table-panel .panel-ayuda li {\n  margin-bottom: 4px;\n}\n\n.sim-data-table-panel .panel-ayuda code {\n  background: #e8eef7;\n  padding: 1px 4px;\n  border-radius: 3px;\n  font-size: 11.5px;\n}\n\n/* La trampa, marcada aparte: es lo que se salta al leer deprisa. */\n.sim-data-table-panel .panel-ayuda .ojo-titulo {\n  color: #a35b00;\n}\n\n.sim-data-table-panel .panel-ayuda ul.ojo li {\n  color: #7a4a00;\n}\n\n/* Boton de ayuda: mismo aspecto que el de graficos, para que se reconozca. */\n.sim-data-table-panel .btn-ayuda {\n  border: none;\n  background: transparent;\n  cursor: pointer;\n  color: #1565c0;\n  padding: 3px 5px;\n  border-radius: 4px;\n}\n\n.sim-data-table-panel .btn-ayuda:hover {\n  background: #e3f0ff;\n}\n\n.sim-data-table-panel .btn-ayuda svg {\n  width: 16px;\n  height: 16px;\n  display: block;\n}\n\n/* --- pie --- */\n.sim-data-table-panel .panel-footer {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  padding: 14px 20px;\n  border-top: 1px solid #eee;\n  background: #fafafa;\n  border-radius: 0 0 8px 8px;\n}\n\n.sim-data-table-panel .status {\n  flex: 1;\n  font-size: 12.5px;\n  color: #666;\n  line-height: 1.4;\n}\n\n.sim-data-table-panel .status.ok {\n  color: #0a7d32;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.error {\n  color: #c62828;\n  font-weight: 500;\n}\n\n.sim-data-table-panel .status.info {\n  color: #666;\n}\n\n.sim-data-table-panel .btn-save {\n  padding: 8px 18px;\n  font-size: 13px;\n  font-weight: 600;\n  color: #fff;\n  background: #1565c0;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-save:hover {\n  background: #0d47a1;\n}\n\n/* Fila resaltada al abrir la tabla desde el icono de una tarea del diagrama\n   (DataTablePanel.openFor). Marca cual se va a editar. */\n.sim-data-table-panel .data-table tbody tr.fila-foco {\n  background: #e3f0ff;\n  box-shadow: inset 3px 0 0 #1565c0;\n}\n\n.sim-data-table-panel .data-table tbody tr.fila-foco:hover {\n  background: #d7e9ff;\n}\n\n/* Boton para anadir una fila (pestaña Recursos). */\n.sim-data-table-panel .btn-anadir-fila {\n  margin-top: 12px;\n  padding: 7px 14px;\n  font-size: 12.5px;\n  color: #1565c0;\n  background: #fff;\n  border: 1px dashed #90caf9;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-anadir-fila:hover {\n  background: #e3f0ff;\n  border-style: solid;\n}\n\n/* Boton de quitar fila: discreto, solo se destaca al pasar por encima. */\n.sim-data-table-panel .btn-quitar-pool {\n  width: 26px;\n  height: 26px;\n  padding: 0;\n  font-size: 15px;\n  line-height: 1;\n  color: #888;\n  background: none;\n  border: 1px solid #ddd;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.sim-data-table-panel .btn-quitar-pool:hover {\n  color: #c62828;\n  border-color: #ef9a9a;\n  background: #fdecea;\n}\n\n/* Boton de la oferta de desactivar el modo Token Simulation y reintentar. */\n.sim-data-table-panel .btn-desactivar {\n  padding: 8px 14px;\n  font-size: 12.5px;\n  font-weight: 600;\n  color: #fff;\n  background: #c62828;\n  border: none;\n  border-radius: 4px;\n  cursor: pointer;\n  white-space: nowrap;\n}\n\n.sim-data-table-panel .btn-desactivar:hover {\n  background: #a01717;\n}\n\n/* Lapiz del acceso directo: overlay sobre la figura seleccionada del diagrama\n   que abre la tabla centrada en ese elemento. Proviene del modulo `editor`, ya\n   retirado; el estilo se conserva identico para no cambiar de aspecto. */\n.sim-data-table-overlay {\n  background-color: white;\n  border: 1px solid #ccc;\n  border-radius: 50%;\n  width: 24px;\n  height: 24px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  cursor: pointer;\n  box-shadow: 0 2px 5px rgba(0, 0, 0, .2);\n  color: #555;\n}\n\n.sim-data-table-overlay:hover {\n  background-color: #f0f0f0;\n  color: black;\n}\n\n.sim-data-table-overlay svg {\n  width: 15px;\n  height: 15px;\n  fill: currentColor;\n  display: block;\n}\n\n/* ---------------------------------------------------------------------------\n * La ayuda de un campo: el boton «?» y su caja.\n *\n * Va al lado de la etiqueta y no como texto fijo: con 30 campos, un parrafo por campo\n * llena la pantalla y se acaba ignorando. El «?» se pulsa en el momento de la duda.\n * ------------------------------------------------------------------------- */\n.sim-data-table-panel .campo-nombre {\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .btn-ayuda-campo {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 16px;\n  height: 16px;\n  margin-left: 5px;\n  padding: 0;\n  border: 1px solid #b9c2cb;\n  border-radius: 50%;\n  background: #fff;\n  color: #6b7785;\n  font-size: 11px;\n  font-weight: 700;\n  line-height: 1;\n  cursor: pointer;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .btn-ayuda-campo:hover {\n  background: #eef4fb;\n  border-color: #7ba7d4;\n  color: #1565c0;\n}\n\n/* Marcado mientras su ayuda esta desplegada, para que se vea de donde salio el texto. */\n.sim-data-table-panel .btn-ayuda-campo.activo {\n  background: #1565c0;\n  border-color: #1565c0;\n  color: #fff;\n}\n\n.sim-data-table-panel .ayuda-campo {\n  margin-top: 5px;\n  padding: 6px 8px;\n  background: #eef4fb;\n  border-left: 3px solid #1565c0;\n  border-radius: 0 4px 4px 0;\n  color: #3b4753;\n  font-size: 12px;\n  line-height: 1.5;\n  font-weight: 400;\n}\n\n.sim-data-table-panel .ayuda-campo.hidden {\n  display: none;\n}\n\n/* El «?» de una COLUMNA de la tabla de Tareas, y su fila de ayuda.\n   Mismo aspecto que el de los campos de Global, pero sobre la cabecera. */\n.sim-data-table-panel .btn-ayuda-col {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 14px;\n  height: 14px;\n  margin-left: 4px;\n  padding: 0;\n  border: 1px solid #c3ccd5;\n  border-radius: 50%;\n  background: #fff;\n  color: #79858f;\n  font-size: 10px;\n  font-weight: 700;\n  line-height: 1;\n  cursor: pointer;\n  vertical-align: middle;\n}\n\n.sim-data-table-panel .btn-ayuda-col:hover {\n  background: #eef4fb;\n  border-color: #7ba7d4;\n  color: #1565c0;\n}\n\n.sim-data-table-panel .btn-ayuda-col.activo {\n  background: #1565c0;\n  border-color: #1565c0;\n  color: #fff;\n}\n\n/* La fila compartida: el texto de la columna que se haya pulsado. */\n.sim-data-table-panel .fila-ayuda-col.hidden {\n  display: none;\n}\n\n.sim-data-table-panel .fila-ayuda-col td {\n  padding: 0;\n  border: none;\n}\n\n/* ---------------------------------------------------------------------------\n   Autoguardado al salir del campo (pestaña Tareas).\n   El color de la casilla es el unico aviso de si lo escrito llego al diagrama:\n   sin el, el autoguardado no se distingue de no guardar nada.\n   --------------------------------------------------------------------------- */\n.sim-data-table-panel .cell.guardando {\n  background: #fff8e1;\n  border-color: #e0b34a;\n}\n\n.sim-data-table-panel .cell.guardado {\n  background: #e9f6ea;\n  border-color: #74b378;\n}\n\n/* Se queda en rojo a proposito: mientras el valor siga mal, esa fila NO esta\n   guardada, y el rojo es lo unico que lo dice. */\n.sim-data-table-panel .cell.invalido {\n  background: #fdecea;\n  border-color: #cf4b45;\n}\n"],"sourceRoot":""}]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);
 
