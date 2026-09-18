@@ -780,6 +780,61 @@ console.log('\n== 13. La interfaz: pantalla de estudios, cronometro unico y celu
   ok(sinBackend.length === 0,
     'y todas las llamadas al servidor existen en Code.gs',
     sinBackend.length ? 'NO EXISTEN: ' + sinBackend.join(', ') : llamadas.size + ' llamadas');
+
+  // --- Atajos: del resultado a donde se llena ---
+  //
+  // Quien no maneja esto lee «requeridas 34» en el cursograma y no sabe de donde sale
+  // ese 34. El atajo lleva de ese numero al cronometro, que es donde el concepto se ata.
+  //
+  // Lo que se comprueba no es que exista un boton, sino las decisiones que lo hacen
+  // SEGURO: que va por el MISMO camino que las tarjetas (dos caminos se desincronizan),
+  // que es un boton y no la fila entera -`abrirTarea` APARTA la tarea, asi que un roce
+  // al leer la dejaria bloqueada para los demas-, y que no se imprime.
+  const columnasMedir = [ ...html.matchAll(/col-accion">Medir<\/th>/g) ].length;
+  ok(columnasMedir === 2,
+    'las DOS tablas de resultados (cursograma y resumen) tienen columna «Medir»',
+    columnasMedir + ' columnas');
+
+  const filasConMedir = [ ...js.matchAll(/tr\.appendChild\(celdaMedir\(t\)\);/g) ].length;
+  ok(filasConMedir === 2,
+    'y las dos rellenan cada fila, no solo la cabecera',
+    filasConMedir + ' filas');
+
+  ok(/boton\.addEventListener\('click', function\(\) \{ abrirTarea\(t\); \}\)/.test(js),
+    'el boton llama a abrirTarea: el MISMO camino que ya usan las tarjetas de Tareas');
+
+  ok(/var boton = document\.createElement\('button'\);/.test(js)
+    && /boton\.textContent = 'Medir';/.test(js),
+    'es un <button> en la fila, no la fila entera: un roce al leer no debe apartar la tarea');
+
+  ok(/@media print \{ \.col-accion \{ display: none !important; \} \}/.test(html),
+    'y la columna NO se imprime (el cursograma en papel no lleva botones)');
+
+  // --- Los indicadores del avance que llevan a algun sitio ---
+  //
+  // Solo dos son pulsables, y a proposito: «suficientes 3 de 10» nombra un CONJUNTO
+  // -las otras siete-; «avance 42 %» dice cuanto queda. Los demas son recuentos sin
+  // destino, y hacerlos pulsables enseñaria a pulsar, no el criterio.
+  const pulsables = [ ...js.matchAll(/statAtajo\(/g) ].length;
+  ok(pulsables === 3,
+    'solo DOS indicadores del avance son pulsables (3 llamadas: 2 usos y la definicion)',
+    pulsables + ' llamadas a statAtajo');
+
+  ok(/stat\('Tareas', total\)/.test(js) && !/statAtajo\('Tareas'/.test(js),
+    'y «Tareas» NO lo es: es un recuento sin destino que ofrecer');
+
+  ok([ ...js.matchAll(/ver las que faltan/g) ].length >= 2,
+    'el atajo lleva la pista ESCRITA (en el celular no hay hover que avise de que se pulsa)');
+
+  ok(/sel\.value = sel\.value === 'faltan' \? '' : 'faltan';/.test(js),
+    'y pulsarlo otra vez quita el filtro: la lista no se queda filtrada sin salida');
+
+  // El enlace va DESPUES de pintar el avance. Si se olvida, la pantalla se ve igual y
+  // el atajo no hace nada: el fallo mas silencioso de todos.
+  const iAvance = js.indexOf("$('avance-general').innerHTML");
+  const iBind = iAvance === -1 ? -1 : js.indexOf('bindAtajosAvance();', iAvance);
+  ok(iAvance !== -1 && iBind !== -1,
+    'y el avance se enlaza DESPUES de pintarlo (pintado sin enlace = no escucha nadie)');
 }
 
 console.log('\n== 14. El endpoint de diagnostico (y lo que NO puede devolver) ==');

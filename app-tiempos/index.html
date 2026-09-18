@@ -82,6 +82,10 @@
     }
     .muestra.atipica { background: #fef2f2; border-color: #fecaca; text-decoration: line-through; }
 
+    /* La columna «Medir» de las tablas de resultados no se imprime: el cursograma es
+       un documento de lectura y en papel un boton no lleva a ningun sitio. */
+    @media print { .col-accion { display: none !important; } }
+
     /* En el celular el boton de medir queda pegado abajo y no se va con el scroll:
        si hay que buscarlo, se pierden mediciones. */
     @media (max-width: 640px) {
@@ -315,6 +319,7 @@
                 <th class="border p-2 text-left">Muestras</th>
                 <th class="border p-2 text-left">Margen</th>
                 <th class="border p-2 text-left">Rango</th>
+                <th class="border p-2 text-left col-accion">Medir</th>
               </tr>
             </thead>
             <tbody id="cursograma-filas"></tbody>
@@ -343,6 +348,7 @@
                 <th class="border p-2 text-left">Desv.</th><th class="border p-2 text-left">CV</th>
                 <th class="border p-2 text-left">Margen ±</th><th class="border p-2 text-left">Requeridas</th>
                 <th class="border p-2 text-left">Interpretación</th>
+                <th class="border p-2 text-left col-accion">Medir</th>
               </tr>
             </thead>
             <tbody id="resumen-filas"></tbody>
@@ -801,6 +807,39 @@ function renderTareas() {
 }
 
 /**
+ * Indicador PULSABLE del avance: lleva a las tareas que lo componen.
+ *
+ * Solo dos lo son, y a proposito: «suficientes 3 de 10» nombra un CONJUNTO -las otras
+ * siete-; «avance 42 %» dice cuanto queda. Los demas (tareas, con muestras, muestras
+ * tomadas, requeridas) son recuentos sin destino: hacerlos pulsables enseñaria a pulsar,
+ * no el criterio.
+ *
+ * Lleva la pista escrita porque en el celular no hay «hover» que avise de que se puede
+ * pulsar, y un atajo que no se ve no es un atajo.
+ */
+function statAtajo(etiqueta, valor, color, pista) {
+  return '<div class="bg-gray-50 rounded-lg p-3 cursor-pointer border border-transparent ' +
+      'hover:border-blue-300 hover:bg-blue-50" data-accion="filtrar-faltan" ' +
+      'title="Ver las tareas a las que les faltan muestras">' +
+    '<div class="text-xs text-gray-500 uppercase tracking-wide">' + etiqueta + '</div>' +
+    '<div class="text-xl font-bold ' + (color || 'text-slate-700') + '">' + valor + '</div>' +
+    '<div class="text-xs text-blue-700 mt-1">' + pista + ' →</div></div>';
+}
+
+/** Enlaza los indicadores pulsables. Se vuelve a pulsar para quitar el filtro: si no, la
+ *  lista se quedaria filtrada sin salida y pareceria que faltan tareas. */
+function bindAtajosAvance() {
+  document.querySelectorAll('#avance-general [data-accion="filtrar-faltan"]').forEach(function(caja) {
+    caja.addEventListener('click', function() {
+      var sel = $('filtro-estado');
+      sel.value = sel.value === 'faltan' ? '' : 'faltan';
+      cambiarVista('tareas');
+      renderTareas();
+    });
+  });
+}
+
+/**
  * Avance del estudio: TRES indicadores, no uno.
  *
  * «Llevo 50 de 100» no significa lo mismo que «llevo 50 y necesito 34». Y las tareas
@@ -825,10 +864,12 @@ function renderAvanceGeneral() {
   $('avance-general').innerHTML =
     stat('Tareas', total) +
     stat('Con muestras', conMuestras) +
-    stat('Suficientes', suficientes, suficientes === total && total > 0 ? 'text-green-700' : '') +
+    statAtajo('Suficientes', suficientes, suficientes === total && total > 0 ? 'text-green-700' : '', 'ver las que faltan') +
     stat('Muestras tomadas', tomadas) +
     stat('Requeridas', requeridas || '—') +
-    stat('Avance', requeridas ? pct + ' %' : '—', pct >= 100 ? 'text-green-700' : 'text-amber-600');
+    statAtajo('Avance', requeridas ? pct + ' %' : '—', pct >= 100 ? 'text-green-700' : 'text-amber-600', 'ver las que faltan');
+
+  bindAtajosAvance();
 
   $('barra-general').className = 'barra mt-4' + (pct >= 100 ? ' completa' : '');
   $('barra-general').firstElementChild.style.width = Math.min(100, pct) + '%';
@@ -1281,6 +1322,35 @@ function liberarAlSalir() {
 // Vista: cursograma y resumen
 // ===========================================================================
 
+/**
+ * Celda con el boton «Medir» de una fila de resultados.
+ *
+ * Es el puente entre el numero que se esta leyendo y el sitio donde se llena: quien no
+ * maneja esto ve «requeridas 34» y no sabe de donde sale ese 34; al pulsarlo cae en el
+ * cronometro y en la interpretacion, que es donde el concepto se ata solo.
+ *
+ * Va como BOTON y no como fila entera pulsable a proposito: `abrirTarea` APARTA la
+ * tarea (bloqueo multisesion) y pide el nombre del analista, asi que un roce al leer una
+ * tabla dejaria la tarea bloqueada para los demas hasta que salte el abandono.
+ *
+ * El manejador se enlaza con la tarea capturada, sin `data-id`: asi un id con comilla no
+ * puede romper nada, que es lo mismo que se hizo con las tarjetas de Tareas.
+ */
+function celdaMedir(t) {
+  var td = document.createElement('td');
+  td.className = 'border p-2 col-accion';
+
+  var boton = document.createElement('button');
+  boton.type = 'button';
+  boton.className = 'bg-blue-700 hover:bg-blue-800 text-white font-semibold py-2 px-3 rounded-lg text-xs whitespace-nowrap';
+  boton.textContent = 'Medir';
+  boton.title = 'Ir a medir «' + (t.nombre || t.id) + '»';
+  boton.addEventListener('click', function() { abrirTarea(t); });
+
+  td.appendChild(boton);
+  return td;
+}
+
 function renderCursograma() {
   $('cursograma-cabecera').innerHTML = APP.proyectoId
     ? 'Estudio: <strong>' + APP.proyectoId + '</strong> · ' + new Date().toLocaleDateString('es-MX')
@@ -1300,6 +1370,7 @@ function renderCursograma() {
       '<td class="border p-2">' + (m.n || 0) + '</td>' +
       '<td class="border p-2">' + (m.margen_s !== undefined ? '±' + num(m.margen_s, 3) : '—') + '</td>' +
       '<td class="border p-2">' + (m.min_s !== undefined ? num(m.min_s, 2) + ' – ' + num(m.max_s, 2) : '—') + '</td>';
+    tr.appendChild(celdaMedir(t));
     tb.appendChild(tr);
   });
 }
@@ -1324,6 +1395,7 @@ function renderResumen() {
       '<td class="border p-2">' + (m.margen_s !== undefined ? '±' + num(m.margen_s, 3) : '—') + '</td>' +
       '<td class="border p-2">' + (m.estimable ? m.requeridas : 'aún no estimable') + '</td>' +
       '<td class="border p-2 text-xs text-gray-600">' + (m.interpretacion || '') + '</td>';
+    tr.appendChild(celdaMedir(t));
     tb.appendChild(tr);
   });
 
