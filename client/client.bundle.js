@@ -7465,27 +7465,41 @@ class SimulationController {
   }
 
   /**
-   * Nombre base del archivo exportado: "<archivo original>_<metrica>".
+   * Nombre del ARCHIVO ORIGINAL, sin extension y sin el nombre de la aplicacion.
    *
-   * El plugin no recibe la ruta del archivo abierto, asi que el nombre se toma
-   * del titulo de la ventana, que Camunda Modeler pone con el nombre del
-   * archivo. Si no se puede deducir, se cae a "mapa-calor".
+   * `document.title` en Camunda Modeler lleva el nombre del archivo abierto, pero el
+   * formato cambia entre versiones: puede ser «demo.bpmn - Camunda Modeler», «demo» a
+   * secas, o el nombre de la aplicacion cuando no hay ningun archivo.
+   *
+   * Devuelve null cuando NO se puede deducir. Antes se devolvia el titulo tal cual, y
+   * con un Modeler que no sigue el patron esperado el «archivo» del configurador
+   * acababa siendo literalmente «Camunda Modeler». Un dato inventado es peor que un
+   * hueco: el hueco se ve.
    */
-  _nombreExportado() {
-    const metrica = limpiarNombre(NOMBRES_METRICA[this.lastMetric] || this.lastMetric || 'simulacion');
-
-    // "stratech.bpmn - Camunda Modeler" -> "stratech"
-    // Tambien cubre separadores como "|" o guion largo.
+  _nombreDelArchivo() {
     const titulo = String(document.title || '')
       .replace(/\s*[-–—|]\s*Camunda Modeler.*$/i, '')
       .trim();
 
-    const original = limpiarNombre(titulo.replace(/\.(bpmn20\.xml|bpmn|xml)$/i, ''));
+    if (!titulo) return null;
+    // Si lo que queda es solo el nombre de la aplicacion, no hay archivo que deducir.
+    if (/^camunda[- ]?modeler$/i.test(titulo)) return null;
 
-    // Si el titulo quedase vacio o fuese solo el nombre de la aplicacion, no se usa.
-    const utilizable = original && !/^camunda-modeler$/i.test(original);
+    const sinExtension = titulo.replace(/\.(bpmn20\.xml|bpmn|xml)$/i, '').trim();
+    return sinExtension || null;
+  }
 
-    return utilizable ? `${original}_${metrica}` : `mapa-calor_${metrica}`;
+  /**
+   * Nombre base del archivo a DESCARGAR (PNG o JSON): "<archivo>_<metrica>".
+   *
+   * No se usa para el nombre del proyecto del configurador: ahi lo que vale es el
+   * nombre del diagrama, no el de la metrica del mapa de calor que estuviera puesta.
+   */
+  _nombreExportado() {
+    const metrica = limpiarNombre(NOMBRES_METRICA[this.lastMetric] || this.lastMetric || 'simulacion');
+    const original = this._nombreDelArchivo();
+
+    return original ? `${limpiarNombre(original)}_${metrica}` : `mapa-calor_${metrica}`;
   }
 
   /**
@@ -7892,13 +7906,21 @@ class SimulationController {
     });
 
     const raiz = this._elementRegistry.find((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent') && ((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(el) || {}).isRoot);
+    const archivo = this._nombreDelArchivo();
 
     return {
       tipo: 'configurador-tiempos',
       version: 1,
       proyecto: {
-        nombre: this._nombreExportado(),
-        archivo: String(document.title || '').replace(/\s*[-–—|]\s*Camunda Modeler.*$/i, '').trim() || null,
+        // El nombre del proyecto es el del DIAGRAMA, no el del archivo a descargar.
+        // Antes se usaba `_nombreExportado()`, que devuelve «archivo_metrica»: el
+        // proyecto acababa llamandose «mapa-calor_simulacion», que es el nombre de la
+        // ultima metrica del mapa de calor y no dice nada del estudio.
+        nombre: archivo,
+        // `archivo` puede ser null si no se puede deducir del titulo de la ventana. Se
+        // deja el hueco a proposito: inventar el nombre de la aplicacion seria un dato
+        // falso, y un hueco se ve.
+        archivo: archivo,
         fecha: new Date().toISOString().slice(0, 10),
         semilla: raiz ? (((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(raiz) || {}).seed || null) : null
       },
