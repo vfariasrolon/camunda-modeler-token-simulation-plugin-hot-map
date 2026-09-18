@@ -415,6 +415,71 @@ check('CSV global: exporta los 30 campos',
   faltanEnCsv.length === 0,
   faltanEnCsv.length ? `FALTAN: ${faltanEnCsv.join(', ')}` : 'todos');
 
+// --- 7b. Las SECCIONES de Global y que cada lista este DENTRO de la suya ------
+//
+// El guardia de arriba solo comprueba que los campos EXISTAN, y pasaria igual con una
+// tabla plana: no distingue la pestaña reestructurada de la de antes. Estas
+// comprobaciones son las del objetivo real -Peras con peras-, y miran el ORDEN del
+// documento: cada tabla tiene que ir DESPUES de su titulo y ANTES del siguiente.
+const vaDespues = (nodo, referencia) =>
+  Boolean(referencia.compareDocumentPosition(nodo) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+const titulosSeccion = () => Array.from(document.querySelectorAll('h4.subtitulo'))
+  .filter((h) => h.closest('.data-table') === null)
+  .map((h) => h);
+
+const SECCIONES_ESPERADAS = [
+  'Simulación',
+  'Jornada y descansos',
+  'Arranque de la jornada',
+  'Lotes',
+  'Tiempo extra y reglas laborales (LFT)',
+  'Costo'
+];
+
+const encabezados = titulosSeccion();
+check('Global: la pestaña está partida en secciones',
+  encabezados.length === SECCIONES_ESPERADAS.length,
+  `${encabezados.length} secciones`);
+
+const titulosActuales = encabezados.map((h) => h.textContent.trim());
+check('Global: los títulos de sección son los esperados y en orden',
+  iguales(titulosActuales, SECCIONES_ESPERADAS),
+  JSON.stringify(titulosActuales));
+
+// Una lista esta DENTRO de su seccion si va despues de su titulo y antes del
+// siguiente titulo (o al final, si es la ultima).
+const dentroDe = (selectorLista, iSeccion) => {
+  const lista = document.querySelector(selectorLista);
+  if (!lista) return false;
+  if (!vaDespues(lista, encabezados[iSeccion])) return false;
+  const siguiente = encabezados[iSeccion + 1];
+  return siguiente ? vaDespues(siguiente, lista) : true;
+};
+
+check('Global: los descansos van DENTRO de la sección de la jornada',
+  dentroDe('.filas-descanso', 1));
+check('Global: la curva de arranque va DENTRO de la sección de arranque',
+  dentroDe('.caja-curva', 2));
+check('Global: la tabla de lote va DENTRO de la sección de lotes',
+  dentroDe('.filas-lote', 3));
+check('Global: las vigencias van DENTRO de la sección laboral',
+  dentroDe('.filas-regla', 4));
+
+// Y lo que se arreglaba: las vigencias dicen «lo que digan los valores de ARRIBA»,
+// asi que los campos que pisa tienen que estar de verdad por encima de su tabla.
+const camposSobreVigencias = [
+  'overtime.payMultiplier', 'overtime.excessPayMultiplier',
+  'labor.sundayPremiumPercent', 'labor.holidayPremiumPercent',
+  'labor.dailyOvertimeLimitHours', 'labor.maxOvertimeDaysPerWeek'
+];
+const tablaVigencias = document.querySelector('.filas-regla');
+const porDebajo = camposSobreVigencias.filter((c) =>
+  !vaDespues(tablaVigencias, document.querySelector(`[data-field="${c}"]`)));
+check('Global: los campos que las vigencias sobrescriben están POR ENCIMA de su tabla',
+  porDebajo.length === 0,
+  porDebajo.length ? `POR DEBAJO: ${porDebajo.join(', ')}` : `${camposSobreVigencias.length} campos`);
+
 check('Global: se pinta la tabla de tamaños de lote (aunque esté vacía)',
   Boolean(document.querySelector('.filas-lote')) && Boolean(document.querySelector('[data-accion="anadir-lote"]')));
 check('Global: la tabla empieza sin filas', !document.querySelector('[data-lote="size"]'));

@@ -1999,53 +1999,141 @@ const FLOW_DEFAULTS = () => ({ branchingProbability: 0.5 });
 // ---------------------------------------------------------------------------
 const pad = (n) => String(n).padStart(2, '0');
 
-const GLOBAL_FIELDS = [
-  { key: 'startDate', label: 'Fecha de inicio de la simulación', kind: 'text', path: [ 'startDate' ] },
-  { key: 'simulationConfig.runValue', label: 'Instancias a simular', kind: 'number', path: [ 'simulationConfig', 'runValue' ], min: 1 },
-  { key: 'arrivalRate.value', label: 'Tasa de llegada: cuántas llegadas por unidad', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0 },
-  { key: 'arrivalRate.unit', label: 'Tasa de llegada: unidad de tiempo', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ] },
-  { key: 'cost.baseRatePerHour', label: 'Tarifa base por hora', kind: 'number', path: [ 'cost', 'baseRatePerHour' ], min: 0 },
-  { key: 'cost.waitCostPerHour', label: 'Costo de espera por hora', kind: 'number', path: [ 'cost', 'waitCostPerHour' ], min: 0 },
-  { key: 'overtime.limitHours', label: 'Límite de horas antes de recargo', kind: 'number', path: [ 'overtime', 'limitHours' ], min: 0 },
-  { key: 'overtime.payMultiplier', label: 'Multiplicador de hora extra (x)', kind: 'number', path: [ 'overtime', 'payMultiplier' ], min: 1 },
-  { key: 'overtime.excessPayMultiplier', label: 'Multiplicador de exceso (x)', kind: 'number', path: [ 'overtime', 'excessPayMultiplier' ], min: 1 },
-  { key: 'calendar.workingDays', label: 'Días laborables (0=Dom … 6=Sáb)', kind: 'days', path: [ 'calendar', 'workingDays' ] },
-  { key: 'calendar.workingHours.start', label: 'Hora de entrada', kind: 'time', path: [ 'calendar', 'workingHours', 'start' ] },
-  { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ] },
+/**
+ * Los campos de la configuracion global, agrupados por FAMILIA.
+ *
+ * POR QUE POR FAMILIAS: antes eran 30 campos en UNA tabla plana, y cada familia
+ * quedaba PARTIDA en dos sitios: los valores de la jornada arriba y sus descansos
+ * veinte filas mas abajo; los del arranque en la tabla y su curva al final. Poner la
+ * jornada con sus pausas, o el lote con su tabla de tamaños, no es estetica: es no
+ * tener que buscar.
+ *
+ * `lista` es la tabla propia de la familia (descansos, curva, tamaño empirico,
+ * vigencias) y viaja DENTRO de su seccion.
+ *
+ * EL ORDEN IMPORTA EN UN SITIO: las vigencias laborales dicen «lo que digan los
+ * valores de arriba», asi que los campos que esas vigencias sobrescriben tienen que
+ * estar de verdad ENCIMA de su tabla. Por eso `overtime` y `labor` van en la MISMA
+ * seccion: la tabla de vigencias pisa a los dos (prima doble y triple son de
+ * `overtime`; dominical, festivo, tope al dia y dias por semana, de `labor`).
+ */
+const GLOBAL_SECCIONES = [
+  {
+    clave: 'simulacion',
+    titulo: 'Simulación',
+    campos: [
+      { key: 'startDate', label: 'Fecha de inicio de la simulación', kind: 'text', path: [ 'startDate' ] },
+      { key: 'simulationConfig.runValue', label: 'Instancias a simular', kind: 'number', path: [ 'simulationConfig', 'runValue' ], min: 1 },
+      { key: 'arrivalRate.value', label: 'Tasa de llegada: cuántas llegadas por unidad', kind: 'number', path: [ 'arrivalRate', 'value' ], min: 0 },
+      { key: 'arrivalRate.unit', label: 'Tasa de llegada: unidad de tiempo', kind: 'select', options: RATE_UNITS, path: [ 'arrivalRate', 'unit' ] },
+      { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true }
+    ],
+    nota: `
+      <strong>La tasa de llegada es una tasa, no un intervalo.</strong>
+      Con valor <code>60</code> y unidad <code>minute</code> no significa «una cada 60 minutos»:
+      significa <strong>60 llegadas por minuto, o sea una cada segundo</strong>, y las 1000 instancias
+      entrarían en la primera jornada. Para una llegada cada 60 minutos pon <code>1</code> con unidad
+      <code>hour</code>. El informe de la consola imprime la tasa ya resuelta («una cada 1.0 s»).
+      <br><br>
+      La <strong>semilla</strong> es lo que hace repetible una corrida: vacía se sortea una y se guarda
+      la que se usó; con un número, la misma corrida da el mismo resultado.
+    `
+  },
 
-  // --- curva de arranque -----------------------------------------------------
-  // Se DECLARA, no se mide. La vista previa de abajo existe porque un parametro
-  // abstracto no se puede discutir y una curva si: se mueve el valor, se ve la
-  // forma, y se decide si se parece a la planta.
-  { key: 'warmup.shape', label: 'Arranque: forma', kind: 'select', options: _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.WARMUP_SHAPES, path: [ 'warmup', 'shape' ] },
-  { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1 },
-  { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1 },
-  { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ] },
-  { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] },
+  {
+    clave: 'jornada',
+    titulo: 'Jornada y descansos',
+    campos: [
+      { key: 'calendar.workingDays', label: 'Días laborables (0=Dom … 6=Sáb)', kind: 'days', path: [ 'calendar', 'workingDays' ] },
+      { key: 'calendar.workingHours.start', label: 'Hora de entrada', kind: 'time', path: [ 'calendar', 'workingHours', 'start' ] },
+      { key: 'calendar.workingHours.end', label: 'Hora de salida', kind: 'time', path: [ 'calendar', 'workingHours', 'end' ] }
+    ],
+    lista: 'descansos',
+    nota: `
+      Marca los días laborables y ajusta las horas. La hora de entrada debe ser anterior a la de salida.
+    `
+  },
 
-  // --- lotes ----------------------------------------------------------------
-  // En modo lote las instancias llegan en GRUPOS y los grupos van en serie (uno
-  // detras de otro): no hay dos lotes a la vez.
-  { key: 'lots.enabled', label: 'Llegadas por LOTES (en serie)', kind: 'checkbox', path: [ 'lots', 'enabled' ] },
-  { key: 'lots.sizeMode', label: 'Tamaño de lote: modo', kind: 'select', options: LOT_SIZE_MODES, path: [ 'lots', 'sizeMode' ] },
-  { key: 'lots.size', label: 'Tamaño de lote: fijo', kind: 'number', path: [ 'lots', 'size' ], min: 1 },
-  { key: 'lots.min', label: 'Tamaño de lote: mínimo (triangular)', kind: 'number', path: [ 'lots', 'min' ], min: 1 },
-  { key: 'lots.mode', label: 'Tamaño de lote: moda (triangular)', kind: 'number', path: [ 'lots', 'mode' ], min: 1 },
-  { key: 'lots.max', label: 'Tamaño de lote: máximo (triangular)', kind: 'number', path: [ 'lots', 'max' ], min: 1 },
-  { key: 'lots.stopMinutes', label: 'Parón de cambio entre lotes (min)', kind: 'number', path: [ 'lots', 'stopMinutes' ], min: 0 },
+  {
+    clave: 'arranque',
+    titulo: 'Arranque de la jornada',
+    // Se DECLARA, no se mide. La vista previa existe porque un parametro abstracto no
+    // se puede discutir y una curva si: se mueve el valor, se ve la forma, y se decide
+    // si se parece a la planta.
+    campos: [
+      { key: 'warmup.shape', label: 'Arranque: forma', kind: 'select', options: _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.WARMUP_SHAPES, path: [ 'warmup', 'shape' ] },
+      { key: 'warmup.initialEfficiency', label: 'Arranque: eficiencia inicial (0,05-1)', kind: 'number', path: [ 'warmup', 'initialEfficiency' ], min: 0.05, max: 1 },
+      { key: 'warmup.recoveryMinutes', label: 'Arranque: minutos de recuperación', kind: 'number', path: [ 'warmup', 'recoveryMinutes' ], min: 1 },
+      { key: 'warmup.onShiftStart', label: 'Arranque al inicio de la jornada', kind: 'checkbox', path: [ 'warmup', 'onShiftStart' ] },
+      { key: 'warmup.onBreakReturn', label: 'Arranque al volver del descanso', kind: 'checkbox', path: [ 'warmup', 'onBreakReturn' ] }
+    ],
+    lista: 'curva',
+    nota: `
+      El arranque lento <strong>no se mide, se declara</strong>, y con una curva es más realista que
+      con un porcentaje fijo: el porcentaje plano repartiría la pérdida por <em>toda</em> la jornada,
+      incluida la tarde, donde no ocurre. Ajusta los valores y mira la forma: si no se parece a tu
+      planta, la curva está mal puesta.
+    `
+  },
 
-  // --- semilla --------------------------------------------------------------
-  { key: 'seed', label: 'Semilla (vacío = al azar, se guarda la usada)', kind: 'number', path: [ 'seed' ], min: 1, optional: true },
+  {
+    clave: 'lotes',
+    titulo: 'Lotes',
+    // En modo lote las instancias llegan en GRUPOS y los grupos van en serie (uno
+    // detras de otro): no hay dos lotes a la vez.
+    campos: [
+      { key: 'lots.enabled', label: 'Llegadas por LOTES (en serie)', kind: 'checkbox', path: [ 'lots', 'enabled' ] },
+      { key: 'lots.sizeMode', label: 'Tamaño de lote: modo', kind: 'select', options: LOT_SIZE_MODES, path: [ 'lots', 'sizeMode' ] },
+      { key: 'lots.size', label: 'Tamaño de lote: fijo', kind: 'number', path: [ 'lots', 'size' ], min: 1 },
+      { key: 'lots.min', label: 'Tamaño de lote: mínimo (triangular)', kind: 'number', path: [ 'lots', 'min' ], min: 1 },
+      { key: 'lots.mode', label: 'Tamaño de lote: moda (triangular)', kind: 'number', path: [ 'lots', 'mode' ], min: 1 },
+      { key: 'lots.max', label: 'Tamaño de lote: máximo (triangular)', kind: 'number', path: [ 'lots', 'max' ], min: 1 },
+      { key: 'lots.stopMinutes', label: 'Parón de cambio entre lotes (min)', kind: 'number', path: [ 'lots', 'stopMinutes' ], min: 0 }
+    ],
+    lista: 'loteEmpirico'
+  },
 
-  // --- reglas laborales (LFT) -----------------------------------------------
-  // Los tres primeros son los arts. 66 y 68 y ya existían como `overtime`; se
-  // quedan donde estaban para no migrar nada. Lo de abajo es lo que faltaba.
-  { key: 'labor.shiftType', label: 'Tipo de jornada (LFT art. 61)', kind: 'select', options: _LaborRules__WEBPACK_IMPORTED_MODULE_2__.TURNOS, path: [ 'labor', 'shiftType' ] },
-  { key: 'labor.dailyOvertimeLimitHours', label: 'Tope de horas extra al día (art. 65)', kind: 'number', path: [ 'labor', 'dailyOvertimeLimitHours' ], min: 0 },
-  { key: 'labor.maxOvertimeDaysPerWeek', label: 'Máximo de días con extra por semana (art. 65)', kind: 'number', path: [ 'labor', 'maxOvertimeDaysPerWeek' ], min: 0 },
-  { key: 'labor.sundayPremiumPercent', label: 'Prima dominical en % (art. 73)', kind: 'number', path: [ 'labor', 'sundayPremiumPercent' ], min: 0 },
-  { key: 'labor.holidayPremiumPercent', label: 'Prima de día festivo en % (art. 74, 0 = no se paga)', kind: 'number', path: [ 'labor', 'holidayPremiumPercent' ], min: 0 }
+  {
+    clave: 'laboral',
+    titulo: 'Tiempo extra y reglas laborales (LFT)',
+    // Los tres primeros son los arts. 66 y 68 y ya existian como `overtime`; se quedan
+    // para no migrar nada, pero van en la MISMA seccion que `labor` porque la tabla de
+    // vigencias los pisa a los dos.
+    campos: [
+      { key: 'overtime.limitHours', label: 'Límite de horas antes de recargo', kind: 'number', path: [ 'overtime', 'limitHours' ], min: 0 },
+      { key: 'overtime.payMultiplier', label: 'Multiplicador de hora extra (x)', kind: 'number', path: [ 'overtime', 'payMultiplier' ], min: 1 },
+      { key: 'overtime.excessPayMultiplier', label: 'Multiplicador de exceso (x)', kind: 'number', path: [ 'overtime', 'excessPayMultiplier' ], min: 1 },
+      { key: 'labor.shiftType', label: 'Tipo de jornada (LFT art. 61)', kind: 'select', options: _LaborRules__WEBPACK_IMPORTED_MODULE_2__.TURNOS, path: [ 'labor', 'shiftType' ] },
+      { key: 'labor.dailyOvertimeLimitHours', label: 'Tope de horas extra al día (art. 65)', kind: 'number', path: [ 'labor', 'dailyOvertimeLimitHours' ], min: 0 },
+      { key: 'labor.maxOvertimeDaysPerWeek', label: 'Máximo de días con extra por semana (art. 65)', kind: 'number', path: [ 'labor', 'maxOvertimeDaysPerWeek' ], min: 0 },
+      { key: 'labor.sundayPremiumPercent', label: 'Prima dominical en % (art. 73)', kind: 'number', path: [ 'labor', 'sundayPremiumPercent' ], min: 0 },
+      { key: 'labor.holidayPremiumPercent', label: 'Prima de día festivo en % (art. 74, 0 = no se paga)', kind: 'number', path: [ 'labor', 'holidayPremiumPercent' ], min: 0 }
+    ],
+    lista: 'vigencias',
+    nota: `
+      Alcance: esto es una <strong>tabla de tasas y umbrales para costear el proceso</strong>, no una
+      nómina. No se calculan IMSS, ISR, aguinaldo, prima vacacional ni finiquitos.
+    `
+  },
+
+  {
+    clave: 'costo',
+    titulo: 'Costo',
+    campos: [
+      { key: 'cost.baseRatePerHour', label: 'Tarifa base por hora', kind: 'number', path: [ 'cost', 'baseRatePerHour' ], min: 0 },
+      { key: 'cost.waitCostPerHour', label: 'Costo de espera por hora', kind: 'number', path: [ 'cost', 'waitCostPerHour' ], min: 0 }
+    ]
+  }
 ];
+
+/**
+ * Todos los campos globales, APLANADOS.
+ *
+ * Se DERIVA de las secciones en vez de escribirse aparte, para que no puedan divergir.
+ * Lo que recorre los campos sin importarle las familias -guardar, exportar el CSV,
+ * importarlo- sigue usando esta lista y no necesita saber que hay secciones.
+ */
+const GLOBAL_FIELDS = GLOBAL_SECCIONES.reduce((todos, s) => todos.concat(s.campos), []);
 
 const DEFAULT_GLOBAL = () => ({
   startDate: '',
@@ -3225,111 +3313,127 @@ class DataTablePanel {
       return `<input type="text" class="cell" data-field="${field.key}" value="${esc(value == null ? '' : value)}">`;
     };
 
-    this._body.innerHTML = `
-      <p class="hint">Configuración global del evento raíz: <strong>${esc(this._label(element))}</strong> (${esc(element.id)})</p>
+    // Cada familia es una SECCION con su titulo, sus campos y SU tabla. Las listas
+    // viajaban todas al final de la pestaña, lejos de los valores que gobiernan: la
+    // jornada arriba y sus descansos veinte filas mas abajo. Eso es lo que hacia que
+    // la pestaña pareciera revuelta.
+    const seccion = (s) => `
+      <h4 class="subtitulo">${esc(s.titulo)}</h4>
       <table class="data-table">
         <thead>
           <tr><th class="col-campo">Campo</th><th>Valor</th></tr>
         </thead>
         <tbody>
-          ${GLOBAL_FIELDS.map((f) => `
+          ${s.campos.map((f) => `
             <tr data-el-id="${element.id}">
               <td class="col-campo" title="${esc(f.key)}">${esc(f.label)}</td>
               <td>${cell(f)}</td>
             </tr>`).join('')}
         </tbody>
       </table>
-      <p class="hint">
-        <strong>La tasa de llegada es una tasa, no un intervalo.</strong>
-        Con valor <code>60</code> y unidad <code>minute</code> no significa «una cada 60 minutos»:
-        significa <strong>60 llegadas por minuto, o sea una cada segundo</strong>, y las 1000 instancias
-        entrarían en la primera jornada. Para una llegada cada 60 minutos pon <code>1</code> con unidad
-        <code>hour</code>. El informe de la consola imprime la tasa ya resuelta («una cada 1.0 s»).
-      </p>
-      <p class="hint">
-        Marca los días laborables y ajusta las horas con los selectores.
-        La hora de entrada debe ser anterior a la de salida.
-      </p>
+      ${s.nota ? `<p class="hint">${s.nota}</p>` : ''}
+      ${s.lista ? this._listaDeSeccion(s.lista, data) : ''}
+    `;
 
-      <h4 class="subtitulo">Descansos</h4>
-      <p class="hint">
-        Un descanso <strong>parte la jornada en tramos</strong>: la tarea que lo pilla a medias
-        se pausa y se retoma al volver. Un descanso <strong>nunca es tiempo productivo</strong> (baja la
-        capacidad y sube ρ), y sus dos casillas dicen dos cosas distintas:
-        <em>¿cuenta como jornada?</em> afecta al umbral de horas extra (la ley lo exige cuando
-        <strong>no</strong> se puede salir del centro), y <em>¿también en horas extra?</em> decide si el
-        descanso se toma cuando la jornada se alarga.
-      </p>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Desde</th><th>Hasta</th>
-            <th>¿Cuenta como jornada?</th><th>¿También en horas extra?</th><th></th>
-          </tr>
-        </thead>
-        <tbody class="filas-descanso">
-          ${(data.calendar && Array.isArray(data.calendar.breaks) ? data.calendar.breaks : [])
-            .map((b) => this._filaDescanso(b)).join('')}
-        </tbody>
-      </table>
-      <button class="btn-anadir-fila" type="button" data-accion="anadir-descanso">+ Añadir descanso</button>
-
-      <h4 class="subtitulo">Curva de arranque</h4>
-      <p class="hint">
-        El arranque lento <strong>no se mide, se declara</strong>, y con una curva es más realista que
-        con un porcentaje fijo: el porcentaje plano repartiría la pérdida por <em>toda</em> la jornada,
-        incluida la tarde, donde no ocurre. Ajusta los valores y mira la forma: si no se parece a tu
-        planta, la curva está mal puesta.
-      </p>
-      <div class="caja-curva">${this._svgArranque(data.warmup)}</div>
-      <p class="hint" data-resumen-arranque>${esc((0,_WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.describeWarmup)(data.warmup))}</p>
-
-      <h4 class="subtitulo">Tamaño de lote empírico</h4>
-      <p class="hint">
-        Solo se usa con el modo <strong>empirical</strong>: una tabla de tamaños con sus frecuencias,
-        que es como llegan los pedidos de verdad («de 10, el 30 % de las veces; de 20, el 50 %…»).
-        El <em>peso</em> es una frecuencia relativa: no hace falta que sume 100.
-      </p>
-      <table class="data-table">
-        <thead><tr><th>Tamaño del lote</th><th>Peso (frecuencia)</th><th></th></tr></thead>
-        <tbody class="filas-lote">
-          ${((data.lots && data.lots.table) || []).map((f) => this._filaLote(f)).join('')}
-        </tbody>
-      </table>
-      <button class="btn-anadir-fila" type="button" data-accion="anadir-lote">+ Añadir tamaño</button>
-
-      <h4 class="subtitulo">Reglas laborales con vigencia</h4>
-      <p class="hint">
-        Aquí se declara <strong>desde cuándo rige cada regla</strong>, y no un número en una casilla.
-        La diferencia importa: si el cupo semanal de horas extra se guardara suelto y mañana cambiara la
-        ley, <em>todos</em> los informes ya emitidos se recalcularían con la ley nueva y dejarían de ser
-        auditables. Con vigencias, se <strong>añade una fila</strong> y cada corrida guarda qué versión
-        usó. Deja la tabla vacía para usar los valores de arriba tal cual.
-      </p>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Desde</th><th>Cupo semanal (h)</th><th>Prima doble (×)</th><th>Prima triple (×)</th>
-            <th>Tope al día (h)</th><th>Días/semana</th><th>Dominical (%)</th><th>Festivo (%)</th><th></th>
-          </tr>
-        </thead>
-        <tbody class="filas-regla">
-          ${((data.labor && data.labor.rules) || []).map((r) => this._filaRegla(r)).join('')}
-        </tbody>
-      </table>
-      <button class="btn-anadir-fila" type="button" data-accion="anadir-regla">+ Añadir vigencia</button>
-      <p class="hint">
-        Una celda vacía significa <strong>«lo que digan los valores de arriba»</strong>: así solo hay que
-        rellenar lo que cambia. Se resuelven por la <strong>fecha de arranque</strong> de la simulación, no
-        por la de hoy, y si ninguna rige todavía se usa lo de arriba y el informe lo dice.
-      </p>
-      <p class="hint">
-        Alcance: esto es una <strong>tabla de tasas y umbrales para costear el proceso</strong>, no una
-        nómina. No se calculan IMSS, ISR, aguinaldo, prima vacacional ni finiquitos.
-      </p>
+    this._body.innerHTML = `
+      <p class="hint">Configuración global del evento raíz: <strong>${esc(this._label(element))}</strong> (${esc(element.id)})</p>
+      ${GLOBAL_SECCIONES.map(seccion).join('')}
     `;
 
     this._bindGlobalExtras();
+  }
+
+  /**
+   * La tabla propia de una familia, dibujada DENTRO de su seccion.
+   *
+   * Las cuatro (descansos, curva, tamaño empirico y vigencias) vivian al final de la
+   * pestaña, cada una en su bloque, separadas de los campos que gobiernan. Ahora cada
+   * una va pegada a los suyos.
+   *
+   * Se devuelve HTML y no se manipula el DOM porque el llamador lo mete en un
+   * `innerHTML` completo: crear nodos sueltos obligaria a insertarlos despues.
+   */
+  _listaDeSeccion(nombre, data) {
+    if (nombre === 'descansos') {
+      return `
+        <p class="hint">
+          Un descanso <strong>parte la jornada en tramos</strong>: la tarea que lo pilla a medias
+          se pausa y se retoma al volver. Un descanso <strong>nunca es tiempo productivo</strong> (baja la
+          capacidad y sube ρ), y sus dos casillas dicen dos cosas distintas:
+          <em>¿cuenta como jornada?</em> afecta al umbral de horas extra (la ley lo exige cuando
+          <strong>no</strong> se puede salir del centro), y <em>¿también en horas extra?</em> decide si el
+          descanso se toma cuando la jornada se alarga.
+        </p>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Desde</th><th>Hasta</th>
+              <th>¿Cuenta como jornada?</th><th>¿También en horas extra?</th><th></th>
+            </tr>
+          </thead>
+          <tbody class="filas-descanso">
+            ${(data.calendar && Array.isArray(data.calendar.breaks) ? data.calendar.breaks : [])
+              .map((b) => this._filaDescanso(b)).join('')}
+          </tbody>
+        </table>
+        <button class="btn-anadir-fila" type="button" data-accion="anadir-descanso">+ Añadir descanso</button>
+      `;
+    }
+
+    if (nombre === 'curva') {
+      return `
+        <div class="caja-curva">${this._svgArranque(data.warmup)}</div>
+        <p class="hint" data-resumen-arranque>${esc((0,_WarmupCurve__WEBPACK_IMPORTED_MODULE_1__.describeWarmup)(data.warmup))}</p>
+      `;
+    }
+
+    if (nombre === 'loteEmpirico') {
+      return `
+        <p class="hint">
+          Solo se usa con el modo <strong>empirical</strong>: una tabla de tamaños con sus frecuencias,
+          que es como llegan los pedidos de verdad («de 10, el 30 % de las veces; de 20, el 50 %…»).
+          El <em>peso</em> es una frecuencia relativa: no hace falta que sume 100.
+        </p>
+        <table class="data-table">
+          <thead><tr><th>Tamaño del lote</th><th>Peso (frecuencia)</th><th></th></tr></thead>
+          <tbody class="filas-lote">
+            ${((data.lots && data.lots.table) || []).map((f) => this._filaLote(f)).join('')}
+          </tbody>
+        </table>
+        <button class="btn-anadir-fila" type="button" data-accion="anadir-lote">+ Añadir tamaño</button>
+      `;
+    }
+
+    if (nombre === 'vigencias') {
+      return `
+        <p class="hint">
+          Aquí se declara <strong>desde cuándo rige cada regla</strong>, y no un número en una casilla.
+          La diferencia importa: si el cupo semanal de horas extra se guardara suelto y mañana cambiara la
+          ley, <em>todos</em> los informes ya emitidos se recalcularían con la ley nueva y dejarían de ser
+          auditables. Con vigencias, se <strong>añade una fila</strong> y cada corrida guarda qué versión
+          usó. Deja la tabla vacía para usar los valores de arriba tal cual.
+        </p>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Desde</th><th>Cupo semanal (h)</th><th>Prima doble (×)</th><th>Prima triple (×)</th>
+              <th>Tope al día (h)</th><th>Días/semana</th><th>Dominical (%)</th><th>Festivo (%)</th><th></th>
+            </tr>
+          </thead>
+          <tbody class="filas-regla">
+            ${((data.labor && data.labor.rules) || []).map((r) => this._filaRegla(r)).join('')}
+          </tbody>
+        </table>
+        <button class="btn-anadir-fila" type="button" data-accion="anadir-regla">+ Añadir vigencia</button>
+        <p class="hint">
+          Una celda vacía significa <strong>«lo que digan los valores de arriba»</strong>: así solo hay que
+          rellenar lo que cambia. Se resuelven por la <strong>fecha de arranque</strong> de la simulación, no
+          por la de hoy, y si ninguna rige todavía se usa lo de arriba y el informe lo dice.
+        </p>
+      `;
+    }
+
+    return '';
   }
 
   /** Una fila de la tabla de vigencias de las reglas laborales. */
