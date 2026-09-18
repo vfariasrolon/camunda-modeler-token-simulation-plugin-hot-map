@@ -1394,7 +1394,7 @@ export default class DataTablePanel {
       </p>
       <table class="data-table">
         <thead>
-          <tr><th>Nombre de la piscina</th><th>Cantidad</th><th>Miembros con nombre (opcional)</th><th></th></tr>
+          <tr><th>Nombre de la piscina</th><th>Cantidad</th><th>Origen y cobro</th><th>Miembros con nombre (opcional)</th><th></th></tr>
         </thead>
         <tbody class="filas-pool">
           ${pools.map((p) => this._filaPool(p)).join('')}
@@ -1403,6 +1403,14 @@ export default class DataTablePanel {
       <p class="hint">
         Los nombres deben ser <strong>únicos</strong> y las cantidades enteros ≥ 1.
         Después podrás asignarlas en la pestaña <strong>Tareas</strong>.
+      </p>
+      <p class="hint">
+        <strong>Propia o proveedor</strong>: a tu personal le pagas <em>las horas</em> (tarifa de la persona, o la
+        de planta si no la declaras). A un <strong>proveedor</strong> le puedes pagar las horas o <strong>las
+        piezas</strong>, y no es lo mismo: cobrando por pieza, el tiempo que tú pierdas esperando o arrancando
+        <em>no te cuesta más</em>; cobrando por hora, sí. Al proveedor <strong>no le aplican las primas de la
+        LFT</strong> (dominical, festivo, doble y triple) ni sus horas cuentan para tu tope semanal: eso es de tu
+        plantilla, y el informe lo separa.
       </p>
       <p class="hint">
         <strong>Miembros</strong>: si los declaras, cada unidad pasa a ser <em>una persona concreta</em> con su
@@ -1421,6 +1429,9 @@ export default class DataTablePanel {
         // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
         // parseo de un contenedor que no sea <table>/<tbody>.
         tbody.insertAdjacentHTML('beforeend', this._filaPool(null));
+        // Solo la fila nueva: volver a enlazar todas duplicaria los manejadores
+        // de las que ya estaban.
+        this._bindCobroDeFila(tbody.lastElementChild);
       });
     }
 
@@ -1429,6 +1440,11 @@ export default class DataTablePanel {
     // acciones: quitar una piscina y quitar un miembro.
     const tbody = this._body.querySelector('.filas-pool');
     if (tbody) {
+      // Cambiar de propia a proveedor (o de hora a pieza) ensena u oculta sus
+      // campos EN EL SITIO: sin esto, la unica forma de ver el campo de precio
+      // seria guardar y reabrir, que es justo lo que el usuario no hace.
+      this._bindCobro(tbody);
+
       domEvent.bind(tbody, 'click', (e) => {
         const objetivo = e.target;
         if (!objetivo || !objetivo.closest) return;
@@ -1480,16 +1496,80 @@ export default class DataTablePanel {
       </tr>`;
   }
 
+  /**
+   * Enlaza los desplegables de origen y cobro de cada piscina.
+   *
+   * La visibilidad la decide el VALOR del desplegable, no lo que hubiera guardado:
+   * asi el usuario ve lo que acaba de elegir aunque no haya guardado todavia, que
+   * es lo unico que hace usable un formulario condicional.
+   */
+  _bindCobro(alcance) {
+    (alcance || this._body).querySelectorAll('.filas-pool > tr')
+      .forEach((tr) => this._bindCobroDeFila(tr));
+  }
+
+  _bindCobroDeFila(tr) {
+    const origen = tr.querySelector('[data-field="pool.origen"]');
+    const cobro = tr.querySelector('[data-field="pool.cobro"]');
+    const campos = tr.querySelector('.cobro-campos');
+    const tarifa = tr.querySelector('.cobro-tarifa');
+    const pieza = tr.querySelector('.cobro-pieza');
+    if (!origen || !cobro) return;
+
+    const sincronizar = () => {
+      const esExterna = origen.value === 'externa';
+      const porPieza = cobro.value === 'pieza';
+      if (campos) campos.hidden = !esExterna;
+      if (tarifa) tarifa.hidden = porPieza;
+      if (pieza) pieza.hidden = !porPieza;
+    };
+
+    domEvent.bind(origen, 'change', sincronizar);
+    domEvent.bind(cobro, 'change', sincronizar);
+    sincronizar();
+  }
+
   _filaPool(p) {
     const nombre = p && p.name;
     const cantidad = p && p.quantity;
     const miembros = (p && Array.isArray(p.members) ? p.members : []);
     const valor = cantidad == null || cantidad === '' ? 1 : cantidad;
+
+    // ORIGEN Y COBRO. Solo se pintan los campos que aplican, pero se pintan
+    // SIEMPRE en el DOM (ocultos) y no solo cuando toca: al cambiar el
+    // desplegable hay que poder ensenar el campo sin re-renderizar la tabla, y
+    // re-renderizar se llevaria por delante lo que se este escribiendo.
+    const externa = (p && p.origen) === 'externa';
+    const porPieza = (p && p.cobro) === 'pieza';
+    const num = (v) => (v == null || v === '' ? '' : esc(v));
+
     return `
       <tr>
         <td><input type="text" class="cell" data-field="pool.name"
           value="${esc(nombre == null ? '' : nombre)}" placeholder="p. ej. Analistas"></td>
         <td><input type="number" step="1" min="1" class="cell mini" data-field="pool.quantity" value="${valor}"></td>
+        <td class="celda-cobro">
+          <select class="cell" data-field="pool.origen">
+            <option value="propia" ${externa ? '' : 'selected'}>Propia (nómina)</option>
+            <option value="externa" ${externa ? 'selected' : ''}>Proveedor externo</option>
+          </select>
+          <div class="cobro-campos" ${externa ? '' : 'hidden'}>
+            <select class="cell" data-field="pool.cobro">
+              <option value="hora" ${porPieza ? '' : 'selected'}>Me factura por hora</option>
+              <option value="pieza" ${porPieza ? 'selected' : ''}>Me factura por pieza</option>
+            </select>
+            <div class="cobro-tarifa" ${porPieza ? 'hidden' : ''}>
+              <input type="number" step="any" min="0" class="cell mini" data-field="pool.tarifaHora"
+                value="${num(p && p.tarifaHora)}" placeholder="$/h">
+              <span class="cobro-unidad">$/hora</span>
+            </div>
+            <div class="cobro-pieza" ${porPieza ? '' : 'hidden'}>
+              <input type="number" step="any" min="0" class="cell mini" data-field="pool.precioPieza"
+                value="${num(p && p.precioPieza)}" placeholder="$/pieza">
+              <span class="cobro-unidad">$/pieza</span>
+            </div>
+          </div>
+        </td>
         <td class="celda-miembros">
           <table class="tabla-miembros">
             <thead>
@@ -2358,6 +2438,44 @@ export default class DataTablePanel {
         });
 
         const pool = { name: nombre, quantity: cantidad };
+
+        // ORIGEN Y COBRO. Una piscina PROPIA no escribe nada: el XML de los
+        // diagramas que ya existen no puede engordar por una funcion que no usan,
+        // y el motor trata la ausencia como «propia» (que es el defecto).
+        const origen = String((tr.querySelector('[data-field="pool.origen"]') || {}).value || 'propia');
+        if (origen === 'externa') {
+          const cobro = String((tr.querySelector('[data-field="pool.cobro"]') || {}).value || 'hora');
+          const leer = (campo) => String((tr.querySelector(`[data-field="${campo}"]`) || {}).value || '').trim();
+
+          pool.origen = 'externa';
+          pool.cobro = cobro === 'pieza' ? 'pieza' : 'hora';
+
+          if (pool.cobro === 'pieza') {
+            const precio = leer('pool.precioPieza');
+            // Se EXIGE el precio: un proveedor por pieza sin precio factura 0 y el
+            // informe ensenaria un coste mas barato que el real. Un cero silencioso
+            // es peor que no dejar guardar.
+            if (precio === '') {
+              throw new Error(
+                `Piscina «${nombre}»: es un proveedor que cobra POR PIEZA y le falta el precio. `
+                + 'Sin él, el coste saldría 0 y el informe mentiría.'
+              );
+            }
+            const valor = this._num(precio, `Piscina «${nombre}» · precio por pieza`);
+            if (!(valor > 0)) throw new Error(`Piscina «${nombre}»: el precio por pieza debe ser mayor que 0`);
+            pool.precioPieza = valor;
+          } else {
+            const tarifa = leer('pool.tarifaHora');
+            // La tarifa por hora sí puede faltar: el motor cae en la de planta, que
+            // es un numero visible y plausible. Se avisa en el hint, no se bloquea.
+            if (tarifa !== '') {
+              const valor = this._num(tarifa, `Piscina «${nombre}» · tarifa por hora`);
+              if (valor < 0) throw new Error(`Piscina «${nombre}»: la tarifa por hora no puede ser negativa`);
+              pool.tarifaHora = valor;
+            }
+          }
+        }
+
         // `members` solo se guarda si hay alguno: una lista vacia en el XML es
         // ruido, y el motor trata «sin miembros» y «lista vacia» igual.
         if (members.length) pool.members = members;
@@ -2921,7 +3039,11 @@ export default class DataTablePanel {
       // Una fila por PISCINA, y los miembros en columnas aparte. Se aplana en vez
       // de sacar una fila por miembro porque en Excel una piscina con nombres es
       // mas facil de leer asi, y al importar se reconstruye igual.
-      const rows = [ [ 'nombre', 'cantidad', 'miembros' ] ];
+      //
+      // Las tres columnas del cobro van al final: `propia` y `hora` son el
+      // defecto, asi que un diagrama sin proveedores exporta las columnas vacias y
+      // el CSV sigue siendo el mismo de antes por la izquierda.
+      const rows = [ [ 'nombre', 'cantidad', 'miembros', 'origen', 'cobro', 'tarifa_hora', 'precio_pieza' ] ];
       this._getPools().forEach((p) => {
         const miembros = (p.members || []).map((m) => {
           const partes = [ m.nombre ];
@@ -2930,7 +3052,16 @@ export default class DataTablePanel {
           partes.push((m.habilidades || []).join(' '));
           return partes.join('|');
         }).join(';');
-        rows.push([ p.name, p.quantity, miembros ]);
+        const externa = p.origen === 'externa';
+        rows.push([
+          p.name,
+          p.quantity,
+          miembros,
+          externa ? 'externa' : '',
+          externa ? (p.cobro || 'hora') : '',
+          externa && p.cobro !== 'pieza' && p.tarifaHora != null ? p.tarifaHora : '',
+          externa && p.cobro === 'pieza' && p.precioPieza != null ? p.precioPieza : ''
+        ]);
       });
       return rows;
     }
@@ -3225,6 +3356,15 @@ export default class DataTablePanel {
       // la piscina se queda sin miembros en vez de reventar.
       const iM = header.indexOf('miembros');
 
+      // Columnas OPCIONALES del cobro: un CSV exportado antes de que existieran
+      // sigue entrando, y en ese caso las piscinas quedan como propias, que es lo
+      // que eran.
+      const iOrigen = header.indexOf('origen');
+      const iCobro = header.indexOf('cobro');
+      const iTarifa = header.indexOf('tarifa_hora');
+      const iPrecio = header.indexOf('precio_pieza');
+      const celda = (r, i) => (i === -1 || r[i] == null ? '' : String(r[i]).trim());
+
       const pools = [];
       const vistos = new Set();
 
@@ -3241,6 +3381,32 @@ export default class DataTablePanel {
         }
 
         const pool = { name: nombre, quantity: cantidad };
+
+        // El cobro del proveedor, si el CSV lo trae. Se normaliza igual que la
+        // tabla: solo 'externa' activa el cobro, y solo 'pieza' lo cambia de base.
+        if (celda(r, iOrigen).toLowerCase() === 'externa') {
+          const cobro = celda(r, iCobro).toLowerCase();
+          pool.origen = 'externa';
+          pool.cobro = cobro === 'pieza' ? 'pieza' : 'hora';
+
+          if (pool.cobro === 'pieza') {
+            const precio = celda(r, iPrecio);
+            if (precio === '') {
+              throw new Error(`Línea ${line}: la piscina «${nombre}» cobra por pieza y no trae ` +
+                '«precio_pieza». Sin él el coste saldría 0 y el informe mentiría.');
+            }
+            const valor = this._num(precio, `Línea ${line}: precio por pieza de «${nombre}»`);
+            if (!(valor > 0)) throw new Error(`Línea ${line}: el precio por pieza de «${nombre}» debe ser mayor que 0`);
+            pool.precioPieza = valor;
+          } else {
+            const tarifa = celda(r, iTarifa);
+            if (tarifa !== '') {
+              const valor = this._num(tarifa, `Línea ${line}: tarifa por hora de «${nombre}»`);
+              if (valor < 0) throw new Error(`Línea ${line}: la tarifa por hora de «${nombre}» no puede ser negativa`);
+              pool.tarifaHora = valor;
+            }
+          }
+        }
 
         const crudoMiembros = iM !== -1 ? String(r[iM] == null ? '' : r[iM]).trim() : '';
         if (crudoMiembros) {

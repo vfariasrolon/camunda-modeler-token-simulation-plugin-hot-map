@@ -1901,7 +1901,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     // convertia en tres tarjetas que mostraban siempre $0.00.
     let totalCost = 0, totalFailures = 0, totalReworkTime = 0, totalOvertimeMs = 0,
         totalDoubleOvertimeCost = 0, totalTripleOvertimeCost = 0,
-        totalOperationCost = 0, totalWaitTimeCost = 0;
+        totalOperationCost = 0, totalWaitTimeCost = 0, totalExternalCost = 0;
 
     // console.log('--- SUMMARY DATA ---');
     // console.log('Overtime Report:', report);
@@ -1916,8 +1916,13 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       totalDoubleOvertimeCost += result.totalDoubleOvertimeCost || 0;
       totalTripleOvertimeCost += result.totalTripleOvertimeCost || 0;
       totalOperationCost += result.totalOperationCost || 0;
+      totalExternalCost += result.totalExternalCost || 0;
       totalWaitTimeCost += result.totalWaitTimeCost || 0;
     });
+
+    // Nómina contra facturas. Se calcula restando para no cambiar el significado de
+    // `totalOperationCost`, que ya lo leen el informe y esta misma rejilla.
+    const totalNomina = totalOperationCost - totalExternalCost;
 
     const totalPrimasExtra = totalDoubleOvertimeCost + totalTripleOvertimeCost;
     const sumaComponentes = totalOperationCost + totalPrimasExtra + totalWaitTimeCost;
@@ -2096,6 +2101,15 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
             <span class="label">Costo de Operación (base):</span>
             <span class="value">${formatCurrency(totalOperationCost, 'MXN')}</span>
           </div>
+          ${totalExternalCost > 0 ? `
+          <div class="sim-summary-item">
+            <span class="label">· de eso, NÓMINA (tu plantilla):</span>
+            <span class="value">${formatCurrency(totalNomina, 'MXN')}</span>
+          </div>
+          <div class="sim-summary-item">
+            <span class="label">· y FACTURAS de proveedores:</span>
+            <span class="value">${formatCurrency(totalExternalCost, 'MXN')}</span>
+          </div>` : ''}
           <div class="sim-summary-item">
             <span class="label">Primas de Horas Extra (doble + triple):</span>
             <span class="value">${formatCurrency(totalPrimasExtra, 'MXN')}</span>
@@ -2123,6 +2137,11 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
           ${Math.abs(sumaComponentes - totalCost) < 0.01
             ? '— coincide con el Costo Total.'
             : `— NO coincide con el Costo Total (${formatCurrency(totalCost, 'MXN')}).`}
+          ${totalExternalCost > 0
+            ? ` De la operación, <strong>${formatCurrency(totalNomina, 'MXN')}</strong> es nómina y`
+              + ` <strong>${formatCurrency(totalExternalCost, 'MXN')}</strong> son facturas de proveedores.`
+              + ' A los proveedores no se les suman primas de la LFT: su factura es su precio.'
+            : ''}
         </p>
       </div>
     `;

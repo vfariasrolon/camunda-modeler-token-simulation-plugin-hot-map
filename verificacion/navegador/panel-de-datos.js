@@ -1360,6 +1360,117 @@ const csvRSinMiembros = [ [ 'nombre', 'cantidad' ], [ 'Soldadores', '3' ] ]
 const impR = panel._applyCsv(csvRSinMiembros);
 check('CSV recursos antiguo: entra y deja la piscina sin miembros',
   !impR[0].data.resourcePools[0].members, JSON.stringify(impR[0].data.resourcePools[0]));
+check('CSV recursos antiguo: y la deja PROPIA (que es lo que era)',
+  !impR[0].data.resourcePools[0].origen, JSON.stringify(impR[0].data.resourcePools[0]));
+
+// --- 14b. El proveedor externo y su forma de cobro -------------------------
+//
+// «A mi personal le pago las horas» y «a este taller le pago las piezas» son dos
+// cosas distintas, y la diferencia se decide aqui. Lo que se prueba es que la
+// declaracion llegue al modelo tal cual -sin claves muertas en las piscinas propias,
+// que es lo que engordaria el XML de los diagramas que ya existen- y que no se pueda
+// guardar un proveedor por pieza SIN precio.
+panel._activeTab = 'resources';
+panel._renderResources();
+
+// Se parte de un estado CONOCIDO: una piscina propia guardada. Sin esto, la
+// comprobacion de que los campos arrancan ocultos dependeria de lo que hubieran
+// dejado los casos anteriores, y fallaria por arrastre y no por su motivo.
+const filaPool0 = (() => {
+  const tr = document.querySelector('.filas-pool > tr');
+  const sel = tr.querySelector('[data-field="pool.origen"]');
+  sel.value = 'propia';
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  guardar(recoger('resources'));
+  panel._renderResources();
+  return document.querySelector('.filas-pool > tr');
+})();
+
+const origen0 = filaPool0.querySelector('[data-field="pool.origen"]');
+const cobro0 = filaPool0.querySelector('[data-field="pool.cobro"]');
+const camposCobro = filaPool0.querySelector('.cobro-campos');
+
+check('Piscina: el origen se ofrece como propia o proveedor',
+  Boolean(origen0) && origen0.options.length === 2, origen0 ? origen0.value : 'sin selector');
+check('Piscina: los campos de cobro arrancan OCULTOS en una piscina propia',
+  Boolean(camposCobro) && camposCobro.hidden === true);
+
+// El desplegable ensena sus campos sin guardar ni re-renderizar: es lo unico que
+// hace usable un formulario condicional.
+origen0.value = 'externa';
+origen0.dispatchEvent(new Event('change', { bubbles: true }));
+check('Piscina: al elegir proveedor aparecen sus campos, sin guardar',
+  camposCobro.hidden === false);
+check('Piscina: y arranca cobrando por HORA',
+  filaPool0.querySelector('[data-field="pool.cobro"]').value === 'hora');
+
+cobro0.value = 'pieza';
+cobro0.dispatchEvent(new Event('change', { bubbles: true }));
+check('Piscina: al pasar a «por pieza» se cambia el campo que se pide',
+  filaPool0.querySelector('.cobro-pieza').hidden === false
+  && filaPool0.querySelector('.cobro-tarifa').hidden === true);
+
+// Un proveedor por pieza SIN precio no se puede guardar: facturaria 0 y el informe
+// ensenaria un coste mas barato que el real.
+document.querySelectorAll('.filas-pool > tr')[0].querySelector('[data-field="pool.name"]').value = 'Taller';
+let errorPrecio = null;
+try { recoger('resources'); } catch (e) { errorPrecio = e.message; }
+check('Piscina: un proveedor por pieza sin precio se rechaza',
+  Boolean(errorPrecio) && /POR PIEZA.*falta el precio/s.test(errorPrecio), errorPrecio);
+
+// Con precio, se guarda tal cual.
+filaPool0.querySelector('[data-field="pool.precioPieza"]').value = '45';
+let guardado = recoger('resources')[0].data.resourcePools[0];
+check('Piscina: el proveedor por pieza se guarda con su precio',
+  guardado.origen === 'externa' && guardado.cobro === 'pieza' && guardado.precioPieza === 45,
+  JSON.stringify(guardado));
+
+// Y una piscina PROPIA no arrastra ninguna de esas claves: si las arrastrara, cada
+// guardado engordaria el XML de diagramas que no usan proveedores.
+filaPool0.querySelector('[data-field="pool.origen"]').value = 'propia';
+filaPool0.querySelector('[data-field="pool.origen"]').dispatchEvent(new Event('change', { bubbles: true }));
+guardado = recoger('resources')[0].data.resourcePools[0];
+check('Piscina propia: NO escribe origen, cobro ni precios (el XML no engorda)',
+  !('origen' in guardado) && !('cobro' in guardado) && !('precioPieza' in guardado)
+  && !('tarifaHora' in guardado),
+  JSON.stringify(guardado));
+
+// El proveedor por hora: su tarifa es SUYA, y el campo que se pide es el de horas.
+filaPool0.querySelector('[data-field="pool.origen"]').value = 'externa';
+filaPool0.querySelector('[data-field="pool.origen"]').dispatchEvent(new Event('change', { bubbles: true }));
+filaPool0.querySelector('[data-field="pool.cobro"]').value = 'hora';
+filaPool0.querySelector('[data-field="pool.cobro"]').dispatchEvent(new Event('change', { bubbles: true }));
+filaPool0.querySelector('[data-field="pool.tarifaHora"]').value = '250';
+guardado = recoger('resources')[0].data.resourcePools[0];
+check('Piscina: el proveedor por hora guarda su tarifa propia',
+  guardado.origen === 'externa' && guardado.cobro === 'hora' && guardado.tarifaHora === 250,
+  JSON.stringify(guardado));
+
+// CSV: ida y vuelta del proveedor declarado. El CSV sale del MODELO, asi que hay que
+// guardarlo antes: `recoger()` solo lee las casillas y, sin guardar, el export seguiria
+// viendo la piscina de antes (que es propia).
+guardar(recoger('resources'));
+panel._renderResources();
+const filasRProv = panel._csvForActiveTab();
+check('CSV recursos: lleva las columnas del cobro',
+  [ 'origen', 'cobro', 'tarifa_hora', 'precio_pieza' ].every((c) => filasRProv[0].includes(c)),
+  filasRProv[0].join(','));
+
+const impProv = panel._applyCsv(aCsv(filasRProv));
+check('CSV recursos: el proveedor sobrevive a exportar e importar',
+  impProv[0].data.resourcePools[0].origen === 'externa'
+  && impProv[0].data.resourcePools[0].tarifaHora === 250,
+  JSON.stringify(impProv[0].data.resourcePools[0]));
+
+// Y un CSV con cobro por pieza SIN precio no entra: el mismo candado que la tabla.
+const csvPiezaSinPrecio = [
+  [ 'nombre', 'cantidad', 'origen', 'cobro' ],
+  [ 'Taller', '1', 'externa', 'pieza' ]
+].map((r) => r.join(',')).join('\r\n');
+let errorCsv = null;
+try { panel._applyCsv(csvPiezaSinPrecio); } catch (e) { errorCsv = e.message; }
+check('CSV recursos: un proveedor por pieza sin precio tampoco entra',
+  Boolean(errorCsv) && /precio_pieza/.test(errorCsv), errorCsv);
 
 // --- 15. El atajo del diagnostico: ir al campo que falta -------------------
 //

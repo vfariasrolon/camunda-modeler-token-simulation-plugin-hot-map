@@ -137,6 +137,28 @@ class ResourcePool {
     // (duracion x unidades tomadas). Es el numerador de la utilizacion.
     this.busyMinutes = 0;
 
+    // ---------------------------------------------------------------------
+    // ORIGEN y FORMA DE COBRO.
+    //
+    // Hasta ahora habia UN tipo de recurso y UNA forma de cobrar: tiempo por
+    // tarifa. Pero «a mi personal le pago las horas» y «a este taller le pago las
+    // piezas» son dos cosas distintas, y la diferencia no es de matiz:
+    //
+    //   por HORA  el coste crece con la DURACION: si la tarea espera, si la
+    //             planta arranca lenta o si hay cola, se paga mas.
+    //   por PIEZA el coste depende de la CANTIDAD y no del reloj: el atasco de
+    //             tu planta deja de costarte dinero, que es justo lo que se
+    //             compra al subcontratar asi.
+    //
+    // Con `origen: 'propia'` (el defecto) TODO se comporta como antes: ningun
+    // diagrama existente cambia de numeros por declarar esta funcion.
+    // ---------------------------------------------------------------------
+    this.origen = config.origen === 'externa' ? 'externa' : 'propia';
+    // Una piscina propia no cobra por pieza: a la plantilla se le paga el tiempo.
+    this.cobro = (this.origen === 'externa' && config.cobro === 'pieza') ? 'pieza' : 'hora';
+    this.tarifaHora = Number(config.tarifaHora) > 0 ? Number(config.tarifaHora) : null;
+    this.precioPieza = Number(config.precioPieza) > 0 ? Number(config.precioPieza) : null;
+
     // Miembros con nombre. SIN miembros la piscina se comporta exactamente como
     // antes de A5: esto es lo que hace que ningun diagrama existente cambie.
     this.members = normalizeMembers(config.members);
@@ -342,7 +364,13 @@ export default class SimulationEngine {
 
     // Primas por dia trabajado: dominical (art. 73) y festivo (art. 74). Se
     // llevan en su propio cubo para que el cuadre del informe pueda demostrarlas.
-    this.premiumStats = { dominicalMs: 0, festivoMs: 0, imponible: 0 };
+    // Tiempo de proveedor en dia especial y fuera de jornada: se CUENTA pero no se
+    // cotiza. Se separa de `dominicalMs`/`festivoMs` -que son la base de la prima
+    // de la plantilla- porque sumarlos inflaria la prima de tus trabajadores.
+    this.premiumStats = {
+      dominicalMs: 0, festivoMs: 0, imponible: 0,
+      externoEnDiaEspecialMs: 0, externoFueraDeJornadaMs: 0
+    };
 
     // Carga fisica: DOS acumuladores que NUNCA se suman (cargada y arrastrada).
     // Y la operatividad: el tiempo muerto por categoria, que es lo que permite
@@ -386,6 +414,12 @@ export default class SimulationEngine {
         totalProcessingTime: 0, totalCost: 0, totalCycleTime: 0,
         totalOvertime: 0, totalReworkTime: 0, totalWaitTimeCost: 0,
         totalOperationCost: 0,
+        // La parte de `totalOperationCost` que es factura de proveedor. Se lleva
+        // aparte para poder decir «cuanto es nomina y cuanto es factura» sin
+        // redefinir `totalOperationCost`, que ya lo lee el informe y el resumen.
+        totalExternalCost: 0,
+        // Piezas facturadas por cobro por pieza (el informe explica el importe).
+        totalBilledPieces: 0,
         totalDoubleOvertimeCost: 0,
         totalTripleOvertimeCost: 0,
         totalDayPremiumCost: 0,
@@ -688,7 +722,44 @@ export default class SimulationEngine {
     // la de planta de respaldo, poner nombres NO mueve el coste: solo lo mueve
     // quien rellene tarifas por persona, que es lo que se quiere.
     const tarifaHora = (miembro && miembro.tarifaHora != null) ? miembro.tarifaHora : baseRatePerHour;
-    const operationCost = (duracionEfectivaMs / 3600000) * tarifaHora;
+
+    // --- EL COBRO DEL RECURSO EXTERNO -------------------------------------
+    //
+    // Un proveedor se factura de una de dos formas, y cada una se calcula contra
+    // una cosa distinta:
+    //
+    //   POR PIEZA: contra la CANTIDAD. El precio es por pieza, asi que hay que
+    //     contar cuantas piezas se facturan en esta ejecucion:
+    //       - tarea «por token» -> una pieza por ejecucion (cada caso es una).
+    //       - tarea «por lote»   -> el LOTE ENTERO de una vez, porque la tarea se
+    //         ejecuta una sola vez para todo el lote.
+    //     Y se usa el tamaño REAL del lote, no el configurado: el ULTIMO lote
+    //     puede ser mas corto (`Math.min(tamano, restantes)`), y facturarle el
+    //     tamaño nominal seria cobrarle piezas que no existen.
+    //
+    //   POR HORA: contra la DURACION, como la plantilla, pero con SU tarifa. La
+    //     de la planta no sirve: no es el mismo contrato.
+    //
+    // Y las dos cosas que un proveedor NO tiene, porque no es tu plantilla:
+    //   - primas de la LFT (dominical, festivo, doble y triple): el te factura su
+    //     precio; la prima del art. 73 es de TUS trabajadores.
+    //   - sus horas no cuentan para TU tope semanal de horas extra. Si contaran,
+    //     un proveedor que trabaja de noche pondria tu informe en «sobre el limite
+    //     legal» por horas que no son tuyas.
+    const externa = Boolean(pool && pool.origen === 'externa');
+    const porPieza = externa && pool.cobro === 'pieza';
+
+    let operationCost;
+    let piezasFacturadas = 0;
+    if (porPieza) {
+      const lote = taskEvent.lotNumber ? this.lots[taskEvent.lotNumber - 1] : null;
+      piezasFacturadas = lote ? lote.size : 1;
+      operationCost = (pool.precioPieza || 0) * piezasFacturadas;
+    } else if (externa && pool.tarifaHora != null) {
+      operationCost = (duracionEfectivaMs / 3600000) * pool.tarifaHora;
+    } else {
+      operationCost = (duracionEfectivaMs / 3600000) * tarifaHora;
+    }
 
     // Prima dominical (art. 73) y de dia festivo (art. 74). Se aplican sobre el
     // tiempo PAGADO de la tarea y se llevan en su propio cubo: sumarlas a la
@@ -705,10 +776,17 @@ export default class SimulationEngine {
       dayPremiumPercent = this.labor.sundayPremiumPercent;
       dayPremiumKind = 'dominical';
     }
-    const dayPremium = (duracionEfectivaMs / 3600000) * tarifaHora * (dayPremiumPercent / 100);
-    if (dayPremiumKind === 'festivo') this.premiumStats.festivoMs += duracionEfectivaMs;
+    // Un proveedor trabaja el domingo si le toca, pero no te cuesta la prima del
+    // art. 73: esa es de tu plantilla. Se calcula el dia igual -el dato es del
+    // calendario- pero no se le cobra prima.
+    const dayPremium = externa ? 0 : (duracionEfectivaMs / 3600000) * tarifaHora * (dayPremiumPercent / 100);
+    if (externa && dayPremiumKind) {
+      // Se cuenta el tiempo, no el importe: el informe puede decir «el proveedor
+      // trabajo N horas en domingo» sin sumarle un dinero que no paga.
+      this.premiumStats.externoEnDiaEspecialMs += duracionEfectivaMs;
+    } else if (dayPremiumKind === 'festivo') this.premiumStats.festivoMs += duracionEfectivaMs;
     else if (dayPremiumKind === 'dominical') this.premiumStats.dominicalMs += duracionEfectivaMs;
-    this.premiumStats.imponible += dayPremium;
+    if (!externa) this.premiumStats.imponible += dayPremium;
 
     // Overtime cost is the PREMIUM ONLY.
     // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
@@ -725,13 +803,23 @@ export default class SimulationEngine {
     // Las primas de la extra se calculan sobre la MISMA tarifa que la operacion:
     // si se usara la de la planta, el cuadre del informe dejaria de cerrar (la
     // operacion iria con la tarifa de la persona y la prima con la otra).
-    const doubleOvertimePremium = (normalOvertime / 3600000) * tarifaHora * (overtimeRules.payMultiplier - 1);
-    const tripleOvertimePremium = (excessOvertime / 3600000) * tarifaHora * (overtimeRules.excessPayMultiplier - 1);
+    //
+    // Y a un PROVEEDOR no le aplican: su factura es su precio, y las horas extra
+    // de la LFT son de tu plantilla. Sus horas tampoco entran en el cupo semanal
+    // ni en el desglose de primas: si entraran, un taller que trabaja de noche te
+    // pondria el informe en «sobre el limite legal» por horas que no son tuyas.
+    const doubleOvertimePremium = externa
+      ? 0 : (normalOvertime / 3600000) * tarifaHora * (overtimeRules.payMultiplier - 1);
+    const tripleOvertimePremium = externa
+      ? 0 : (excessOvertime / 3600000) * tarifaHora * (overtimeRules.excessPayMultiplier - 1);
 
-    this.overtimeBreakdown.normalMs += normalOvertime;
-    this.overtimeBreakdown.excessMs += excessOvertime;
-
-    this.weeklyStats.set(weekKey, currentWeeklyOvertime + taskOvertimeDuration);
+    if (externa) {
+      this.premiumStats.externoFueraDeJornadaMs += taskOvertimeDuration;
+    } else {
+      this.overtimeBreakdown.normalMs += normalOvertime;
+      this.overtimeBreakdown.excessMs += excessOvertime;
+      this.weeklyStats.set(weekKey, currentWeeklyOvertime + taskOvertimeDuration);
+    }
 
     const newTaskEvent = {
       type: 'TASK_COMPLETE',
@@ -743,6 +831,15 @@ export default class SimulationEngine {
       reworkTime,
       overtime: taskOvertimeDuration,
       operationCost,
+      // Cuanto de ese costo es FACTURA de un proveedor y no nomina. Va aparte
+      // porque el informe tiene que poder separarlos: «cuanto es mio y cuanto es
+      // factura» es la pregunta que decide si conviene seguir subcontratando.
+      costoExterno: externa ? operationCost : 0,
+      // Piezas que se facturaron (solo con cobro por pieza). Se guardan porque el
+      // numero no es obvio -una tarea por lote factura el lote entero de una vez-
+      // y el informe tiene que poder explicar de donde sale el importe.
+      piezasFacturadas: porPieza ? piezasFacturadas : 0,
+      cobroDelRecurso: externa ? pool.cobro : null,
       doubleOvertimePremium,
       tripleOvertimePremium,
       quantityRequired,
@@ -1032,6 +1129,8 @@ export default class SimulationEngine {
 
         // Accumulate new cost components
         results.totalOperationCost += event.operationCost;
+        results.totalExternalCost += (event.costoExterno || 0);
+        results.totalBilledPieces += (event.piezasFacturadas || 0);
         results.totalDoubleOvertimeCost += event.doubleOvertimePremium;
         results.totalTripleOvertimeCost += event.tripleOvertimePremium;
         results.totalDayPremiumCost += (event.dayPremium || 0);

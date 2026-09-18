@@ -236,6 +236,15 @@ export default class ReportPanel {
     const doble = suma(overtime, 'totalDoubleOvertimeCost');
     const triple = suma(overtime, 'totalTripleOvertimeCost');
     const costoEspera = suma(overtime, 'totalWaitTimeCost');
+
+    // LA SEPARACION: cuanto de la operacion es NOMINA y cuanto es FACTURA de un
+    // proveedor. Se calcula restando, no sumando: `totalOperationCost` sigue
+    // incluyendo las dos cosas (es lo que ya leian el resumen y el informe), y
+    // `totalExternalCost` marca la parte facturada. Asi ningun numero ya publicado
+    // cambia de significado, y la separacion es informacion anadida.
+    const facturas = suma(overtime, 'totalExternalCost');
+    const nomina = operacion - facturas;
+
     const costoTotal = operacion + doble + triple + costoEspera;
 
     const completadas = overtime ? overtime.completedInstances : 0;
@@ -277,6 +286,7 @@ export default class ReportPanel {
     return {
       normal, overtime, tareas, flujos,
       operacion, doble, triple, costoEspera, costoTotal,
+      nomina, facturas,
       completadas, minutosLaborables, dias: porDia.length,
       costoUnitario: completadas > 0 ? costoTotal / completadas : null,
       primas: doble + triple,
@@ -530,6 +540,11 @@ export default class ReportPanel {
         <tbody>
           <tr><td>Operación (trabajo a tarifa base)</td><td class="num">${formatCurrency(ctx.operacion, 'MXN')}</td>
               <td>duracion × tarifa base</td></tr>
+          ${ctx.facturas > 0 ? `
+          <tr class="sub"><td>· de eso, NÓMINA (plantilla)</td><td class="num">${formatCurrency(ctx.nomina, 'MXN')}</td>
+              <td>horas × tarifa de la persona o de planta</td></tr>
+          <tr class="sub"><td>· y FACTURAS de proveedores</td><td class="num">${formatCurrency(ctx.facturas, 'MXN')}</td>
+              <td>por hora o por pieza, segun la piscina</td></tr>` : ''}
           <tr><td>Prima de horas extra doble</td><td class="num">${formatCurrency(ctx.doble, 'MXN')}</td>
               <td>horas × tarifa × (mult − 1)</td></tr>
           <tr><td>Prima de horas extra triple</td><td class="num">${formatCurrency(ctx.triple, 'MXN')}</td>

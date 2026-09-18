@@ -896,3 +896,38 @@
   background: #e3f0ff;
   transition: background .25s;
 }
+
+/* Origen y cobro de una piscina (Recursos). Es un formulario CONDICIONAL: los
+   campos que no aplican se ocultan, pero se pintan siempre para poder ensenarlos
+   al cambiar el desplegable sin re-renderizar la tabla. */
+.sim-data-table-panel .celda-cobro {
+  min-width: 190px;
+}
+
+.sim-data-table-panel .celda-cobro .cobro-campos {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 5px;
+  padding-left: 8px;
+  border-left: 2px solid #e3ebf5;
+}
+
+.sim-data-table-panel .celda-cobro .cobro-campos[hidden],
+.sim-data-table-panel .celda-cobro .cobro-tarifa[hidden],
+.sim-data-table-panel .celda-cobro .cobro-pieza[hidden] {
+  display: none;
+}
+
+.sim-data-table-panel .celda-cobro .cobro-tarifa,
+.sim-data-table-panel .celda-cobro .cobro-pieza {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sim-data-table-panel .celda-cobro .cobro-unidad {
+  font-size: 11px;
+  color: #777;
+  white-space: nowrap;
+}
