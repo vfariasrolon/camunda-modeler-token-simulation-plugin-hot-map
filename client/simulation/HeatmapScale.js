@@ -59,6 +59,28 @@ export function opacidadDe(valor, max, uniforme = false, minOpacidad = OPACIDAD_
 }
 
 /**
+ * Fraccion (0..1) que le toca a un valor DENTRO de la escala, repartiendo entre el MINIMO
+ * y el MAXIMO de la corrida. Devuelve null cuando no hay contraste que repartir.
+ *
+ * POR QUE EXISTE, y es el arreglo del reporte «casi todo en azul y un punto rojo»: con
+ * `valor / max` el minimo de una corrida real cae muy por debajo de 0,4, que es donde la
+ * escala deja de ser plana, asi que CASI TODO aterriza en la banda azul y solo el valor mas
+ * alto llega al rojo. Se ve con un caso de verdad: en un bucle, la compuerta se ejecuta 9
+ * veces mas que una tarea y deja al minimo en `100/900 = 0,11`.
+ *
+ * Repartiendo entre `min` y `max`, el valor mas bajo recibe el extremo FRIO y el mas alto el
+ * CALIDO. Es lo correcto para un mapa RELATIVO: su pregunta no es «cuanto vale» sino «donde
+ * hay mas que en el resto», y para eso tiene que usar TODO su rango de color.
+ */
+export function fraccionDe(valor, min, max) {
+  const v = Number(valor) || 0;
+  const lo = Number(min) || 0;
+  const hi = Number(max) || 0;
+  if (!(hi > lo)) return null;
+  return Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
+}
+
+/**
  * Rango de los valores dibujados, con la marca de «todos iguales».
  *
  * Se calcula el rango en vez de ir tomando el máximo a medida que se dibuja

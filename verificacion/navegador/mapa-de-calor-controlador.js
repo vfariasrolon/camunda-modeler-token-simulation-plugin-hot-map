@@ -848,6 +848,75 @@ try {
 
   controller._puntosDelTrazo = originalPuntos;
 
+  // --- 18. EL MAPA POR TAREAS REPARTE ENTRE EL MINIMO Y EL MAXIMO ---
+  //
+  // Es el reporte «casi todo en azul y un punto rojo»: con `valor / max`, el minimo de una
+  // corrida real cae por debajo de 0,4 -donde la escala deja de ser plana-, y solo el
+  // maximo llega al rojo. Se reproduce con el caso del BUCLE: la compuerta se ejecuta 9
+  // veces mas que una tarea.
+  controller._elementRegistry = registro;
+  controller.simulationResults = new Map([
+    [ 'Task_1', { executionCount: 100 } ],
+    [ 'Task_2', { executionCount: 100 } ],
+    [ 'Gateway_1', { executionCount: 900 } ]
+  ]);
+
+  controller.showMetric('frequency');
+  const circulos18 = [ ...document.querySelectorAll('.heatmap-layer circle') ];
+  ok(circulos18.length === 3, 'se pintan las tres figuras con frecuencia', String(circulos18.length));
+
+  const ops18 = circulos18.map((c) => Number(c.getAttribute('opacity'))).sort((a, b) => a - b);
+  const minima = ops18[0];
+  const maxima = ops18[ops18.length - 1];
+
+  // Hay DOS valores distintos en la corrida (100 y 900), asi que tiene que haber DOS
+  // opacidades, no una. Es lo que se mide, y con cuidado: pedir TRES seria pedir algo
+  // imposible -dos figuras con el mismo valor merecen el mismo color, es correcto-.
+  const niveles = new Set(ops18.map((o) => o.toFixed(3))).size;
+
+  ok(niveles === 2,
+    'los dos valores distintos de la corrida reciben DOS opacidades distintas',
+    ops18.map((o) => o.toFixed(3)).join(', '));
+  ok(maxima === 1, 'el maximo recibe el extremo CALIDO', maxima.toFixed(3));
+
+  // LA PRUEBA QUE DISTINGUE LAS DOS REGLAS, y aqui esta el detalle: el minimo NO puede
+  // quedar por encima de 0,15. Con `valor/max` daba 100/900 = 0,111, y con el reparto por
+  // rango da 0 (el suelo `OPACIDAD_MINIMA` lo sube a 0,10). La diferencia es pequena en
+  // numero pero decisiva en el DIBUJO: 0,10 y 0,11 estan los dos dentro de la banda plana
+  // azul, pero con el reparto por rango el minimo ya esta en el SUELO, o sea que el
+  // maximo puede estar a 1 y todo lo de en medio se reparte. Sin el reparto, el valor de
+  // en medio se quedaba pegado al minimo.
+  ok(minima <= 0.15,
+    'y el minimo se queda en el suelo de la escala, no a media banda',
+    minima.toFixed(3));
+
+  // La senal inequivoca del fallo: donde cae un valor INTERMEDIO. Con `valor/max`, un
+  // valor de 500 sobre 900 da 0,55 (cian). Con el reparto por rango, 0,5. Lo que de verdad
+  // separa las dos reglas es el minimo: con la vieja, `min/max`; con la nueva, 0.
+  const conReparto = minima;
+  const conReglaVieja = Math.min(Math.max(100 / 900, 0.10), 1);
+  ok(Math.abs(conReparto - conReglaVieja) < 0.02,
+    'con este rango las dos reglas dan un minimo parecido (por eso el caso del bucle usado antes no bastaba)',
+    `reparto ${conReparto.toFixed(3)} vs viejo ${conReglaVieja.toFixed(3)}`);
+
+  // Y EL CASO QUE SI LAS SEPARA, que es el que hay que mirar: un rango donde el minimo NO
+  // es casi cero, como el trafico de una tarea que se ejecuta 80 veces frente a una de 100.
+  // Con `valor/max`: 0,80 (amarillo). Con el reparto por rango: 0 (azul). El mapa debe
+  // enseñar el CONTRASTE, no la distancia al cero.
+  const opsSesgado = (() => {
+    controller.simulationResults = new Map([
+      [ 'Task_1', { executionCount: 80 } ],
+      [ 'Task_2', { executionCount: 100 } ]
+    ]);
+    controller.showMetric('frequency');
+    return [ ...document.querySelectorAll('.heatmap-layer circle') ]
+      .map((c) => Number(c.getAttribute('opacity'))).sort((a, b) => a - b);
+  })();
+
+  ok(opsSesgado[0] <= 0.15,
+    'con un rango ESTRECHO (80 y 100) el menor sale frio, no amarillo: el mapa enseña contraste',
+    opsSesgado.map((o) => o.toFixed(3)).join(', '));
+
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //
   // ESTA es la comprobacion que faltaba, y la que explica el reporte. Contar circulos

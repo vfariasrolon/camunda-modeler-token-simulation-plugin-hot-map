@@ -6199,6 +6199,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   colorDeValor: () => (/* binding */ colorDeValor),
 /* harmony export */   colorFrio: () => (/* binding */ colorFrio),
 /* harmony export */   escalaDeMetrica: () => (/* binding */ escalaDeMetrica),
+/* harmony export */   fraccionDe: () => (/* binding */ fraccionDe),
 /* harmony export */   gradienteCss: () => (/* binding */ gradienteCss),
 /* harmony export */   opacidadDe: () => (/* binding */ opacidadDe),
 /* harmony export */   rangoDeValores: () => (/* binding */ rangoDeValores),
@@ -6263,6 +6264,28 @@ const GRADIENTE_ESCALA = {
 function opacidadDe(valor, max, uniforme = false, minOpacidad = OPACIDAD_MINIMA) {
   if (uniforme) return Math.min(Math.max(OPACIDAD_UNIFORME, minOpacidad), 1);
   return Math.min(Math.max(valor / (max || 1), minOpacidad), 1);
+}
+
+/**
+ * Fraccion (0..1) que le toca a un valor DENTRO de la escala, repartiendo entre el MINIMO
+ * y el MAXIMO de la corrida. Devuelve null cuando no hay contraste que repartir.
+ *
+ * POR QUE EXISTE, y es el arreglo del reporte «casi todo en azul y un punto rojo»: con
+ * `valor / max` el minimo de una corrida real cae muy por debajo de 0,4, que es donde la
+ * escala deja de ser plana, asi que CASI TODO aterriza en la banda azul y solo el valor mas
+ * alto llega al rojo. Se ve con un caso de verdad: en un bucle, la compuerta se ejecuta 9
+ * veces mas que una tarea y deja al minimo en `100/900 = 0,11`.
+ *
+ * Repartiendo entre `min` y `max`, el valor mas bajo recibe el extremo FRIO y el mas alto el
+ * CALIDO. Es lo correcto para un mapa RELATIVO: su pregunta no es «cuanto vale» sino «donde
+ * hay mas que en el resto», y para eso tiene que usar TODO su rango de color.
+ */
+function fraccionDe(valor, min, max) {
+  const v = Number(valor) || 0;
+  const lo = Number(min) || 0;
+  const hi = Number(max) || 0;
+  if (!(hi > lo)) return null;
+  return Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
 }
 
 /**
@@ -9201,6 +9224,27 @@ class SimulationController {
    * minima (o con la uniforme si todo el diagrama vale 0), que es informacion
    * util: se ve que se contabilizo y dio cero.
    */
+  /**
+   * Opacidad de un valor DENTRO del rango de la corrida.
+   *
+   * Es lo que hace legible un mapa de calor relativo, y el arreglo del reporte «casi todo
+   * en azul y un punto rojo»: reparte el color entre el MINIMO y el MAXIMO observados, en
+   * vez de calcular `valor / max`. Con `valor / max`, el minimo de una corrida real cae muy
+   * por debajo de 0,4 -donde la escala deja de ser plana- y el mapa sale entero azul con un
+   * unico punto rojo. Se ve con un bucle: la compuerta se ejecuta 9 veces mas que una tarea
+   * y deja al minimo en 100/900 = 0,11.
+   *
+   * Con `uniforme` (todos los valores iguales) no hay contraste que repartir: manda el
+   * extremo frio, que es lo que significa «no hay diferencias».
+   */
+  _opacidadEnRango(valor, rango) {
+    if (!rango || rango.uniforme) return (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.opacidadDe)(valor, rango ? rango.max : 0, true);
+    const f = (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.fraccionDe)(valor, rango.min, rango.max);
+    // `fraccionDe` devuelve null sin contraste; aqui ya se comprobo `uniforme`, asi que es
+    // una red por si el rango llega incompleto.
+    return f == null ? _HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.OPACIDAD_UNIFORME : Math.min(1, Math.max(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.OPACIDAD_MINIMA, f));
+  }
+
   _pushPoint(dataPoints, element, value, opacidad) {
     const cx = Math.round(element.x + (element.width || 0) / 2);
     const cy = Math.round(element.y + (element.height || 0) / 2);
@@ -9534,7 +9578,7 @@ class SimulationController {
       const soloFiguras = pares.filter((p) => !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(p.element, 'bpmn:SequenceFlow'));
       const dataPointsT = [];
       soloFiguras.forEach(({ element, value }) => {
-        this._pushPoint(dataPointsT, element, value, (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.opacidadDe)(value, rangoTrafico.max, rangoTrafico.uniforme));
+        this._pushPoint(dataPointsT, element, value, this._opacidadEnRango(value, rangoTrafico));
       });
 
       this.createHeatmap();
@@ -9613,7 +9657,7 @@ class SimulationController {
       // navegador) y viaja CON el punto. Si todos los valores son iguales,
       // HeatmapScale devuelve el extremo FRIO: sin esto, `valor / max` vale 1
       // en todas y el mapa sale entero rojo aunque no haya diferencias.
-      this._pushPoint(dataPoints, element, value, (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.opacidadDe)(value, rango.max, rango.uniforme));
+      this._pushPoint(dataPoints, element, value, this._opacidadEnRango(value, rango));
     });
 
     this.createHeatmap();

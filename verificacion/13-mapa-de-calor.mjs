@@ -18,7 +18,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  opacidadDe, rangoDeValores, textoDeEscala, escalaDeMetrica,
+  opacidadDe, rangoDeValores, fraccionDe, textoDeEscala, escalaDeMetrica,
   gradienteCss, colorFrio, colorCalido,
   OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA, ESCALA_POR_METRICA
 } from './HeatmapScale.mjs';
@@ -173,6 +173,41 @@ console.log('\n== 7. El cableado: las piezas correctas están conectadas de verd
   ok(/\.heatmap-legend\s*\{/.test(css), 'la leyenda tiene estilos');
   ok(/pointer-events:\s*none/.test(bloqueCss.slice(0, 600)),
     'y no intercepta el ratón (pointer-events: none)');
+}
+
+console.log('\n== 14. La escala REPARTE entre el minimo y el maximo (el caso del bucle) ==');
+{
+  // EL REPORTE: «casi todo en azul y un punto rojo en la tarea». Con `valor / max`, el
+  // minimo de una corrida real cae por debajo de 0,4 -donde la escala deja de ser plana-,
+  // asi que casi todo aterriza en la banda azul y solo el maximo llega al rojo. En un
+  // bucle, la compuerta se ejecuta 9 veces mas que una tarea: 100/900 = 0,11.
+  const rango = rangoDeValores([ 100, 100, 100, 100, 100, 100, 100, 900 ]);
+  ok(rango.uniforme === false, 'un rango con contraste no es uniforme');
+
+  // Con la regla vieja, el minimo queda en la banda azul: es el fallo.
+  const viejo = 100 / rango.max;
+  ok(viejo < 0.4, 'la regla vieja (valor/max) deja el minimo en la banda PLANa azul',
+    `${viejo.toFixed(3)} < 0,4`);
+
+  // Con la nueva, el minimo recibe el extremo frio y el maximo el calido: se usa TODO el
+  // rango de color, que es lo que hace legible un mapa comparativo.
+  ok(fraccionDe(rango.min, rango.min, rango.max) === 0,
+    'y la nueva da el extremo FRIO al minimo de la corrida');
+  ok(fraccionDe(rango.max, rango.min, rango.max) === 1,
+    'y el extremo CALIDO al maximo');
+
+  // El punto medio cae en medio, que es lo que se espera de un reparto.
+  const medio = fraccionDe(500, 100, 900);
+  ok(Math.abs(medio - 0.5) < 1e-9, 'y reparte linealmente en medio', medio.toFixed(3));
+
+  // Sin contraste devuelve null: quien llama decide el extremo frio. Sin esto, dividir
+  // por cero daria NaN y la mancha desapareceria.
+  ok(fraccionDe(5, 5, 5) === null, 'sin contraste no hay fraccion (null, no NaN)');
+  ok(fraccionDe(5, 10, 10) === null, 'y con el rango degenerado tampoco');
+
+  // Los valores fuera del rango se acotan: un dato raro no puede salirse de la escala.
+  ok(fraccionDe(0, 100, 900) === 0 && fraccionDe(9999, 100, 900) === 1,
+    'un valor fuera del rango se acota a los extremos');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
