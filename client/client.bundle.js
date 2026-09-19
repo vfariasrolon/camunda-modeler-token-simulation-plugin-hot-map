@@ -15931,7 +15931,11 @@ const HELP_SECTIONS = [
       [ ClearIcon, 'Limpiar',
         'Quita el mapa de calor y las etiquetas del diagrama.' ],
       [ FlowIcon, 'Líneas y tareas por tráfico',
-        'Colorea las <strong>líneas</strong> del diagrama según cuántos tokens las recorrieron, además de las tareas. Es la única vista que enseña el CAMINO del trabajo: las líneas muy transitadas engordan y se ponen rojas, y las que no se recorrieron quedan en gris discontinuo.' ],
+        'Colorea las <strong>líneas</strong> del diagrama, además de las tareas, y es la única vista que enseña el CAMINO del trabajo. Se leen <strong>dos cosas a la vez</strong>: el <strong>color</strong> es la <strong>cuota de la rama</strong>: qué parte de lo que llegaba a ese punto siguió por esta conexión —el 80 % por aquí, el 20 % por allí—, y el <strong>grosor</strong> dice cuántos tokens pasaron. La <strong>ruta dominante</strong> va contorneada con un halo: es el camino que se recorre desde el inicio eligiendo en cada compuerta la salida con más tokens. Las conexiones por las que <strong>no pasó nada</strong> quedan en gris discontinuo: por ahí no pasó el trabajo, y una rama que no se usa es capacidad que se paga y no se aprovecha.' ],
+      [ TraficoZonasIcon, 'Mapa de zonas: por dónde PASAN los tokens',
+        'Una rejilla sobre el diagrama que mide cuántas veces pasó el token por cada trozo, sin duración. Las celdas cercanas <strong>suman</strong>, así que sale una mancha continua que enseña por dónde va el trabajo y qué trozos apenas se usan. Los colores reparten las celdas <strong>por puestos</strong>: el rojo es siempre la zona más cargada de este diagrama, y la leyenda dice el rango real de cada color.' ],
+      [ ZonesIcon, 'Mapa de zonas: dónde se va el TIEMPO',
+        'La misma rejilla, pero pesando los minutos de trabajo (ejecuciones × duración) en vez de los pasos. Sirve para lo contrario que la anterior: una tarea de 5 s por la que pasan 500 tokens apenas mueve esta mancha, mientras una de 2 h con dos casos la enciende. Comparar las dos vistas dice si el problema es el <strong>volumen</strong> o la <strong>duración</strong>.' ],
       [ RadiusPlusIcon, 'Manchas más grandes / más pequeñas',
         'Tamaño de las manchas de calor, en pasos del 25 %. Súbelo si el diagrama es grande y quieres ver la tendencia general, bájalo para mirar figura por figura sin que una mancha tape a la siguiente.' ],
       [ BlurPlusIcon, 'Desenfoque + / −',
@@ -16065,13 +16069,13 @@ class SimulationPalette {
     // trabajo» eso es lo contrario de lo que se quiere mirar. Las dos conviven.
     this.addEntry({
       title: 'Mapa de zonas: por dónde PASAN los tokens',
-      tooltip: 'La misma rejilla, midiendo TRÁFICO: cuántas veces pasó cada token por cada trozo del diagrama, sin duración. Sirve para ver las rutas más recorridas y las que casi no se usan. Con una compuerta paralela todas las salidas salen iguales, y es correcto: reparte el mismo trabajo por definición.',
+      tooltip: 'La misma rejilla, midiendo TRÁFICO: cuántas veces pasó cada token por cada trozo del diagrama, sin duración. Sirve para ver las rutas más recorridas y las que casi no se usan. Los colores reparten las celdas por PUESTOS -el rojo es siempre la zona más cargada de este diagrama-, y la leyenda dice el rango real de cada color. Con una compuerta paralela todas las salidas salen iguales, y es correcto: reparte el mismo trabajo por definición.',
       icon: TraficoZonasIcon,
       metric: 'zonasTrafico'
     });
     this.addEntry({
       title: 'Mapa de zonas: dónde se va el TIEMPO',
-      tooltip: 'Pinta una rejilla sobre el diagrama con el trabajo que pasó por cada trozo (minutos de trabajo: ejecuciones × duración). Las figuras cercanas SUMAN, así que sale una mancha continua con las zonas más rojas donde más trabajo hubo. No es lo mismo que el mapa por tareas: un círculo está centrado en su figura y nunca puede formar una mancha.',
+      tooltip: 'Pinta una rejilla sobre el diagrama con el trabajo que pasó por cada trozo (minutos de trabajo: ejecuciones × duración). Las figuras cercanas SUMAN, así que sale una mancha continua con las zonas más cargadas donde más trabajo hubo. Los colores reparten las celdas por PUESTOS, con el rango real de cada uno en la leyenda. No es lo mismo que el mapa por tareas: un círculo está centrado en su figura y nunca puede formar una mancha.',
       icon: ZonesIcon,
       metric: 'zonas'
     });
@@ -16082,7 +16086,7 @@ class SimulationPalette {
     // fallaba era el rotulo.
     this.addEntry({
       title: 'Colorear LÍNEAS y tareas según el tráfico',
-      tooltip: 'Pinta las CONEXIONES (las líneas) según cuántos tokens las recorrieron, con más grosor y más calor cuanta más carga, y las tareas con la misma escala para que se puedan comparar. Las conexiones por las que NO pasó nada salen en gris discontinuo: por ahí no pasó el trabajo, y una rama que no se usa es capacidad que se paga y no se aprovecha.',
+      tooltip: 'Pinta las CONEXIONES (las líneas) y las tareas. El COLOR es la cuota de la rama -qué parte de lo que llegaba a ese punto siguió por aquí-, así que el 80 % y el 20 % de una compuerta se distinguen de un vistazo; el GROSOR son los tokens. La ruta más usada va contorneada con un halo, y las conexiones por las que NO pasó nada salen en gris discontinuo: por ahí no pasó el trabajo, y una rama que no se usa es capacidad que se paga y no se aprovecha.',
       icon: FlowIcon,
       metric: 'trafico'
     });

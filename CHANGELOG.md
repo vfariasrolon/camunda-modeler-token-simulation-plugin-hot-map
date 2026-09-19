@@ -4,6 +4,103 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **la vista de tráfico colorea por CUOTA DE RAMA, y resalta la ruta dominante con un halo.**
+  El reporte fue: «debería verse en rojo el camino más usado pero se sigue viendo un poco más
+  diferente que los demás». La causa se midió sobre un diagrama real (7000 casos, compuerta 80/20):
+  el tronco lleva los 7000 tokens —el 100 %— y las ramas 5600 y 1400, así que coloreando por
+  **volumen** la banda más caliente se la lleva **siempre el tronco**, que no decide nada, mientras
+  la rama que de verdad elige el tráfico se queda en el segundo color. Y no es casualidad de ese
+  diagrama: en una conexión **secuencial** el valor es igual al de la anterior, así que el tronco
+  tiene el máximo **por construcción**. El rojo se lo llevaba siempre la parte que no decide.
+  Ahora el **color** dice qué parte de lo que llegaba a ese punto siguió por esa conexión («80 % por
+  aquí»), y el **grosor** sigue siendo el volumen: dos canales, dos preguntas. La ruta dominante se
+  recorre desde la entrada eligiendo en cada compuerta la salida con más tokens y se contornea con
+  un halo **debajo** de los trazos —encima taparía el dato— y en un color **fuera de la paleta**
+  (fucsia) para que no se pueda leer como un nivel de tráfico.
+* `FIX`: **un porcentaje y una masa no se reparten igual, y confundirlos dejó el mapa peor que
+  antes.** La primera versión de la cuota usó el **mismo bandeo por puesto** que el volumen, y el
+  resultado fue que, con cuotas `100/100/80/20/100/100/100`, cinco conexiones al 100 % se llevaban
+  las bandas de arriba y **las dos ramas —el 80 % y el 20 %— caían LAS DOS en azul**: el mapa decía
+  que daba igual irse por una que por otra. Lo delató la salida, no el código. La corrección es de
+  fondo: **un porcentaje tiene escala natural** (el 80 % es «la mayoría» en cualquier diagrama) y va
+  por **umbrales fijos** (90/70/40, «casi todo» / «la mayoría» / «repartido» / «minoría»);
+  **una masa no la tiene** (900 minutos es mucho en un diagrama y poco en otro) y va por **puestos**
+  dentro de la corrida. Qué escala usa cada vista queda escrito junto a cada una.
+* `FIX`: **el mapa de zonas pintaba todo del mismo azul.** El reporte: «tráfico todo se ve azul
+  literal, pero en conexiones sí marca». La vista de líneas estaba bien; la de zonas pintaba cada
+  celda con `valor / max`, y la escala es **azul plano hasta 0,4**: con una cola larga —lo normal:
+  dos zonas cargadas y cientos flojas— casi todas las celdas caían por debajo del 40 % del máximo y
+  salían del mismo azul. El canal del color no decía nada. Ahora reparte por puestos: el 10 % de
+  celdas más cargadas es rojo, siempre, y la leyenda de zonas pasa a barra **escalonada** con el
+  rango real de cada color. Para que el reparto aguante 12000 celdas, la banda de un valor se
+  resuelve **por umbrales** y no contando posiciones, que sería cuadrático y colgaría el repintado;
+  el arnés comprueba valor a valor que da exactamente lo mismo.
+* `FIX`: **las conexiones no se pintaban porque `getGraphics` devuelve un `<g>`, no el `<path>`.**
+  El reporte era «pinta solo los task, no las líneas: veo islas de colores». La documentación de
+  diagram-js lo dice: `elementRegistry.getGraphics(rootElement); // <g ...>`. Buscar el atributo `d`
+  en ese grupo da `undefined` —un `<g>` no tiene `d`—, así que la vista salía por el `if (!d) return`
+  en **todas** las conexiones. La comprobación que había contaba los trazos **creados**, no los que
+  se ven, así que el fallo pasaba en verde; ahora el pintado **avisa en consola** si lo que creó no
+  llegó al diagrama.
+* `FEAT`: **los tres escenarios de horas extra, con el tope legal como RESTRICCIÓN.** El informe
+  decía «no cumple: 4 de 4 semanas sobre el límite» y ahí se acababa; el cliente lee el diagnóstico
+  y pregunta lo único que le importa: «¿y si lo cumpliera?». Ahora la ley no solo **juzga después**,
+  también **restringe mientras simula**: lo que no cabe en los topes de la LFT **espera a la semana
+  siguiente**, que es lo que obliga la ley —no puedes hacer la hora 10, el pedido espera—. Se
+  aplican los **tres** topes, porque con uno solo un escenario podría declararse «cumple» mientras
+  hace 6 h de extra en un solo día: **9 h/semana** (art. 66), **3 h/día** y **3 días con extra por
+  semana** (art. 65). Los tres escenarios —sin extra, con tope legal, sin tope— se corren sobre la
+  **misma semilla**, así que la diferencia es del plan y no de la suerte, y se comparan en la app
+  (tabla, nota del tope legal y **tres curvas superpuestas**) y en el PDF (sección 4, justo detrás
+  del veredicto de cumplimiento, que es donde nace la pregunta). La nota distingue los tres
+  desenlaces que de verdad importan: si cumplir produce **lo mismo y cuesta menos**, la extra libre
+  se estaba pagando sin mover el resultado; si produce **menos**, ahí está el precio de la legalidad
+  en cifras; y si produce lo mismo y cuesta **más**, el cuello no es el reloj sino los recursos.
+* `FEAT`: **el costo por caso, y los escenarios mejor / esperado / peor en el informe.** El informe
+  daba **un número** de costo, y una suma no tiene rango: «34.176 pesos» no se puede presupuestar ni
+  discutir. Ahora el motor guarda el costo de **cada caso** —igual que ya guardaba su tiempo de
+  ciclo— y de ahí salen percentiles, que es lo que permite decir «en 8 de cada 10 corridas el gasto
+  cae entre esto y esto». Se usa **p10 · p50 · p90** y **no** el mínimo y el máximo observados, y es
+  una decisión, no un redondeo: el mínimo teórico es «todo salió perfecto» —sin fallos, sin espera,
+  sin extras—, un evento de probabilidad casi nula, y reportarlo invita a leerlo como «podría gastar
+  esto» cuando casi nunca pasa. El texto del informe lo dice explícitamente y, para no esconderlos,
+  imprime también el mínimo y el máximo. Cada escenario lleva **cómo se llega a él** —las semanas
+  sobre el cupo, el peso de las primas—, porque un rango sin causa se lee como incertidumbre del
+  modelo y con causa se lee como una palanca.
+* `FEAT`: **el coste de un proveedor se factura por hora o por pieza, y el informe separa nómina de
+  facturas.** Un recurso puede ser **interno** (tu plantilla, se paga por hora) o **externo** (un
+  proveedor que factura). Y un proveedor cobra de una de dos formas: **por hora**, donde el importe
+  crece con la duración —si la tarea espera, se paga la espera—, o **por pieza**, donde depende de
+  la **cantidad** y no del reloj —un atasco no abarata la factura—. Con cobro por pieza se factura el
+  **lote entero** de una vez, porque así se factura en la realidad. Un proveedor **no** cobra primas
+  de horas extra ni entra en el cupo semanal: las horas extra de la LFT son de tu plantilla, y su
+  factura es su precio. El resultado se lleva en dos cubos separados —`totalOperationCost` y
+  `totalExternalCost`— para poder decir «cuánto es mío y cuánto es factura», que es la pregunta que
+  decide si conviene seguir subcontratando.
+* `FIX`: **una prueba que pasa en verde sin ejercer el camino que dice cubrir no es una prueba.**
+  Pasó cinco veces en esta tanda y se deja escrito porque el patrón se repite: (1) contar los trazos
+  **creados** en vez de los que llegan al diagrama dejó pasar el fallo de las líneas; (2) la
+  comprobación del mapa de zonas miraba que **hubiera** rojo, y el rojo sí estaba —en la celda más
+  caliente—, así que pasaba mientras todo lo demás salía del mismo azul; (3) el primer arreglo de
+  esa prueba —«que haya al menos 3 colores»— tampoco servía, porque el reparto dentro de una tarea
+  genera un gradiente **por sí solo** y hasta el código viejo producía varios colores: lo que
+  distingue una escala de bandas de una rampa es que los rellenos sean **exactamente** los nombres
+  de la paleta y no cientos de `rgb()` interpolados; (4) el caso de prueba de la cuota usaba los 49
+  valores reales, donde el fallo **no se manifiesta** —las bandas son anchas y el bloque de
+  empatados no cruza la frontera—, así que hubo que buscar un conjunto que sí discriminara; y (5) la
+  prueba de cuadre del costo por caso usaba un montaje **sin cola**, con coste de espera cero, y
+  pasaba sin probar nada hasta que se le añadió la precondición explícita «el montaje PRODUCE coste
+  de espera». De ahí que varios arneses comparen ahora contra el comportamiento **viejo** inyectado.
+* `FIX`: **el coste de espera no se acumulaba al caso, y el informe habría sido un 48 % más bajo.**
+  La espera se imputa al **liberar el recurso**, no al completar la tarea, y ahí no se acumulaba al
+  caso. Medido con el motor real: 1200 acumulados frente a 2320 de total. El percentil del informe
+  habría sido de una magnitud distinta a la que el propio informe enseña como costo. Lo detectó la
+  prueba de cuadre al añadir una piscina al montaje.
+* `FEAT`: **el informe de consola imprime los pasos por conexión** (`SALIDAS · por conexión`), con
+  origen, destino, pasos y su cuota del total. La tabla de tareas no decía **nada** de las líneas, y
+  sin ella «no se pintan las líneas» no se puede distinguir de «no pasa nada por las líneas», que
+  son averías opuestas. Las conexiones se listan **todas**, incluso con cero pasos: las que no se
+  recorrieron son el hallazgo —una rama muerta es capacidad que se paga y no se usa—.
 * `FEAT`: **el resumen (y el informe) dicen cuándo empieza y cuándo termina**, con los días contados
   en los **dos relojes**: **días laborables** (lo que se trabaja y se paga) y **días naturales** (lo
   que tarda en llegar la fecha, con fines de semana y festivos dentro). Antes solo había un «Días

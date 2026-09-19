@@ -316,6 +316,26 @@ console.log('\n== 10. La vista de LINEAS se encuentra por su NOMBRE ==');
   ok(!titulos.some((t) => /Vista de estructura/.test(t)),
     'y el nombre viejo ya no se usa como titulo, para que nadie la busque por ahi',
     String(titulos.length) + ' titulos revisados');
+  // --- LA AYUDA NO PUEDE MENTIR SOBRE LO QUE LA VISTA HACE ---
+  //
+  // Es el mismo criterio del arnes `11-textos-sin-mentir`: cuando se cambio el color de la vista
+  // -de VOLUMEN a CUOTA de rama- la ayuda siguio diciendo «las lineas muy transitadas engordan y
+  // se ponen rojas», que pasa a ser FALSO: una conexion puede llevar mucho volumen y salir azul si
+  // es la rama minoritaria de su compuerta. Una ayuda que describe el comportamiento viejo manda
+  // al usuario a buscar en el mapa algo que ya no esta.
+  const ayudaLineas = fuente.split('\n').find((l) => /'Líneas y tareas por tráfico'/.test(l))
+    + ' ' + fuente.split('\n')[fuente.split('\n').findIndex((l) => /'Líneas y tareas por tráfico'/.test(l)) + 1];
+  ok(/cuota/i.test(ayudaLineas),
+    'la ayuda de la vista de lineas nombra la CUOTA, que es lo que el color dice ahora',
+    ayudaLineas.slice(0, 100));
+  ok(/grosor/i.test(ayudaLineas),
+    'y distingue el grosor, que es el volumen: dos canales, dos preguntas');
+  ok(/ruta dominante|halo/i.test(ayudaLineas),
+    'y explica el halo de la ruta dominante, o el lector lo ve y no sabe que es');
+  // La frase vieja ya no vale: afirmaba que el color es la carga.
+  ok(!/muy transitadas engordan y se ponen rojas/.test(fuente),
+    'y ya no afirma que el color sea la carga, que dejaria de ser cierto',
+    'la frase vieja no aparece');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
