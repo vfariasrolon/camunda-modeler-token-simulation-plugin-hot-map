@@ -152,5 +152,111 @@ console.log('\n== 6. Descanso en el tramo de horas extra (interruptor por descan
   ok(sinExtra.trabajoMin === conExtra.trabajoMin, 'el trabajo contabilizado no cambia');
 }
 
+console.log('\n== 7. COSTO POR CASO: la base de los escenarios del informe ==');
+{
+  // El informe daba UN numero de costo, y una suma no tiene rango: no se puede
+  // presupuestar ni discutir. Con el costo de cada caso salen percentiles, y ahi si se
+  // puede decir «en 8 de cada 10 corridas el gasto cae entre esto y esto».
+  //
+  // La prueba se hace con el motor REAL y sobre la PROPIEDAD que hace auditable el dato: la
+  // suma de los costos por caso tiene que cuadrar con la descomposicion del costo total. Si
+  // no cuadra, el percentil del informe es de otra cosa que el total que ensena el informe.
+  const guardar = { log: console.log, table: console.table, warn: console.warn, groupEnd: console.groupEnd };
+  console.log = () => {}; console.table = () => {}; console.warn = () => {}; console.groupEnd = () => {};
+  let motor;
+  let resultados;
+  try {
+    // Mismo montaje que los casos de arriba, reconstruido aqui para poder mirar el motor
+    // DESPUES de `run()` (los otros casos solo devuelven un resumen).
+    const tarea = {
+      id: 'T1', $type: 'bpmn:Task', businessObject: { name: 'Tarea' }, incoming: [], outgoing: [],
+      // 90 MINUTOS CON LLEGADAS CADA MEDIA HORA, para que la cola sea inevitable. Con 30 min
+      // y una sola unidad la tarea termina justo cuando llega la siguiente, no hay espera y el
+      // costo de espera vale 0: la prueba de cuadre de abajo pasaria sin ejercer el camino que
+      // dice comprobar. Es el fallo que tuvo esta prueba en su primera version.
+      _datos: { processingTime: { distribution: 'fixed', value: 90, unit: 'minutes' },
+        resources: { pool: 'P', quantityRequired: 1 } }
+    };
+    const inicio = {
+      id: 'S1', $type: 'bpmn:StartEvent', businessObject: { name: 'Inicio' }, outgoing: [],
+      _datos: { isRoot: true, arrivalRate: { value: 2, unit: 'hour' },
+        simulationConfig: { runValue: RUN }, startDate: '2026-01-05',
+        calendar: { workingDays: [ 1, 2, 3, 4, 5 ],
+          workingHours: { start: { hour: 9, minute: 0 }, end: { hour: 17, minute: 0 } }, breaks: [] },
+        // `waitCostPerHour` a proposito DISTINTO de cero: el costo de espera tambien lo paga
+        // el caso, y si no se acumulara el total por caso no cuadraria con el del informe.
+        cost: { baseRatePerHour: 100, waitCostPerHour: 40 },
+        warmup: { enabled: false } }
+    };
+    const fin = { id: 'E1', $type: 'bpmn:EndEvent', businessObject: { name: 'Fin' }, outgoing: [] };
+    // LA PISCINA VA EN EL PROCESO, no en el StartEvent. Es como la lee el motor
+    // (`resourcePools` de un `bpmn:Process`), y sin ella la tarea no tiene recurso que la
+    // limite: se ejecuta sin cola y el costo de espera vale 0. Con la piscina mal declarada
+    // esta prueba pasaba sin ejercer el camino que dice comprobar.
+    const proceso = {
+      id: 'P1', $type: 'bpmn:Process', businessObject: { name: 'Proceso' },
+      _datos: { resourcePools: [ { name: 'P', quantity: 1 } ] }
+    };
+    const f1 = { id: 'F1', $type: 'bpmn:SequenceFlow', businessObject: {}, source: inicio, target: tarea };
+    const f2 = { id: 'F2', $type: 'bpmn:SequenceFlow', businessObject: {}, source: tarea, target: fin };
+    inicio.outgoing = [ f1 ];
+    tarea.incoming = [ f1 ];
+    tarea.outgoing = [ f2 ];
+
+    const elementos = [ inicio, tarea, fin, f1, f2, proceso ];
+    const registro = {
+      getAll: () => elementos,
+      get: (id) => elementos.find((e) => e.id === id),
+      filter: (fn) => elementos.filter(fn),
+      find: (fn) => elementos.find(fn)
+    };
+
+    motor = new SimulationEngine(registro);
+    resultados = motor.run({ useOvertime: false });
+  } finally {
+    Object.assign(console, guardar);
+  }
+
+  const costos = motor.instanceCosts || [];
+  const r = resultados.get('T1');
+
+  ok(costos.length > 0, 'el motor guarda el costo de cada caso', `${costos.length} muestras`);
+
+  // PRIMERO SE COMPRUEBA QUE HAYA ESPERA, y no es un adorno: sin cola el costo de espera
+  // vale 0, y entonces la prueba de cuadre de abajo pasaria SIN ejercer el camino que dice
+  // comprobar. Fue el fallo real de esta prueba en su primera version: tardaba en detectar
+  // que la espera no se acumulaba al caso porque nunca habia espera que acumular.
+  ok((r.totalWaitTimeCost || 0) > 0,
+    'el montaje PRODUCE costo de espera (si no, la prueba de cuadre no probaria nada)',
+    `espera ${(r.totalWaitTime || 0).toFixed(0)} min, coste ${(r.totalWaitTimeCost || 0).toFixed(2)}`);
+  ok(new Set(costos.map((c) => Math.round(c * 100))).size > 1,
+    'y los casos cuestan DISTINTO entre si (hay horquilla que reportar)',
+    `${new Set(costos.map((c) => Math.round(c))).size} valores distintos`);
+
+  ok(costos.length === motor.completedInstances,
+    'y hay una muestra por caso completado (ni mas ni menos)',
+    `${costos.length} vs ${motor.completedInstances} completadas`);
+
+  // LA PROPIEDAD QUE LO HACE AUDITABLE: la suma de los costos por caso es el costo total.
+  // Si no cuadrara, el percentil del informe seria de una magnitud distinta a la que el
+  // propio informe ensena como «costo».
+  const sumaPorCaso = costos.reduce((a, b) => a + b, 0);
+  const costoTotal = (r.totalCost || 0);
+  ok(Math.abs(sumaPorCaso - costoTotal) < Math.max(0.5, costoTotal * 0.001),
+    'la suma de los costos por caso CUADRA con el costo total de la tarea',
+    `por caso ${sumaPorCaso.toFixed(2)} vs total ${costoTotal.toFixed(2)}`);
+
+  // Todos positivos: un caso no puede costar menos de cero. Un negativo significaria que el
+  // acumulador esta restando algo -por ejemplo el costo de espera, que se acumula aparte.
+  ok(costos.every((c) => c >= 0), 'y ningun caso tiene costo negativo');
+  ok(costos.every((c) => Number.isFinite(c)), 'ni NaN: todos los importes son medibles');
+
+  // El acumulador VIVO se vacia al cerrar el caso: si no, un `instanceId` reutilizado
+  // heredaria el importe del anterior y el percentil saldria inflado.
+  ok(motor._costoPorCaso.size === 0,
+    'y el acumulador en curso queda VACIO al terminar (nada de importes heredados)',
+    String(motor._costoPorCaso.size));
+}
+
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
 process.exit(fallos === 0 ? 0 : 1);

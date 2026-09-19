@@ -402,6 +402,11 @@ export default class SimulationController {
         // esconde la cola.
         cycleTimes: (this._simulationEngine.instanceCycleTimes || []).slice(),
 
+        // Costo por caso, para los percentiles de COSTE del informe. Va aparte de
+        // `cycleTimes` porque un caso puede tener tiempo y no coste (un modelo sin tarifas),
+        // y al reves: los dos ejes se reportan por separado y con su propio `n`.
+        instanceCosts: (this._simulationEngine.instanceCosts || []).slice(),
+
         // Utilizacion (rho) por piscina, ya calculada por el motor con el
         // calendario de ESTE plan.
         utilization: new Map(this._simulationEngine.utilization || []),

@@ -8594,11 +8594,76 @@ class ReportPanel {
       <p class="sub">Tiempos de ciclo en minutos laborables. Calculados sobre ${ent(muestra.length)} muestras individuales.</p>
     ` : '<p class="sub">Sin muestras de tiempo de ciclo.</p>';
 
+    // ESCENARIOS DE COSTO. El informe daba UN numero de costo, y una suma no tiene rango:
+    // «34.176 pesos» no se puede presupuestar ni discutir. Con el costo de cada caso salen
+    // los percentiles, y ahi SI se puede decir «en 8 de cada 10 meses el gasto cae entre
+    // esto y esto».
+    //
+    // SE USA p10-p50-p90 Y NO minimo-maximo, y es una decision, no un redondeo: el minimo
+    // teorico es «todo salio perfecto» -ningun fallo, ninguna espera, ningun extra-, que es
+    // un evento de probabilidad casi nula. Reportarlo invita a que el cliente lea «podria
+    // gastar esto» cuando eso casi nunca pasa. p10-p90 cubre el 80 % de los escenarios y es
+    // la horquilla que se puede defender.
+    const costos = (0,_util__WEBPACK_IMPORTED_MODULE_1__.resumenMuestras)((ctx.overtime && ctx.overtime.instanceCosts) || []);
+    const escenarios = (() => {
+      if (!costos) return '<p class="sub">Sin muestras de costo por caso: el modelo no tiene tarifas declaradas, así que todas las corridas cuestan lo mismo.</p>';
+
+      // El costo por pieza es lo que permite comparar corridas de distinto tamaño; el total
+      // solo dice cuanto se gasto, no si fue caro.
+      const porPieza = (v) => (ctx.completadas > 0 ? v / ctx.completadas : null);
+      const pieza = (v) => (porPieza(v) == null ? '—' : `${(0,_util__WEBPACK_IMPORTED_MODULE_1__.formatCurrency)(porPieza(v), 'MXN')}/pza`);
+
+      const fila = (nombre, valor, lectura) => `
+        <tr><td>${esc(nombre)}</td>
+        <td class="num">${(0,_util__WEBPACK_IMPORTED_MODULE_1__.formatCurrency)(valor, 'MXN')}</td>
+        <td class="num">${pieza(valor)}</td>
+        <td>${lectura}</td></tr>`;
+
+      // LA ATRIBUCION ES LO QUE HACE UTIL EL ESCENARIO. Un rango sin causa se lee como
+      // incertidumbre del modelo; con causa se lee como una palanca. Los disparadores salen
+      // de la descomposicion real de la corrida, no de una plantilla.
+      const primas = ctx.operacion > 0 ? (ctx.doble + ctx.triple) / ctx.operacion : 0;
+      const semanas = (ctx.cumplimiento && ctx.cumplimiento.semanas) || 0;
+      const sobreLimite = (ctx.cumplimiento && ctx.cumplimiento.semanasSobreLimite) || 0;
+
+      const causaMejor = sobreLimite > 0
+        ? `Solo si se respeta el cupo legal de horas extra: hoy se pasa en ${ent(sobreLimite)} de ${ent(semanas)} semanas.`
+        : 'Con el cupo de horas extra respetado y sin reprocesos.';
+      const causaPeor = sobreLimite > 0
+        ? `Escenario de ${ent(sobreLimite)} de ${ent(semanas)} semanas pasadas de cupo, que es lo observado.`
+        : 'Escenario con más reprocesos y espera por saturación.';
+
+      return `
+        <table>
+          <thead><tr><th>Escenario</th><th class="num">Costo</th><th class="num">Unitario</th><th>Cómo se llega a él</th></tr></thead>
+          <tbody>
+            ${fila('Mejor (p10)', costos.p10, causaMejor)}
+            ${fila('Esperado (p50)', costos.p50, 'El caso típico de la corrida. Es la cifra que se presupuesta.')}
+            ${fila('Peor (p90)', costos.p90, causaPeor)}
+          </tbody>
+        </table>
+        <p class="sub">
+          ${ent(costos.n)} casos simulados${ctx.completadas ? ` de ${ent(ctx.completadas)} completados` : ''}.
+          Mín observado ${(0,_util__WEBPACK_IMPORTED_MODULE_1__.formatCurrency)(costos.min, 'MXN')} · máx observado ${(0,_util__WEBPACK_IMPORTED_MODULE_1__.formatCurrency)(costos.max, 'MXN')} ·
+          desviación ${(0,_util__WEBPACK_IMPORTED_MODULE_1__.formatCurrency)(costos.desviacion, 'MXN')} (CV ${num(costos.cv, 3)}), sobre una media de
+          ${(0,_util__WEBPACK_IMPORTED_MODULE_1__.formatCurrency)(costos.media, 'MXN')}.
+        </p>
+        <p class="sub">
+          <strong>La horquilla p10–p90 cubre 8 de cada 10 corridas</strong>, no el 100 %. El mínimo y el máximo
+          observados son posibles pero raros, y por eso no son el escenario a presupuestar. Las primas de
+          tiempo extra son el ${num(100 * primas, 1)} % del costo de operación, así que el resultado depende
+          sobre todo de cuántas semanas se pasa del cupo.
+        </p>`;
+    })();
+
     return `
       <h2 class="salto">10 · Anexos</h2>
 
       <h3>Tiempo de ciclo: percentiles</h3>
       ${percentiles}
+
+      <h3>Costo por caso: escenarios</h3>
+      ${escenarios}
 
       <h3>Producción diaria (plan normal)</h3>
       <table><thead><tr><th>Día</th><th class="num">Piezas</th></tr></thead><tbody>${produccion || '<tr><td colspan="2">Sin datos.</td></tr>'}</tbody></table>
@@ -9196,6 +9261,11 @@ class SimulationController {
         // Muestras por caso: permiten percentiles e histograma. La media sola
         // esconde la cola.
         cycleTimes: (this._simulationEngine.instanceCycleTimes || []).slice(),
+
+        // Costo por caso, para los percentiles de COSTE del informe. Va aparte de
+        // `cycleTimes` porque un caso puede tener tiempo y no coste (un modelo sin tarifas),
+        // y al reves: los dos ejes se reportan por separado y con su propio `n`.
+        instanceCosts: (this._simulationEngine.instanceCosts || []).slice(),
 
         // Utilizacion (rho) por piscina, ya calculada por el motor con el
         // calendario de ESTE plan.
@@ -12842,6 +12912,16 @@ class SimulationEngine {
     // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
     this.instanceCycleTimes = [];
 
+    // COSTO POR CASO, en curso y ya cerrados.
+    //
+    // `_costoPorCaso` es un acumulador vivo (se borra al cerrar el caso) y
+    // `instanceCosts` guarda las muestras cerradas, igual que `instanceCycleTimes` con los
+    // tiempos. Son la base de los percentiles de costo del informe: sin la distribucion,
+    // el costo es un unico numero sin rango, que es lo que impide responder «¿cual es el
+    // peor escenario?».
+    this._costoPorCaso = new Map();
+    this.instanceCosts = [];
+
     // Utilizacion por piscina. Se rellena al final de run(), cuando ya se conoce
     // la ventana simulada (que depende del calendario activo).
     this.utilization = new Map();
@@ -12974,6 +13054,26 @@ class SimulationEngine {
     return [];
   }
 
+  /**
+   * Suma un importe al costo del caso que lo paga.
+   *
+   * Un caso sin `instanceId` no se puede atribuir: en vez de meterlo en un cubo «desconocido»
+   * -que ensuciaria un percentil con un caso que no existe-, se descarta y se avisa UNA vez.
+   * Es el mismo criterio que el resto del motor: antes no pintar que pintar mal.
+   */
+  _sumarCostoAlCaso(instanceId, importe) {
+    if (!(importe > 0)) return;
+    if (instanceId == null) {
+      if (!this._avisadoCostoSinCaso) {
+        this._avisadoCostoSinCaso = true;
+        console.warn('[coste] hay tareas con coste y sin instancia: no entran en los'
+          + ' percentiles por caso. Su importe SI sigue en el total.');
+      }
+      return;
+    }
+    this._costoPorCaso.set(instanceId, (this._costoPorCaso.get(instanceId) || 0) + importe);
+  }
+
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
     const elementResults = this.results.get(element.id);
@@ -13000,6 +13100,15 @@ class SimulationEngine {
       // calendario ESTANDAR en los dos planes, para que los tiempos de ciclo del
       // plan normal y del de horas extra sean comparables entre si.
       this.instanceCycleTimes.push(cicloMin);
+
+      // Y el COSTO del caso, que se cierra aqui y no antes: una tarea de este caso podria
+      // haber terminado despues de que el mapa de costos se leyo. Se guarda la muestra y se
+      // borra el acumulador, para que un `instanceId` reutilizado no herede el importe.
+      const costoDelCaso = this._costoPorCaso.get(instanceId);
+      if (costoDelCaso != null) {
+        this.instanceCosts.push(costoDelCaso);
+        this._costoPorCaso.delete(instanceId);
+      }
 
       // Cierre de lote: se consulta ANTES de borrar el estado, que es donde vive
       // el numero de lote de la instancia.
@@ -13580,6 +13689,19 @@ class SimulationEngine {
         results.totalTripleOvertimeCost += event.tripleOvertimePremium;
         results.totalDayPremiumCost += (event.dayPremium || 0);
 
+        // COSTO POR CASO. Se acumula aqui, que es donde se conoce a la vez el importe de
+        // esta tarea y la instancia que la paga. NO se puede reconstruir en
+        // `INSTANCE_COMPLETE`: alli ya no se sabe que tareas pago ese caso, y el costo esta
+        // repartido entre los resultados de todas las tareas.
+        //
+        // PARA QUE: el costo total del informe es una SUMA, y una suma no tiene rango. Con
+        // el costo de cada caso se calculan percentiles, y eso es lo que permite decir «este
+        // es el mejor escenario, este el esperado y este el peor» en vez de un unico numero
+        // que el cliente no puede discutir ni usar para presupuestar.
+        const costoDelEvento = (event.operationCost || 0) + (event.doubleOvertimePremium || 0)
+          + (event.tripleOvertimePremium || 0) + (event.dayPremium || 0);
+        this._sumarCostoAlCaso(event.instanceId, costoDelEvento);
+
         const waitTimeCost = results.totalWaitTimeCost;
         // The total cost is the sum of its parts.
         results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + (event.dayPremium || 0) + waitTimeCost;
@@ -13607,6 +13729,11 @@ class SimulationEngine {
           const currentWaitCost = (waitTime / 60) * waitCostPerHour;
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
+          // OJO: el costo del caso NO se acumula aqui. La espera de una tarea que tuvo que
+          // pedir recurso se cobra al LIBERARLO (ver `release()`), que es cuando consta
+          // cuanto espero de verdad; sumarla tambien aqui la contaria DOS veces, porque este
+          // evento lleva su propio `waitStart`. Se acumula en el otro camino, y por eso el
+          // total por caso sigue cuadrando con el del informe.
         }
 
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(event.element);
@@ -13643,6 +13770,13 @@ class SimulationEngine {
             const currentWaitCost = (waitTime / 60) * waitCostPerHour;
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
+            // LA ESPERA SE IMPUTA AQUI, y no solo en `TASK_COMPLETE`, porque este es OTRO
+            // camino: la cola se cobra cuando el recurso se LIBERA, que es cuando se sabe
+            // cuanto espero de verdad. Sin esta linea el costo por caso dejaba fuera toda la
+            // espera -medido: 1200 acumulados frente a 2320 de total-, y el percentil del
+            // informe habria salido un 48 % por debajo del costo que el propio informe
+            // ensena. Es el fallo que la prueba de cuadre detecto al anadir una piscina.
+            this._sumarCostoAlCaso(marcador.instanceId, currentWaitCost);
 
             // La tarea arranca AHORA: se vuelve a programar desde el inicio real.
             // Antes solo se corregian su duracion y su fin, pero el tiempo extra y
@@ -15771,6 +15905,13 @@ const resumenMuestras = (muestras) => {
     max: datos[n - 1],
     media,
     desviacion,
+    // p10 y p25 existen para los ESCENARIOS DE COSTO del informe, que necesitan una
+    // horquilla que se pueda defender. El minimo observado es «todo salio perfecto» -un
+    // evento de probabilidad casi nula-, asi que se usa p10 como «mejor caso realista»; y
+    // p25 permite ver el cuarto mas barato de la corrida. Se calculan siempre y no solo para
+    // el costo: un percentil de mas no cuesta nada y evita tener dos caminos de codigo.
+    p10: percentil(datos, 10),
+    p25: percentil(datos, 25),
     p50: percentil(datos, 50),
     p90: percentil(datos, 90),
     p95: percentil(datos, 95),

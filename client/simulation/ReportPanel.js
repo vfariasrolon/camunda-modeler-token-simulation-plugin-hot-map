@@ -1240,11 +1240,76 @@ export default class ReportPanel {
       <p class="sub">Tiempos de ciclo en minutos laborables. Calculados sobre ${ent(muestra.length)} muestras individuales.</p>
     ` : '<p class="sub">Sin muestras de tiempo de ciclo.</p>';
 
+    // ESCENARIOS DE COSTO. El informe daba UN numero de costo, y una suma no tiene rango:
+    // «34.176 pesos» no se puede presupuestar ni discutir. Con el costo de cada caso salen
+    // los percentiles, y ahi SI se puede decir «en 8 de cada 10 meses el gasto cae entre
+    // esto y esto».
+    //
+    // SE USA p10-p50-p90 Y NO minimo-maximo, y es una decision, no un redondeo: el minimo
+    // teorico es «todo salio perfecto» -ningun fallo, ninguna espera, ningun extra-, que es
+    // un evento de probabilidad casi nula. Reportarlo invita a que el cliente lea «podria
+    // gastar esto» cuando eso casi nunca pasa. p10-p90 cubre el 80 % de los escenarios y es
+    // la horquilla que se puede defender.
+    const costos = resumenMuestras((ctx.overtime && ctx.overtime.instanceCosts) || []);
+    const escenarios = (() => {
+      if (!costos) return '<p class="sub">Sin muestras de costo por caso: el modelo no tiene tarifas declaradas, así que todas las corridas cuestan lo mismo.</p>';
+
+      // El costo por pieza es lo que permite comparar corridas de distinto tamaño; el total
+      // solo dice cuanto se gasto, no si fue caro.
+      const porPieza = (v) => (ctx.completadas > 0 ? v / ctx.completadas : null);
+      const pieza = (v) => (porPieza(v) == null ? '—' : `${formatCurrency(porPieza(v), 'MXN')}/pza`);
+
+      const fila = (nombre, valor, lectura) => `
+        <tr><td>${esc(nombre)}</td>
+        <td class="num">${formatCurrency(valor, 'MXN')}</td>
+        <td class="num">${pieza(valor)}</td>
+        <td>${lectura}</td></tr>`;
+
+      // LA ATRIBUCION ES LO QUE HACE UTIL EL ESCENARIO. Un rango sin causa se lee como
+      // incertidumbre del modelo; con causa se lee como una palanca. Los disparadores salen
+      // de la descomposicion real de la corrida, no de una plantilla.
+      const primas = ctx.operacion > 0 ? (ctx.doble + ctx.triple) / ctx.operacion : 0;
+      const semanas = (ctx.cumplimiento && ctx.cumplimiento.semanas) || 0;
+      const sobreLimite = (ctx.cumplimiento && ctx.cumplimiento.semanasSobreLimite) || 0;
+
+      const causaMejor = sobreLimite > 0
+        ? `Solo si se respeta el cupo legal de horas extra: hoy se pasa en ${ent(sobreLimite)} de ${ent(semanas)} semanas.`
+        : 'Con el cupo de horas extra respetado y sin reprocesos.';
+      const causaPeor = sobreLimite > 0
+        ? `Escenario de ${ent(sobreLimite)} de ${ent(semanas)} semanas pasadas de cupo, que es lo observado.`
+        : 'Escenario con más reprocesos y espera por saturación.';
+
+      return `
+        <table>
+          <thead><tr><th>Escenario</th><th class="num">Costo</th><th class="num">Unitario</th><th>Cómo se llega a él</th></tr></thead>
+          <tbody>
+            ${fila('Mejor (p10)', costos.p10, causaMejor)}
+            ${fila('Esperado (p50)', costos.p50, 'El caso típico de la corrida. Es la cifra que se presupuesta.')}
+            ${fila('Peor (p90)', costos.p90, causaPeor)}
+          </tbody>
+        </table>
+        <p class="sub">
+          ${ent(costos.n)} casos simulados${ctx.completadas ? ` de ${ent(ctx.completadas)} completados` : ''}.
+          Mín observado ${formatCurrency(costos.min, 'MXN')} · máx observado ${formatCurrency(costos.max, 'MXN')} ·
+          desviación ${formatCurrency(costos.desviacion, 'MXN')} (CV ${num(costos.cv, 3)}), sobre una media de
+          ${formatCurrency(costos.media, 'MXN')}.
+        </p>
+        <p class="sub">
+          <strong>La horquilla p10–p90 cubre 8 de cada 10 corridas</strong>, no el 100 %. El mínimo y el máximo
+          observados son posibles pero raros, y por eso no son el escenario a presupuestar. Las primas de
+          tiempo extra son el ${num(100 * primas, 1)} % del costo de operación, así que el resultado depende
+          sobre todo de cuántas semanas se pasa del cupo.
+        </p>`;
+    })();
+
     return `
       <h2 class="salto">10 · Anexos</h2>
 
       <h3>Tiempo de ciclo: percentiles</h3>
       ${percentiles}
+
+      <h3>Costo por caso: escenarios</h3>
+      ${escenarios}
 
       <h3>Producción diaria (plan normal)</h3>
       <table><thead><tr><th>Día</th><th class="num">Piezas</th></tr></thead><tbody>${produccion || '<tr><td colspan="2">Sin datos.</td></tr>'}</tbody></table>

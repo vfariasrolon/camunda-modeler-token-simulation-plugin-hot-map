@@ -397,6 +397,16 @@ export default class SimulationEngine {
     // esconde la cola: el p95 del tiempo de ciclo es lo que rompe un plazo.
     this.instanceCycleTimes = [];
 
+    // COSTO POR CASO, en curso y ya cerrados.
+    //
+    // `_costoPorCaso` es un acumulador vivo (se borra al cerrar el caso) y
+    // `instanceCosts` guarda las muestras cerradas, igual que `instanceCycleTimes` con los
+    // tiempos. Son la base de los percentiles de costo del informe: sin la distribucion,
+    // el costo es un unico numero sin rango, que es lo que impide responder «¿cual es el
+    // peor escenario?».
+    this._costoPorCaso = new Map();
+    this.instanceCosts = [];
+
     // Utilizacion por piscina. Se rellena al final de run(), cuando ya se conoce
     // la ventana simulada (que depende del calendario activo).
     this.utilization = new Map();
@@ -529,6 +539,26 @@ export default class SimulationEngine {
     return [];
   }
 
+  /**
+   * Suma un importe al costo del caso que lo paga.
+   *
+   * Un caso sin `instanceId` no se puede atribuir: en vez de meterlo en un cubo «desconocido»
+   * -que ensuciaria un percentil con un caso que no existe-, se descarta y se avisa UNA vez.
+   * Es el mismo criterio que el resto del motor: antes no pintar que pintar mal.
+   */
+  _sumarCostoAlCaso(instanceId, importe) {
+    if (!(importe > 0)) return;
+    if (instanceId == null) {
+      if (!this._avisadoCostoSinCaso) {
+        this._avisadoCostoSinCaso = true;
+        console.warn('[coste] hay tareas con coste y sin instancia: no entran en los'
+          + ' percentiles por caso. Su importe SI sigue en el total.');
+      }
+      return;
+    }
+    this._costoPorCaso.set(instanceId, (this._costoPorCaso.get(instanceId) || 0) + importe);
+  }
+
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
     const elementResults = this.results.get(element.id);
@@ -555,6 +585,15 @@ export default class SimulationEngine {
       // calendario ESTANDAR en los dos planes, para que los tiempos de ciclo del
       // plan normal y del de horas extra sean comparables entre si.
       this.instanceCycleTimes.push(cicloMin);
+
+      // Y el COSTO del caso, que se cierra aqui y no antes: una tarea de este caso podria
+      // haber terminado despues de que el mapa de costos se leyo. Se guarda la muestra y se
+      // borra el acumulador, para que un `instanceId` reutilizado no herede el importe.
+      const costoDelCaso = this._costoPorCaso.get(instanceId);
+      if (costoDelCaso != null) {
+        this.instanceCosts.push(costoDelCaso);
+        this._costoPorCaso.delete(instanceId);
+      }
 
       // Cierre de lote: se consulta ANTES de borrar el estado, que es donde vive
       // el numero de lote de la instancia.
@@ -1135,6 +1174,19 @@ export default class SimulationEngine {
         results.totalTripleOvertimeCost += event.tripleOvertimePremium;
         results.totalDayPremiumCost += (event.dayPremium || 0);
 
+        // COSTO POR CASO. Se acumula aqui, que es donde se conoce a la vez el importe de
+        // esta tarea y la instancia que la paga. NO se puede reconstruir en
+        // `INSTANCE_COMPLETE`: alli ya no se sabe que tareas pago ese caso, y el costo esta
+        // repartido entre los resultados de todas las tareas.
+        //
+        // PARA QUE: el costo total del informe es una SUMA, y una suma no tiene rango. Con
+        // el costo de cada caso se calculan percentiles, y eso es lo que permite decir «este
+        // es el mejor escenario, este el esperado y este el peor» en vez de un unico numero
+        // que el cliente no puede discutir ni usar para presupuestar.
+        const costoDelEvento = (event.operationCost || 0) + (event.doubleOvertimePremium || 0)
+          + (event.tripleOvertimePremium || 0) + (event.dayPremium || 0);
+        this._sumarCostoAlCaso(event.instanceId, costoDelEvento);
+
         const waitTimeCost = results.totalWaitTimeCost;
         // The total cost is the sum of its parts.
         results.totalCost = (results.totalCost - waitTimeCost) + event.operationCost + event.doubleOvertimePremium + event.tripleOvertimePremium + (event.dayPremium || 0) + waitTimeCost;
@@ -1162,6 +1214,11 @@ export default class SimulationEngine {
           const currentWaitCost = (waitTime / 60) * waitCostPerHour;
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
+          // OJO: el costo del caso NO se acumula aqui. La espera de una tarea que tuvo que
+          // pedir recurso se cobra al LIBERARLO (ver `release()`), que es cuando consta
+          // cuanto espero de verdad; sumarla tambien aqui la contaria DOS veces, porque este
+          // evento lleva su propio `waitStart`. Se acumula en el otro camino, y por eso el
+          // total por caso sigue cuadrando con el del informe.
         }
 
         const data = getSimulationData(event.element);
@@ -1198,6 +1255,13 @@ export default class SimulationEngine {
             const currentWaitCost = (waitTime / 60) * waitCostPerHour;
             nextTaskResults.totalWaitTimeCost += currentWaitCost;
             nextTaskResults.totalCost += currentWaitCost;
+            // LA ESPERA SE IMPUTA AQUI, y no solo en `TASK_COMPLETE`, porque este es OTRO
+            // camino: la cola se cobra cuando el recurso se LIBERA, que es cuando se sabe
+            // cuanto espero de verdad. Sin esta linea el costo por caso dejaba fuera toda la
+            // espera -medido: 1200 acumulados frente a 2320 de total-, y el percentil del
+            // informe habria salido un 48 % por debajo del costo que el propio informe
+            // ensena. Es el fallo que la prueba de cuadre detecto al anadir una piscina.
+            this._sumarCostoAlCaso(marcador.instanceId, currentWaitCost);
 
             // La tarea arranca AHORA: se vuelve a programar desde el inicio real.
             // Antes solo se corregian su duracion y su fin, pero el tiempo extra y

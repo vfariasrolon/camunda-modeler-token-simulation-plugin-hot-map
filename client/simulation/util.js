@@ -178,6 +178,13 @@ export const resumenMuestras = (muestras) => {
     max: datos[n - 1],
     media,
     desviacion,
+    // p10 y p25 existen para los ESCENARIOS DE COSTO del informe, que necesitan una
+    // horquilla que se pueda defender. El minimo observado es «todo salio perfecto» -un
+    // evento de probabilidad casi nula-, asi que se usa p10 como «mejor caso realista»; y
+    // p25 permite ver el cuarto mas barato de la corrida. Se calculan siempre y no solo para
+    // el costo: un percentil de mas no cuesta nada y evita tener dos caminos de codigo.
+    p10: percentil(datos, 10),
+    p25: percentil(datos, 25),
     p50: percentil(datos, 50),
     p90: percentil(datos, 90),
     p95: percentil(datos, 95),
