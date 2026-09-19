@@ -175,11 +175,20 @@ try {
   // DOM -`getGraphics` devuelve un `<g>` y eso dependia de como dibuje bpmn-js-, lo
   // construye desde estos puntos, igual que hace la libreria de tokens para animar.
   // Un doble sin `waypoints` no probaria el camino real.
+  // ORIGEN Y DESTINO. En bpmn-js toda conexion los tiene, y la cuota de rama -que es lo que ahora
+  // dice el color- se calcula dividiendo entre las salidas del MISMO nodo. Un doble sin ellos
+  // haria que la cuota no se pudiera calcular y que todos los trazos salieran del mismo color,
+  // que es justo el fallo que la vista viene a arreglar.
+  const nodoOrigen = { id: 'GW_origen', businessObject: { name: 'compuerta' } };
+  const nodoDestino = (id) => ({ id: 'N_' + id, businessObject: { name: 'nodo ' + id } });
   const flujosDePrueba = [ 'F1', 'F2', 'F3' ].map((id) => Object.assign(
     elemento(id, 'bpmn:SequenceFlow', 0, 0), {
       __esFlujo: true,
       width: 0,
       height: 0,
+      // Las TRES salen del mismo nodo: es lo que hace que sus cuotas se repartan entre ellas.
+      source: nodoOrigen,
+      target: nodoDestino(id),
       waypoints: [ { x: 0, y: 0 }, { x: 300, y: 0 } ]
     }
   ));
@@ -505,9 +514,11 @@ try {
     leyendaEstructura.textContent.slice(0, 70));
   // Y EXPLICA QUE EL COLOR ES POR PUESTO: sin esa frase, un rojo se lee como «muchos pasos
   // en absoluto» y no como «el mas usado de este diagrama», que es lo que significa.
-  ok(/por\s+puestos|puestos, no por valor/.test(leyendaEstructura.textContent),
-    'y dice que los colores reparten por puestos, no por valor absoluto',
-    leyendaEstructura.textContent.slice(0, 140));
+  ok(/cuota de la rama/.test(leyendaEstructura.textContent),
+    'y explica que el color es la CUOTA de la rama, no el volumen',
+    leyendaEstructura.textContent.slice(0, 160));
+  ok(/grosor/i.test(leyendaEstructura.textContent),
+    'dejando claro que el grosor sí son los tokens: dos canales, dos preguntas');
   ok(/1/.test(leyendaEstructura.querySelector('.heatmap-legend-warn')
     ? leyendaEstructura.querySelector('.heatmap-legend-warn').textContent : ''),
     'y avisa de la conexión sin tráfico');
@@ -1028,18 +1039,89 @@ try {
   // (F1=10, F3=8). El reparto por puesto sobre los valores CON masa deja a F1 en el 10 %
   // mas alto (rojo) y a F3 en la banda siguiente (naranja), en vez del azul plano que
   // daba la escala continua.
+  // 10 y 8 son el 55,6 % y el 44,4 % de su nodo: un REPARTO CASI EMPATADO. Las dos salen del
+  // mismo color -«repartido»- y eso es CORRECTO: pintarlas distinto afirmaria una diferencia que
+  // los numeros no tienen. Es la propiedad que distingue el umbral fijo del ranking por puesto.
+  ok(colorDe('F1') === 'yellow' && colorDe('F3') === 'yellow',
+    'un reparto casi empatado (55 % / 44 %) sale del MISMO color: «repartido»',
+    `${colorDe('F1')} / ${colorDe('F3')}`);
+
+  // Y AHORA UNA RAMA DECISIVA, que es el caso que el usuario reportaba: 90 contra 10. El 90 % es
+  // «casi todo» y el 10 % es «minoria», asi que tienen que salir de colores distintos.
+  controller.simulationResults = new Map([
+    [ 'F1', { executionCount: 90 } ],
+    [ 'F3', { executionCount: 10 } ]
+  ]);
+  controller.showMetric('trafico');
   ok(colorDe('F1') === 'red',
-    'el camino mas usado sale ROJO, que es la respuesta a «cual es el mas usado»',
+    'con una rama decisiva (90 % vs 10 %) la dominante sale ROJA',
     colorDe('F1'));
-  // CON DOS VALORES, el segundo cae en la banda AMARILLA y no en la naranja: el reparto
-  // por puesto asigna 1 elemento a la banda del 10 % y el resto a la siguiente franja con
-  // contenido, que con dos valores es la amarilla. Es CORRECTO -con dos caminos no hay
-  // «siguiente 20 %» que repartir- y lo que importa comprobar es que NO sale azul plano,
-  // que era el fallo real: con la escala continua, 8 sobre un maximo de 10 daba 0,8 y el
-  // suelo lo dejaba indistinguible.
-  ok(colorDe('F3') === 'yellow',
-    'y el siguiente sale en una banda distinta, no en un azul indistinguible',
+  ok(colorDe('F3') === 'blue',
+    'y la minoritaria sale AZUL: la vista ya distingue por donde se va el trabajo',
     colorDe('F3'));
+  // Se vuelve a los valores de antes para el resto de la seccion.
+  controller.simulationResults = new Map([
+    [ 'F1', { executionCount: 10 } ],
+    [ 'F3', { executionCount: 8 } ]
+  ]);
+  controller.showMetric('trafico');
+
+  // --- LA CUOTA, que es lo que el color dice ahora ---
+  //
+  // Las tres conexiones salen del MISMO nodo, asi que sus cuotas se reparten entre ellas: 10, 0 y
+  // 8 dan el 55,6 %, el 0 % y el 44,4 %. Es la lectura que el usuario pidio -«por donde se fue el
+  // trabajo»- y la que el volumen no daba, porque el tronco se llevaba el rojo por construccion.
+  const cuotaDe = (id) => {
+    const t = document.querySelector(`.heatmap-flows path[data-flujo="${id}"]`);
+    const v = t && t.getAttribute('data-cuota');
+    return v == null ? null : Number(v);
+  };
+  ok(Math.abs(cuotaDe('F1') - 10 / 18) < 1e-3,
+    'la cuota se calcula contra las salidas del MISMO nodo (10 de 18)',
+    String(cuotaDe('F1')));
+  ok(Math.abs(cuotaDe('F3') - 8 / 18) < 1e-3,
+    'y la de la otra rama con trafico es 8 de 18', String(cuotaDe('F3')));
+  ok(cuotaDe('F2') === null,
+    'una conexion SIN trafico no lleva cuota: va en gris, fuera de la escala');
+
+  // --- EL HALO DE LA RUTA DOMINANTE ---
+  //
+  // La ruta es F1 (la de mas tokens). Se comprueba que el halo EXISTE, que es del color de la
+  // ruta y que va DEBAJO de los trazos de color: dibujado encima taparia el dato que acaba de
+  // calcularse.
+  const grupoRuta = canvas.contenedor.querySelector('.heatmap-ruta');
+  const halos = grupoRuta ? [ ...grupoRuta.querySelectorAll('path') ] : [];
+  ok(Boolean(grupoRuta), 'existe el grupo del halo de la ruta');
+  ok(halos.length === 1, 'y resalta UNA ruta, no todas', String(halos.length));
+  ok(halos[0] && halos[0].getAttribute('stroke') === '#c026d3',
+    'con el color de ruta, que esta FUERA de la paleta de trafico',
+    halos[0] ? halos[0].getAttribute('stroke') : 'sin halo');
+  // EL HALO REUSA EL MISMO `d` QUE LA CONEXION. Se compara con el trazo real de F1: si el halo
+  // recalculara su propio trazo, dos polilineas ligeramente distintas se verian como un borde
+  // sucio. (La primera version de esta comprobacion comparaba el `d` contra un COLOR y el
+  // resultado daba siempre `true`: no probaba nada.)
+  const trazoF1 = document.querySelector('.heatmap-flows path[data-flujo="F1"]');
+  ok(halos[0] && trazoF1 && halos[0].getAttribute('d') === trazoF1.getAttribute('d'),
+    'y reusa el MISMO trazo que la conexion (nada de recalcularlo)',
+    halos[0] && trazoF1 ? halos[0].getAttribute('d') : 'sin datos');
+  // Y es MAS ANCHO que el trazo: es lo que lo hace un halo y no una linea encima.
+  ok(halos[0] && trazoF1
+    && Number(halos[0].getAttribute('stroke-width')) > Number(trazoF1.getAttribute('stroke-width')),
+    'y es mas ancho que el trazo, que es lo que lo hace un halo',
+    `${halos[0] && halos[0].getAttribute('stroke-width')} vs ${trazoF1 && trazoF1.getAttribute('stroke-width')}`);
+
+  // El ORDEN importa: el halo tiene que ir ANTES que los trazos en el DOM para quedar debajo.
+  const capaOverlays = canvas.contenedor.querySelector('.layer-overlays');
+  const hijos = capaOverlays ? [ ...capaOverlays.children ].map((n) => n.getAttribute('class')) : [];
+  ok(hijos.indexOf('heatmap-ruta') < hijos.indexOf('heatmap-flows'),
+    'y el halo va DEBAJO de los trazos de color, para no taparlos',
+    hijos.join(' , '));
+
+  // La leyenda tiene que explicar el halo: sin eso es decoracion que nadie sabe leer.
+  const leyendaConRuta = canvas.contenedor.querySelector('.heatmap-legend');
+  ok(leyendaConRuta && /Ruta dominante/.test(leyendaConRuta.textContent),
+    'y la leyenda nombra la ruta dominante, para que el halo se entienda',
+    leyendaConRuta ? leyendaConRuta.textContent.slice(0, 90) : 'sin leyenda');
 
   // Y con los mismos valores, la banda NO depende del valor absoluto: si las dos
   // conexiones se recorren igual, las dos salen del mismo color. Es lo que evita afirmar

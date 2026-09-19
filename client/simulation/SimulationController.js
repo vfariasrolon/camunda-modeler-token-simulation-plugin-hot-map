@@ -8,7 +8,7 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
 import { describeLabor } from './LaborRules.js';
-import { rangoDeValores, opacidadDe, fraccionDe, textoDeEscala, escalaDeMetrica, gradienteCss, colorFrio, colorDeValor, bandasDeValores, gradienteBandas, topCaminos, OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA } from './HeatmapScale.js';
+import { rangoDeValores, opacidadDe, fraccionDe, textoDeEscala, escalaDeMetrica, gradienteCss, colorFrio, colorDeValor, bandasDeCuota, gradienteBandas, topCaminos, OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA } from './HeatmapScale.js';
 import { numerarTareas, etiquetaDe } from './TaskIds.js';
 import {
   COLOR_PLAN, compararPlanes, notasDeEficiencia, fechasUnidas,
@@ -16,6 +16,7 @@ import {
   compararEscenarios, notaDelTopeLegal, svgTresEscenarios
 } from './ComparativaPlanes.js';
 import { LADO_CELDA, calcularZonas, ladoQueCabe } from './HeatmapZones.js';
+import { normalizarFlujos, cuotasDeRama, rutaDominante, formatearCuota } from './DominantRoute.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -65,6 +66,16 @@ const ReportIcon = `
 
 // Tope del radio de una mancha del mapa de calor, en px de diagrama. Sin tope,
 // un subproceso grande generaria un circulo que tapa el diagrama entero.
+/**
+ * Color del HALO de la ruta dominante.
+ *
+ * FUERA DE LA PALETA A PROPOSITO. La escala del mapa va de azul a rojo pasando por cian, lima y
+ * ambar: cualquier color de esa rampa podria leerse como «un nivel de trafico». El fucsia no esta
+ * en la rampa, asi que no se puede confundir con un dato: es una ANOTACION -«estas conexiones
+ * forman un solo camino»-, y por eso puede permitirse ser estridente.
+ */
+const COLOR_RUTA = '#c026d3';
+
 const MAX_BLOB_RADIUS = 240;
 // Limites del multiplicador de TAMANO de las manchas (botones «Radio + / −»). Por
 // debajo de 0.25 la mancha desaparece dentro de la figura; por encima de 3 se comen el
@@ -1347,19 +1358,52 @@ export default class SimulationController {
     this._limpiarFlujos();
 
     const capa = this._capaOverlays();
-    if (!capa) return { bandas: null, top: [] };
+    if (!capa) return { bandas: null, top: [], ruta: null };
 
-    // LAS BANDAS SE CALCULAN CON LOS VALORES DE LAS CONEXIONES SOLO, no con los del
-    // diagrama entero. Es la «escala propia»: comparar una linea contra una tarea seria
-    // comparar dos cosas distintas, y mientras las tareas tengan numeros mas altos las
-    // lineas no llegarian nunca al rojo.
-    const bandasTrafico = bandasDeValores((pares || []).map((p) => p.value));
+    const valores = new Map((pares || []).map((p) => [ p.element.id, p.value ]));
+    const valorDe = (id) => valores.get(id) || 0;
+
+    // LA CUOTA DE CADA RAMA, que es lo que ahora dice el COLOR.
+    //
+    // POR QUE NO EL VOLUMEN, con el caso que lo motivo: un diagrama real con una compuerta 80/20
+    // y 7000 casos. El tronco lleva 7000 tokens -el 100 %- y las ramas 5600 y 1400. Coloreando
+    // por volumen, la banda mas caliente se la lleva SIEMPRE el tronco, que no decide nada,
+    // mientras la rama que de verdad elige el trafico se queda en el segundo color. El reporte
+    // fue exacto: «deberia verse en rojo el camino mas usado pero se ve un poco mas diferente».
+    //
+    // Y no es casualidad de ese diagrama: en una conexion SECUENCIAL el valor es igual al de la
+    // anterior, asi que el tronco tiene el maximo por construccion. La cuota lo arregla: en una
+    // compuerta dice la probabilidad de la rama («80 % por aqui»), que es lo que un consultor
+    // enuncia en voz alta, y en una secuencial dice el 100 %, que es correcto.
+    const flujosNorm = normalizarFlujos(this._getFlujosDelDiagrama());
+    const cuotas = cuotasDeRama(flujosNorm, valorDe);
+
+    // LA RUTA DOMINANTE, que se resalta con un halo. Se calcula aqui, antes de pintar, porque el
+    // halo tiene que dibujarse DEBAJO de los trazos: asi se ve como un contorno alrededor y no
+    // como una capa que tapa el color.
+    const ruta = rutaDominante(flujosNorm, valorDe);
+
+    // LAS BANDAS SE CALCULAN SOBRE LAS CUOTAS de las conexiones CON TRAFICO, no sobre el
+    // diagrama entero. Es la «escala propia» -comparar una linea contra una tarea seria comparar
+    // dos cosas distintas- y ademas solo entran las que se pintan de color: las de trafico cero
+    // van en gris discontinuo, asi que meter su cuota (0 %) en el ranking anadiria un valor de
+    // fondo que no corresponde a ningun color de la escala.
+    const cuotasConDato = flujosNorm
+      .filter((f) => valorDe(f.id) > 0)
+      .map((f) => cuotas.get(f.id))
+      .filter((c) => c != null);
+    const bandasTrafico = bandasDeCuota(cuotasConDato);
+
+    // EL HALO VA PRIMERO, para quedar DEBAJO de los trazos de color.
+    const grupoHalo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    grupoHalo.setAttribute('class', 'heatmap-ruta');
+    capa.appendChild(grupoHalo);
+    this._rutaGrupo = grupoHalo;
+
     const grupo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     grupo.setAttribute('class', 'heatmap-flows');
     capa.appendChild(grupo);
     this._flujosGrupo = grupo;
-
-    const valores = new Map(pares.map((p) => [ p.element.id, p.value ]));
 
     let sinTrazo = 0;
     this._getFlujosDelDiagrama().forEach((flujo) => {
@@ -1402,16 +1446,47 @@ export default class SimulationController {
         //
         // Con las bandas propias, el camino MAS usado de las lineas sale SIEMPRE rojo, y la
         // pregunta «por que caminos pasa mas el trabajo» se contesta de un vistazo.
-        const banda = bandasTrafico ? bandasTrafico.bandaDe(valor) : null;
+        // COLOR POR CUOTA DE RAMA, GROSOR POR VOLUMEN. Son dos canales con dos preguntas
+        // distintas, y separarlos es lo que hace legible el mapa:
+        //
+        //   COLOR   «en este punto, por donde se fue el trabajo» (el % de la rama).
+        //   GROSOR  «cuanto trabajo paso por aqui» (los tokens, en proporcion al rango).
+        //
+        // El grosor se queda en el volumen a proposito: si tambien fuera por cuota, todas las
+        // conexiones de una compuerta tendrian anchos parecidos y se perderia la lectura de
+        // «esta linea lleva mucho mas trabajo que aquella».
+        const cuota = cuotas.get(flujo.id);
+        const banda = (cuota != null && bandasTrafico) ? bandasTrafico.bandaDe(cuota) : null;
         const color = banda ? banda.color : 'blue';
-        // El GROSOR sigue siendo progresivo -no por bandas-: asi el color dice «en que
-        // grupo estas» y el grosor dice «cuanto», y las dos lecturas no se estorban. Un
-        // grosor por bandas daria cuatro anchos y perderia la gradacion fina.
         const fraccion = fraccionDe(valor, rango.min, rango.max);
         const grosor = 2 + 16 * (fraccion == null ? 0.5 : fraccion);
+        const grosorRedondeado = Math.round(grosor * 10) / 10;
         trazo.setAttribute('stroke', color);
-        trazo.setAttribute('stroke-width', String(Math.round(grosor * 10) / 10));
+        trazo.setAttribute('stroke-width', String(grosorRedondeado));
         trazo.setAttribute('stroke-opacity', '0.92');
+        // La cuota va en el propio trazo, para que la leyenda pueda decirla y para que un lector
+        // del DOM (o el arnes) pueda comprobar que el color y el numero concuerdan.
+        if (cuota != null) trazo.setAttribute('data-cuota', cuota.toFixed(4));
+
+        // EL HALO DE LA RUTA DOMINANTE. Va en su propio grupo, que se inserto ANTES que el de los
+        // trazos de color, asi que queda debajo: se ve como un contorno alrededor del camino y no
+        // como una capa que tapa el color que acaba de calcularse.
+        //
+        // Se reusa el MISMO `d`: recalcularlo arriesgaria que el halo y el trazo no coincidieran
+        // -dos polilineas ligeramente distintas se ven como un borde sucio-, y ademas seria
+        // trabajo repetido.
+        if (ruta.ids.has(flujo.id)) {
+          const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          halo.setAttribute('d', d);
+          halo.setAttribute('fill', 'none');
+          halo.setAttribute('stroke-linecap', 'round');
+          halo.setAttribute('stroke-linejoin', 'round');
+          halo.setAttribute('stroke', COLOR_RUTA);
+          halo.setAttribute('stroke-width', String(Math.round((grosorRedondeado + 8) * 10) / 10));
+          halo.setAttribute('stroke-opacity', '0.5');
+          halo.setAttribute('pointer-events', 'none');
+          grupoHalo.appendChild(halo);
+        }
       }
 
       grupo.appendChild(trazo);
@@ -1436,12 +1511,19 @@ export default class SimulationController {
         valor: p.value,
         id: p.element && p.element.id,
         etiqueta: this._nombreDeConexion(p.element),
-        color: bandasTrafico.bandaDe(p.value) ? bandasTrafico.bandaDe(p.value).color : null
+        // El color de la LISTA es el de su CUOTA, para que coincida con el del trazo: una lista
+        // con colores distintos a los del diagrama obliga a emparejarlos a ojo.
+        color: (() => {
+          const c = cuotas.get(p.element && p.element.id);
+          const b = (c != null) ? bandasTrafico.bandaDe(c) : null;
+          return b ? b.color : null;
+        })(),
+        cuota: cuotas.get(p.element && p.element.id)
       })),
       5
     );
 
-    return { bandas: bandasTrafico, top };
+    return { bandas: bandasTrafico, top, ruta, cuotas };
   }
 
   /**
@@ -1568,6 +1650,13 @@ export default class SimulationController {
       this._flujosGrupo.parentNode.removeChild(this._flujosGrupo);
     }
     this._flujosGrupo = null;
+    // El halo de la ruta va en su propio grupo, asi que se limpia aparte. Olvidarlo dejaria el
+    // contorno de la ruta anterior pintado encima del mapa nuevo, que es la peor clase de fallo:
+    // un resto que parece un dato.
+    if (this._rutaGrupo && this._rutaGrupo.parentNode) {
+      this._rutaGrupo.parentNode.removeChild(this._rutaGrupo);
+    }
+    this._rutaGrupo = null;
   }
 
   /** ¿Esta figura puede recibir una mancha? Las conexiones no: solo trazo. */
@@ -1622,25 +1711,49 @@ export default class SimulationController {
       : (textoDeEscala(metric, rango).uniforme
         ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA));
 
+    // LAS BANDAS AHORA SON PORCENTAJES, no pasos: el color dice la CUOTA de la rama (que
+    // fraccion de lo que llegaba a ese punto tomo esta salida). Se formatean como % porque un
+    // rango «0,8 – 1» no se lee.
     const filasBandas = bandas && bandas.bandas.length
       ? `<div class="heatmap-legend-bandas">${bandas.bandas.map((b) => `
           <div class="heatmap-legend-banda">
             <span class="muestra" style="background: ${b.color};"></span>
-            <span class="rango">${Math.round(b.min)}${b.min === b.max ? '' : '–' + Math.round(b.max)} pasos</span>
-            <span class="cuantos">${b.cuantos} camino(s)</span>
+            <span class="rango">${b.rangoTexto || formatearCuota(b.min)}</span>
+            <span class="cuantos">${b.etiqueta ? b.etiqueta + ' · ' : ''}${b.cuantos} camino(s)</span>
           </div>`).join('')}</div>`
       : `<div class="heatmap-legend-detail">${textoDeEscala(metric, rango).detalle}</div>`;
 
-    // LOS CAMINOS MAS USADOS. Es la respuesta directa a «¿por qué líneas pasaron más
-    // tokens?»: un color siempre es ambiguo, un color con su número y su nombre no.
+    // LA RUTA DOMINANTE. Un color por sí solo no dice «estas conexiones forman UN camino»: lo
+    // dice el halo. Y el halo necesita su leyenda, o es decoración que nadie sabe leer.
+    const ruta = dibujo && dibujo.ruta;
+    const bloqueRuta = (ruta && ruta.pasos.length)
+      ? `<div class="heatmap-legend-ruta">
+          <div class="heatmap-legend-ruta-titulo">
+            <span class="halo-muestra"></span> Ruta dominante
+          </div>
+          <div class="heatmap-legend-ruta-detalle">
+            ${ruta.pasos.length} paso(s) · <strong>${Math.round(ruta.valor)}</strong> tokens la atraviesan
+            de punta a punta
+          </div>
+          <div class="heatmap-legend-ruta-motivo">
+            Se recorre desde el inicio eligiendo en cada compuerta la salida con más tokens.
+          </div>
+        </div>`
+      : '';
+
+    // LOS CAMINOS MAS USADOS. Es la respuesta directa a «¿por qué líneas pasaron más tokens?»:
+    // un color siempre es ambiguo, un color con su número y su nombre no. Se muestran las DOS
+    // cifras -los tokens y la cuota- porque dicen cosas distintas: cuánto trabajo lleva y qué
+    // parte de su decisión se llevó.
     const filasTop = top.length
       ? `<div class="heatmap-legend-top">
-          <div class="heatmap-legend-top-title">Los ${top.length} caminos más usados</div>
+          <div class="heatmap-legend-top-title">Los ${top.length} caminos con más tráfico</div>
           ${top.map((c) => `
             <div class="heatmap-legend-top-fila">
               <span class="muestra" style="background: ${c.color || '#9aa5b1'};"></span>
               <span class="nombre" title="${c.etiqueta}">${c.etiqueta}</span>
               <span class="valor">${Math.round(c.valor)}</span>
+              <span class="cuota">${formatearCuota(c.cuota)}</span>
             </div>`).join('')}
         </div>`
       : '';
@@ -1654,10 +1767,11 @@ export default class SimulationController {
       <div class="heatmap-legend-title">Caminos · ${escalaDeMetrica(metric).etiqueta}</div>
       <div class="heatmap-legend-bar" style="background: ${barra};"></div>
       ${filasBandas}
+      <div class="heatmap-legend-note">El <strong>color</strong> es la cuota de la rama: qué parte
+        de lo que llegaba a ese punto siguió por esta conexión. El <strong>grosor</strong> son los
+        tokens.</div>
+      ${bloqueRuta}
       ${filasTop}
-      <div class="heatmap-legend-note">Los colores reparten las <strong>conexiones</strong> por
-        puestos, no por valor: el rojo es siempre el camino más usado de este diagrama. El
-        grosor sí es proporcional a los pasos.</div>
       ${aviso}
     `;
   }

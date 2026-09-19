@@ -50,6 +50,11 @@ writeFileSync(join(AQUI, 'TaskIds.mjs'), leer('TaskIds.js'));
 // que el de sin tope- y solo se descubre cuando el informe dice que cumple habiendo hecho de mas.
 writeFileSync(join(AQUI, 'LegalOvertime.mjs'), leer('LegalOvertime.js'));
 
+// DominantRoute es puro: recorre el camino mas usado y calcula la cuota de cada rama. Es
+// exactamente la aritmetica que hay que poder probar sola, porque una ruta mal recorrida se
+// pinta igual de bonita que una correcta.
+writeFileSync(join(AQUI, 'DominantRoute.mjs'), leer('DominantRoute.js'));
+
 // HeatmapZones es puro: reparte masa en celdas y no toca el DOM ni bpmn-js.
 writeFileSync(join(AQUI, 'HeatmapZones.mjs'), leer('HeatmapZones.js'));
 

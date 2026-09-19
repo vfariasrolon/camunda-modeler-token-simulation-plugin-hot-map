@@ -243,6 +243,16 @@
    Se clonan en la capa de overlays, asi que heredan el zoom del diagrama sin tocar
    los trazos originales. `pointer-events: none` para no interceptar la seleccion ni
    el zoom: son una lectura, no un control. */
+/* EL HALO DE LA RUTA DOMINANTE.
+   Va en su propio grupo, dibujado DEBAJO de los trazos de color: asi se lee como un contorno
+   alrededor del camino y no como una capa que tapa el dato. El fucsia esta fuera de la paleta
+   secuencial (azul a rojo) a proposito: no puede confundirse con un nivel de trafico, porque no
+   es un dato sino una anotacion.
+   `pointer-events: none` para que no intercepte la seleccion ni el zoom, igual que los trazos. */
+.heatmap-ruta {
+    pointer-events: none;
+}
+
 .heatmap-flows {
     pointer-events: none;
 }
@@ -426,6 +436,58 @@
     flex: 0 0 auto;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+}
+
+/* La cuota, junto al valor absoluto. Se distinguen a proposito: una dice cuanto trabajo lleva la
+   conexion y la otra que parte de su decision se llevo, y confundirlas es el error mas facil de
+   cometer al leer el mapa. */
+.heatmap-legend-top-fila .cuota {
+    flex: 0 0 auto;
+    color: #6b7280;
+    font-size: 11px;
+    min-width: 42px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* LA RUTA DOMINANTE. Un color por si solo no dice «estas conexiones forman UN camino»: lo dice
+   el halo, y el halo necesita su leyenda o es decoracion que nadie sabe leer. */
+.heatmap-legend-ruta {
+    margin-top: 8px;
+    padding: 7px 9px;
+    background: #fdf4ff;
+    border-left: 3px solid #c026d3;
+    border-radius: 4px;
+}
+
+.heatmap-legend-ruta-titulo {
+    font-weight: 600;
+    color: #86198f;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* La misma fucsia del halo, para que la leyenda y el trazo se emparejen sin explicacion. */
+.halo-muestra {
+    display: inline-block;
+    width: 16px;
+    height: 5px;
+    border-radius: 3px;
+    background: #c026d3;
+    opacity: .75;
+    flex: 0 0 auto;
+}
+
+.heatmap-legend-ruta-detalle {
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+.heatmap-legend-ruta-motivo {
+    margin-top: 2px;
+    color: #777;
+    font-size: 11px;
 }
 
 /* Chart Panel (panel de graficos) */

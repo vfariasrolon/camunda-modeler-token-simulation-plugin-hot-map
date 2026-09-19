@@ -132,138 +132,87 @@ export function gradienteCss(gradiente = GRADIENTE_ESCALA) {
 }
 
 /**
- * BANDAS DE COLOR POR RANKING, estilo Google Maps.
+ * BANDAS DE LA CUOTA, POR UMBRALES FIJOS.
  *
- * EL PROBLEMA QUE RESUELVE, con datos reales: en una corrida de 49 conexiones con rango
- * 5-154, el tramo muerto de la escala (todo lo que cae por debajo de 0.4 recibe el MISMO
- * azul) alcanzaba hasta el valor 64,6. De las 49 conexiones, 47 quedaban por debajo: el
- * 96 % del diagrama salia del mismo color. El mapa no estaba roto, estaba mal calibrado:
- * el canal del color decia «azul» o «azul».
+ * POR QUE UMBRALES Y NO UN RANKING POR PUESTO, que es como estaba antes: la cuota es un
+ * PORCENTAJE, y un porcentaje tiene una escala natural que significa lo mismo en cualquier
+ * diagrama. El volumen NO la tiene -7000 pasos es mucho en un diagrama y poco en otro-, y por eso
+ * ahi si hace falta repartir por puestos. Confundir las dos cosas fue un fallo real, medido sobre
+ * el diagrama del usuario:
  *
- * POR QUE BANDAS Y NO UN DEGRADADO CONTINUO: un trazo de 4 px no puede comunicar un
- * matiz. «¿Este azul es 0,21 o 0,28?» no lo responde nadie mirando una linea fina. En
- * cambio «¿este tramo es rojo o naranja?» se responde de un vistazo, y para eso hacen
- * falta COLORES SEPARADOS, no una rampa. Es lo que hace Google Maps con el trafico.
+ *   cuotas: 100 %, 100 %, 80 %, 20 %, 100 %, 100 %, 100 %
  *
- * POR QUE POR POSICION Y NO POR VALOR: la pregunta de esta vista es «cuales son los
- * caminos mas usados», que es una pregunta de ORDEN, no de cantidad. Repartiendo por
- * posiciones, el 10 % mas usado SIEMPRE sale rojo, aunque la distribucion tenga una cola
- * larga donde el valor exacto aplastaria a todos hacia el frio. Se pierde distinguir 154
- * de 111 -para eso estan los numeros de la leyenda-, y se gana ver quien encabeza.
+ * Con bandas por PUESTO, cinco conexiones al 100 % se llevan las cuatro bandas de arriba y las dos
+ * ramas de la compuerta -el 80 % y el 20 %- caian LAS DOS en azul. Es decir: el mapa decia que da
+ * igual irse por la rama del 80 % que por la del 20 %, que es lo contrario de lo que esta vista
+ * tiene que ensenar.
  *
- * LAS BANDAS SON POR TANTO RELATIVAS A LA CORRIDA, igual que la escala que sustituyen.
- * Un mismo camino puede salir rojo en un diagrama y azul en otro. No es un defecto: es
- * lo que significa «el mas usado DE ESTE diagrama», y por eso la leyenda lleva el rango
- * real y los numeros.
+ * Con umbrales fijos, el 80 % es «la mayoria» y el 20 % es «minoria» en cualquier diagrama, y esos
+ * colores se pueden comparar entre corridas porque significan lo mismo.
+ *
+ * LOS CORTES SE LEEN EN VOZ ALTA: «casi todo», «la mayoria», «repartido», «minoria». Un 50/50 cae
+ * entero en «repartido» y sale del mismo color, que es correcto: un empate no se puede pintar
+ * como una diferencia.
  */
-export const BANDAS_RANKING = [
-  { hasta: 0.10, color: 'red', etiqueta: 'El 10 % más usado' },
-  { hasta: 0.30, color: 'orange', etiqueta: 'Siguiente 20 %' },
-  { hasta: 0.60, color: 'yellow', etiqueta: 'Mitad alta' },
-  { hasta: 1.00, color: 'blue', etiqueta: 'Resto' }
+export const BANDAS_CUOTA = [
+  { desde: 0.90, color: 'red', etiqueta: 'Casi todo' },
+  { desde: 0.70, color: 'orange', etiqueta: 'La mayoría' },
+  { desde: 0.40, color: 'yellow', etiqueta: 'Repartido' },
+  { desde: 0.00, color: 'blue', etiqueta: 'Minoría' }
 ];
 
 /**
- * Reparto de un conjunto de valores en bandas por POSICION.
+ * Reparto de un conjunto de CUOTAS en las bandas fijas.
  *
- * Devuelve una funcion que da la banda de un valor, mas la lista de bandas con su
- * RANGO REAL de valores y cuantos elementos cayeron en cada una. La leyenda necesita
- * esos rangos para poder decir «rojo: de 112 a 154 pasos», que es lo que convierte el
- * color en una medicion y no en un adorno.
- *
- * LOS EMPATES CAEN EN LA MISMA BANDA, y esto es una decision, no un descuido: si dos
- * caminos tienen exactamente los mismos pasos, pintarlos de distinto color afirmaria una
- * diferencia que no existe. Se usa el mismo criterio que `uniforme`: ante la duda, decir
- * «son iguales» en vez de inventar un orden.
- *
- * `valores` son los de la MAGNITUD que se este repartiendo. Para las lineas se le pasan
- * SOLO los de las lineas: comparar una linea contra una tarea seria comparar dos cosas
- * que no son la misma, y mientras las tareas tengan numeros mas altos las lineas no
- * llegarian nunca al rojo.
+ * Devuelve la banda de cada cuota y la lista de bandas QUE TIENEN ELEMENTOS -una banda vacia en la
+ * leyenda es ruido: describe un color que no esta en el diagrama-, cada una con su rango NOMINAL
+ * escrito (`rangoTexto`), que es lo que hace la leyenda comparable entre corridas.
  */
-export function bandasDeValores(valores) {
-  const limpios = (valores || [])
-    .map((v) => Number(v) || 0)
-    .filter((v) => v > 0)
-    .sort((a, b) => b - a);   // de mayor a menor: la posicion manda
+export function bandasDeCuota(cuotas) {
+  const limpios = (cuotas || [])
+    .map((v) => Number(v))
+    .filter((v) => Number.isFinite(v) && v > 0);
 
-  if (!limpios.length) return { bandaDe: () => null, bandas: [], max: 0, min: 0, n: 0 };
-
-  const n = limpios.length;
-  const max = limpios[0];
-  const min = limpios[n - 1];
-
-  // SIN CONTRASTE NO HAY BANDAS QUE REPARTIR: si todos los valores son iguales, el mapa
-  // sale de UN color y no de cuatro. Sin este corte, tres conexiones iguales caian en tres
-  // bandas distintas -una por franja de porcentaje- y el diagrama afirmaba diferencias que
-  // no existen. Es el mismo criterio que el resto de la escala: ante la duda, decir «son
-  // iguales».
-  if (max === min) {
-    const unica = {
-      color: BANDAS_RANKING[0].color,
-      etiqueta: BANDAS_RANKING[0].etiqueta,
-      min: max,
-      max,
-      cuantos: n,
-      uniforme: true
-    };
-    return {
-      bandaDe: (valor) => (Number(valor) === max ? unica : null),
-      bandas: [ unica ],
-      max,
-      min,
-      n
-    };
-  }
-
-  // Cuantos elementos entran en cada banda. Se calcula por POSICION en la lista
-  // ordenada, con `Math.ceil` para que la primera banda nunca quede vacia cuando hay
-  // pocos elementos (con 3 conexiones y suelo, un 10 % redondeado a la baja daria 0).
-  const bandas = [];
-  let desde = 0;
-  BANDAS_RANKING.forEach((definicion, indice) => {
-    let cuantos = Math.ceil(definicion.hasta * n) - desde;
-    if (indice === BANDAS_RANKING.length - 1) cuantos = n - desde;   // el resto, exacto
-    const hasta = Math.max(desde, Math.min(n, desde + cuantos));
-    if (hasta > desde) {
-      bandas.push({
-        color: definicion.color,
-        etiqueta: definicion.etiqueta,
-        min: limpios[hasta - 1],   // el MENOR de la banda
-        max: limpios[desde],       // el MAYOR de la banda
-        cuantos: hasta - desde
-      });
-    }
-    desde = hasta;
-  });
-
-  // LA BANDA DE UN VALOR SE BUSCA POR SU POSICION, y con los empates se usa la PRIMERA
-  // posicion del bloque, no la ultima.
-  //
-  // Es la diferencia entre un reparto que se entiende y uno que no, y se vio con datos
-  // reales: ocho conexiones empatadas a 20 pasos caian en la banda ROJA porque el bloque
-  // entero se contaba al final, y 20 no es «el camino mas usado» de nada. Con la primera
-  // posicion, el bloque recibe la banda de su mejor puesto: ocho caminos iguales comparten
-  // el color que les corresponde por estar donde estan, sin colarse en el grupo de arriba.
-  //
-  // La alternativa -repartir el bloque entre dos bandas- mentiria: afirmaria una
-  // diferencia entre dos caminos que tienen exactamente los mismos pasos.
-  const bandaDe = (valor) => {
-    const v = Number(valor) || 0;
-    if (!(v > 0)) return null;
-    const mayores = limpios.filter((otro) => otro > v).length;
-    const posicion = mayores + 1;
-    let desde = 0;
-    for (const banda of bandas) {
-      if (posicion <= desde + banda.cuantos) return banda;
-      desde += banda.cuantos;
-    }
-    return bandas[bandas.length - 1] || null;
+  const bandaDe = (cuota) => {
+    const c = Number(cuota);
+    if (!Number.isFinite(c)) return null;
+    return BANDAS_CUOTA.find((b) => c >= b.desde) || BANDAS_CUOTA[BANDAS_CUOTA.length - 1];
   };
 
-  return { bandaDe, bandas, max, min, n };
+  if (!limpios.length) return { bandaDe, bandas: [], n: 0 };
+
+  const bandas = [];
+  BANDAS_CUOTA.forEach((definicion, indice) => {
+    const enBanda = limpios.filter((v) => bandaDe(v) === definicion);
+    if (!enBanda.length) return;
+
+    // El extremo superior de una banda es el umbral de la anterior; el de la primera es el 100 %.
+    // El de la ULTIMA es abierto por abajo y se escribe «menos de», no «0 % – 40 %»: el 0 % no es
+    // un valor de esta escala, porque las conexiones sin trafico van en gris aparte.
+    const hasta = indice === 0 ? 1 : BANDAS_CUOTA[indice - 1].desde;
+    const rangoTexto = definicion.desde === 0
+      ? `< ${formatearCuotaLocal(hasta)}`
+      : `${formatearCuotaLocal(definicion.desde)} – ${formatearCuotaLocal(hasta)}`;
+
+    bandas.push({
+      color: definicion.color,
+      etiqueta: definicion.etiqueta,
+      min: definicion.desde,
+      max: hasta,
+      cuantos: enBanda.length,
+      rangoTexto
+    });
+  });
+
+  return { bandaDe, bandas, n: limpios.length };
 }
 
+/**
+ * Formato de una cuota.
+ *
+ * Duplicado a proposito de `DominantRoute`: la ESCALA es del mapa y el RECORRIDO de la ruta es
+ * otra cosa, asi que el modulo de la escala no debe depender del de la ruta. Son siete lineas.
+ */
 /** CSS del degradado DISCRETO de la leyenda, a partir de las bandas reales. */
 export function gradienteBandas(bandas) {
   if (!bandas || !bandas.length) return 'blue';
@@ -329,6 +278,14 @@ const RGB = {
   yellow: [ 255, 255, 0 ], red: [ 255, 0, 0 ], orange: [ 255, 165, 0 ],
   white: [ 255, 255, 255 ], black: [ 0, 0, 0 ]
 };
+
+function formatearCuotaLocal(cuota) {
+  if (cuota == null || !Number.isFinite(cuota)) return '—';
+  const pct = cuota * 100;
+  if (pct >= 99.5) return '100 %';
+  if (pct >= 10) return `${Math.round(pct)} %`;
+  return `${pct.toFixed(1)} %`;
+}
 
 const rgbDe = (color) => {
   const nombre = String(color).trim().toLowerCase();
@@ -396,7 +353,11 @@ export const ESCALA_POR_METRICA = {
   // una linea no tiene tiempo ni costo, solo paso. El motor ya lo cuenta para cada
   // flujo al elegir la salida (`findNextElements`), asi que la vista de estructura no
   // necesita tocar el motor.
-  trafico: { etiqueta: 'Tráfico (pasos por la conexión)', formatea: (v) => `${Math.round(v)} pasos` },
+  // El COLOR de esta vista es la CUOTA de la rama (que parte de lo que llegaba a ese punto
+  // siguio por esta conexion), no el volumen. La etiqueta lo dice: cuando decia «pasos por la
+  // conexion» el lector buscaba el volumen en el color y no lo encontraba. El volumen sigue
+  // estando, en el GROSOR del trazo.
+  trafico: { etiqueta: 'Cuota de la rama', formatea: (v) => `${Math.round(v)} pasos` },
   // ZONAS: la unica metrica que no se mide POR ELEMENTO. Lo que se pinta es una rejilla
   // y el numero de cada celda son minutos de trabajo que pasaron por ese trozo, asi que
   // su formato es de tiempo. Va aqui y no en el modulo de zonas para que el guardian de

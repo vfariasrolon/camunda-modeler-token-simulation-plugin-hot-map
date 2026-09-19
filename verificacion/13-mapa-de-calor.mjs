@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import {
   opacidadDe, rangoDeValores, fraccionDe, textoDeEscala, escalaDeMetrica,
   gradienteCss, colorFrio, colorCalido,
-  bandasDeValores, gradienteBandas, topCaminos, BANDAS_RANKING,
+  bandasDeCuota, gradienteBandas, topCaminos, BANDAS_CUOTA,
   OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA, ESCALA_POR_METRICA
 } from './HeatmapScale.mjs';
 
@@ -211,103 +211,82 @@ console.log('\n== 14. La escala REPARTE entre el minimo y el maximo (el caso del
     'un valor fuera del rango se acota a los extremos');
 }
 
-console.log('\n== 15. BANDAS POR RANKING: el color dice el PUESTO, no el valor ==');
+console.log('\n== 15. BANDAS DE CUOTA: umbrales fijos, no puestos ==');
 {
-  // EL CASO REAL QUE MOTIVO LAS BANDAS. Son los 49 valores de una corrida de verdad, con
-  // el problema que tenia la escala continua: el tramo muerto (todo por debajo de 0,4
-  // recibe el MISMO azul) llegaba al valor 64,6, asi que 47 de 49 conexiones salian del
-  // mismo color. Aqui se comprueba que el reparto nuevo NO deja el diagrama plano.
-  const valores = [
-    38, 13, 25, 30, 18, 12, 13, 8, 5, 20, 20, 20, 111, 20, 91, 40, 20, 20, 18, 20,
-    20, 40, 40, 37, 18, 60, 60, 60, 46, 14, 13, 46, 46, 43, 42, 15, 27, 13, 26, 13,
-    22, 3, 38, 31, 9, 9, 6, 6, 6
-  ];
-  const b = bandasDeValores(valores);
-
-  ok(b.n === 49, 'las 49 conexiones entran en el reparto', String(b.n));
-  ok(b.bandas.length === 4,
-    'y salen las cuatro bandas (el reparto no se colapsa en una)', String(b.bandas.length));
-
-  // LA PROPIEDAD QUE ARREGLA EL PROBLEMA: cada banda tiene elementos. Con la escala
-  // continua, 47 de 49 compartian un unico color; aqui ninguna banda queda vacia.
-  ok(b.bandas.every((x) => x.cuantos > 0),
-    'y ninguna queda vacia, que es lo que dejaba el diagrama de un solo color',
-    b.bandas.map((x) => x.cuantos).join(', '));
-
-  // EL MAXIMO ES ROJO, siempre: es la pregunta de la vista -«cual es el camino mas
-  // usado»- y por tanto no puede depender de cuanto valga.
-  ok(b.bandaDe(111).color === 'red', 'el camino mas usado sale ROJO', b.bandaDe(111).color);
-  ok(b.bandaDe(3).color === 'blue', 'y el menos usado sale azul', b.bandaDe(3).color);
-
-  // LAS BANDAS SON ORDENADAS Y SE TOCAN: los rangos reales van de mayor a menor y cubren
-  // el rango entero. Un hueco significaria valores que no caen en ninguna banda.
-  ok(b.bandas[0].max === 111 && b.bandas[b.bandas.length - 1].min === 3,
-    'los rangos de las bandas cubren de punta a punta el rango real',
-    `${b.bandas[0].min}-${b.bandas[0].max} ... ${b.bandas[3].min}-${b.bandas[3].max}`);
-  ok(b.bandas.every((x) => x.min <= x.max), 'y cada banda tiene su rango bien formado');
-
-  // EL CASO DE LOS EMPATES, con el conjunto que DISCRIMINA.
+  // EL CASO REAL QUE MOTIVO EL CAMBIO. Estas son las CUOTAS del diagrama del usuario: cinco
+  // conexiones secuenciales al 100 % y una compuerta 80/20.
   //
-  // Aqui me equivoque al escribir la prueba la primera vez: use los 49 valores reales, y
-  // con ellos el fallo NO se manifiesta -el bloque de ocho 20 cae en la banda amarilla de
-  // las dos formas, porque las bandas son anchas (15 elementos) y la diferencia de
-  // posicion no cruza ninguna frontera-. La prueba pasaba con el bug inyectado, o sea que
-  // no probaba nada.
-  //
-  // El conjunto que SI lo separa es uno PEQUENO, donde el bloque de empatados es mas grande
-  // que la banda que le toca: con 10 valores la banda roja se lleva 1 elemento, y un empate
-  // de 3 en cabeza se sale de ella si se cuenta el bloque entero al final de su posicion.
-  // Con la primera posicion, los tres comparten el rojo, que es su puesto.
-  {
-    const discrimina = [ 9, 9, 9, 5, 4, 4, 3, 3, 2, 1 ];
-    const d = bandasDeValores(discrimina);
-    ok(d.bandas.map((x) => x.color).join(',') === 'red,orange,yellow,blue',
-      'con 10 valores salen las cuatro bandas en orden',
-      d.bandas.map((x) => `${x.color}(${x.cuantos})`).join(' '));
-    ok(d.bandaDe(9).color === 'red',
-      'y el valor MAXIMO empatado SIGUE en la banda roja (aqui se sale si se cuenta mal)',
-      `9 (x3) -> ${d.bandaDe(9).color}`);
-    ok(discrimina.filter((v) => v === 9).every((v) => d.bandaDe(v).color === 'red'),
-      'los tres empatados en la cabeza comparten el rojo, que es su puesto');
-    ok(d.bandaDe(1).color === 'blue', 'y el minimo sigue en el extremo frio', d.bandaDe(1).color);
-  }
+  // Con las bandas por PUESTO que habia antes, los cinco 100 % se llevaban las bandas de arriba y
+  // las DOS ramas caian en azul: el mapa decia que da igual irse por el 80 % que por el 20 %, que
+  // es lo contrario de lo que la vista tiene que ensenar. Se vio al ejecutar la vista, no al
+  // leer el codigo.
+  const cuotas = [ 1, 1, 0.8, 0.2, 1, 1, 1 ];
+  const b = bandasDeCuota(cuotas);
 
-  // Y con los 49 valores reales: aqui lo que se comprueba es que el empate no PARTE el
-  // bloque en dos bandas.
-  const veintes = valores.filter((v) => v === 20);
-  ok(veintes.length === 8, 'ocho conexiones empatan a 20 pasos', String(veintes.length));
-  ok(veintes.every((v) => b.bandaDe(v).color === b.bandaDe(20).color),
-    'y todas caen en la MISMA banda: un empate no se reparte');
-  ok(b.bandaDe(20).color !== 'red',
-    'y no se cuelan en el rojo, que es de los caminos realmente mas usados',
-    b.bandaDe(20).color);
+  ok(b.n === 7, 'las 7 conexiones entran en el reparto', String(b.n));
+  ok(b.bandaDe(1) === b.bandaDe(1), 'la banda de una cuota es estable');
 
-  // Un valor del borde: 46 esta dentro del rango de la banda naranja (38-46), asi que le
-  // toca naranja y no rojo. Comprueba que la posicion se calcula desde la PRIMERA
-  // posicion del bloque de empatados y no desde la ultima.
-  ok(b.bandaDe(46).color === 'orange', 'un valor del borde de una banda cae en ELLA', b.bandaDe(46).color);
+  // LA PROPIEDAD QUE ARREGLA EL DEFECTO: el 80 % y el 20 % NO pueden salir del mismo color.
+  ok(b.bandaDe(0.8).color !== b.bandaDe(0.2).color,
+    'el 80 % y el 20 % salen de colores DISTINTOS (el defecto que se corrigio)',
+    `${b.bandaDe(0.8).color} vs ${b.bandaDe(0.2).color}`);
+  ok(b.bandaDe(0.8).color === 'orange', 'el 80 % es «la mayoria», en naranja',
+    b.bandaDe(0.8).color);
+  ok(b.bandaDe(0.2).color === 'blue', 'y el 20 % es «minoria», en azul', b.bandaDe(0.2).color);
+  ok(b.bandaDe(1).color === 'red', 'el 100 % es «casi todo», en rojo', b.bandaDe(1).color);
 
-  // El naranja existe en la paleta: sin el, la banda intermedia saldria sin color.
-  ok(BANDAS_RANKING.some((x) => x.color === 'orange'),
-    'la paleta incluye un color intermedio entre el amarillo y el rojo');
+  // LOS CORTES, uno a uno. Son la definicion de la escala y tienen que ser COMPARABLES entre
+  // diagramas: el 85 % significa «la mayoria» en cualquiera.
+  ok(b.bandaDe(0.9).color === 'red' && b.bandaDe(0.89).color === 'orange',
+    'el corte del 90 % esta donde dice (casi todo)',
+    `0.90 -> ${b.bandaDe(0.9).color}, 0.89 -> ${b.bandaDe(0.89).color}`);
+  ok(b.bandaDe(0.7).color === 'orange' && b.bandaDe(0.69).color === 'yellow',
+    'y el del 70 % tambien (la mayoria)');
+  ok(b.bandaDe(0.4).color === 'yellow' && b.bandaDe(0.39).color === 'blue',
+    'y el del 40 % (repartido)');
 
-  // Sin masa no hay bandas: una corrida sin trafico no puede inventar colores.
-  const vacio = bandasDeValores([]);
-  ok(vacio.bandas.length === 0 && vacio.n === 0, 'sin valores no hay bandas');
-  ok(vacio.bandaDe(5) === null, 'y la banda de cualquier valor es null');
-  ok(bandasDeValores(null).bandas.length === 0, 'y con null no revienta');
+  // UN EMPATE sale del mismo color, y es correcto: un 50/50 no se puede pintar como una
+  // diferencia sin inventarla.
+  const empate = bandasDeCuota([ 0.5, 0.5 ]);
+  ok(empate.bandaDe(0.5).color === empate.bandaDe(0.5).color
+    && empate.bandaDe(0.5).color === 'yellow',
+    'un 50/50 sale entero de «repartido»', empate.bandaDe(0.5).color);
 
-  // Un unico valor: una sola banda, y el mapa no puede salir multicolor.
-  const solo = bandasDeValores([ 7, 7, 7 ]);
-  ok(solo.bandas.length === 1, 'con todos los valores iguales hay UNA sola banda',
-    String(solo.bandas.length));
-  ok(solo.bandaDe(7).color === 'red',
-    'y el mapa sale de un color, con el valor unico en el extremo', solo.bandaDe(7).color);
+  // LA LEYENDA solo lista las bandas CON elementos: una banda vacia describe un color que no esta
+  // en el diagrama, y ensena al lector a buscar algo que no existe.
+  ok(b.bandas.length === 3,
+    'solo se listan las bandas que TIENEN conexiones (100 %, 80 %, 20 % -> rojo, naranja, azul)',
+    b.bandas.map((x) => `${x.color}(${x.cuantos})`).join(' '));
+  ok(b.bandas.every((x) => x.cuantos > 0), 'y ninguna de ellas esta vacia');
+  ok(b.bandas.every((x) => typeof x.rangoTexto === 'string' && x.rangoTexto.length),
+    'cada una con su rango escrito para la leyenda',
+    b.bandas.map((x) => x.rangoTexto).join(' | '));
+  // El rango de la ultima es ABIERTO por abajo: «< 40 %», no «0 % – 40 %», porque el 0 no es un
+  // valor de esta escala (las conexiones sin trafico van en gris aparte).
+  const ultima = b.bandas[b.bandas.length - 1];
+  ok(ultima.rangoTexto.startsWith('<'),
+    'y el rango de la banda mas fria se escribe abierto por abajo', ultima.rangoTexto);
+
+  // Sin cuotas no hay bandas; y la banda de un valor invalido es null, no una banda cualquiera.
+  ok(bandasDeCuota([]).bandas.length === 0, 'sin cuotas no hay bandas');
+  ok(bandasDeCuota(null).bandas.length === 0, 'y con null tampoco');
+  // Cero se EXCLUYE del reparto: una conexion sin trafico va en gris, no en la banda mas fria.
+  ok(bandasDeCuota([ 0, 0 ]).bandas.length === 0,
+    'las cuotas de cero no forman banda (esas conexiones van en gris)');
+  ok(bandasDeCuota([ 0.5 ]).bandaDe(NaN) === null, 'y una cuota NaN no cae en ninguna banda');
+
+  // Los colores de la paleta son los cuatro de la escala, y sin repetir: dos bandas con el mismo
+  // color serian indistinguibles en el diagrama.
+  const colores = BANDAS_CUOTA.map((x) => x.color);
+  ok(new Set(colores).size === 4, 'los cuatro colores son distintos', colores.join(' / '));
+  ok(colores.includes('orange'), 'y hay un color intermedio entre el amarillo y el rojo');
 }
 
 console.log('\n== 16. La barra de la leyenda es un ESCALON, no una rampa ==');
 {
-  const b = bandasDeValores([ 100, 80, 60, 40, 20, 10, 5, 3, 2, 1 ]);
+  // Cuatro cuotas, una por banda: asi la barra tiene los cuatro escalones y se puede contar
+  // que cada color aparece DOS veces (una al abrir su franja y otra al cerrarla).
+  const b = bandasDeCuota([ 1, 0.85, 0.5, 0.2 ]);
   const css = gradienteBandas(b.bandas);
 
   ok(css.startsWith('linear-gradient'), 'la leyenda lleva un degradado de CSS', css.slice(0, 40));
