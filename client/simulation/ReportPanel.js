@@ -5,6 +5,7 @@ import {
   getSimulationData, isLabel, nombreElemento, formatMinutes, formatMilliseconds, formatCurrency,
   resumenMuestras, describirUtilizacion
 } from './util';
+import { compararEscenarios, notaDelTopeLegal, svgTresEscenarios } from './ComparativaPlanes.js';
 
 const OPEN_CLS = 'sim-report-open';
 
@@ -39,6 +40,22 @@ const ESTILOS_INFORME = `
 .sim-report .aviso { border-left: 4px solid #f9a825; background: #fff8e1; padding: 10px 13px; margin: 12px 0; border-radius: 4px; }
 .sim-report .aviso.ok { border-color: #2e7d32; background: #edf7ee; }
 .sim-report .aviso.mal { border-color: #c62828; background: #fdecea; }
+/* Cumple / no cumple, en la tabla de escenarios. El color lo lleva la palabra y no la
+   celda entera: pintar la fila de rojo por incumplir exagera lo que se esta diciendo,
+   porque el escenario sin tope NO es un error del modelo sino una opcion. */
+.sim-report .ok-txt { color: #2e7d32; font-weight: 600; }
+.sim-report .mal-txt { color: #c62828; font-weight: 600; }
+/* La leyenda del grafico de escenarios, impresa. En papel no se puede pasar el raton
+   por encima de las curvas, asi que el color de cada una tiene que estar escrito. */
+.sim-report .leyenda-escenarios {
+  list-style: none; padding-left: 0; margin: 6px 0 0;
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+}
+.sim-report .leyenda-escenarios li { font-size: 11.5px; color: #444; }
+.sim-report .leyenda-escenarios .gl {
+  display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 5px; vertical-align: baseline;
+}
 .sim-report .veredicto { display: flex; align-items: center; gap: 18px; border: 1px solid #cfd8e3; border-radius: 8px; padding: 16px 18px; margin: 14px 0; break-inside: avoid; }
 .sim-report .veredicto .puntos { font-size: 34px; font-weight: 700; line-height: 1; color: #1565c0; }
 .sim-report .veredicto .puntos small { display: block; font-size: 11px; font-weight: 400; color: #777; }
@@ -305,6 +322,16 @@ export default class ReportPanel {
       // La semilla de la corrida: el informe la imprime para que se pueda repetir.
       semilla: (overtime && overtime.semilla) || null,
       cumplimiento: (overtime && overtime.compliance) || null,
+      // LOS TRES ESCENARIOS DE HORAS EXTRA, ya comparados. Se calcula aqui y no en la
+      // plantilla porque es el unico sitio donde estan los tres informes juntos, y porque la
+      // comparativa es logica pura que el arnes puede probar sin montar el documento.
+      //
+      // Puede faltar cualquiera de los dos de extra (un modelo sin tarifas de horas extra, o
+      // un informe viejo); `compararEscenarios` devuelve null y la seccion se imprime como
+      // «no hay escenarios que comparar» en vez de romper el informe entero.
+      escenariosTres: (overtime && datos.legal)
+        ? compararEscenarios({ normal, legal: datos.legal, extra: overtime })
+        : null,
       primasDeDia: suma(overtime, 'totalDayPremiumCost'),
       primasDia: (overtime && overtime.dayPremiums) || null,
       // Carga fisica y personas (A5). `carga` viene con las tres vistas ya
@@ -598,6 +625,13 @@ export default class ReportPanel {
     }
 
     const incumple = c.semanasSobreLimite > 0 || c.diasSobreLimiteDiario > 0 || c.semanasSobreDias > 0;
+
+    // LOS TRES ESCENARIOS, calculados aqui porque es aqui donde se usan y donde vive el
+    // contexto de los tres informes. Se calcula SIEMPRE, aunque el plan cumpla: saber cuanto
+    // margen hay es igual de util antes y despues de incumplir.
+    const escenarios = ctx.escenariosTres
+      ? this._escenariosExtra({ escenarios: ctx.escenariosTres })
+      : '';
     const filas = (c.detalleSemanas || []).map((s) => `
       <tr>
         <td>${s.semana}</td>
@@ -658,6 +692,79 @@ export default class ReportPanel {
           <tbody>${filas}</tbody>
         </table>
       ` : ''}
+      ${escenarios}
+    `;
+  }
+
+  /**
+   * LOS TRES ESCENARIOS, en el PDF.
+   *
+   * VA JUSTO DESPUES DEL CUMPLIMIENTO, y no es casual: el lector acaba de leer «NO CUMPLE» y
+   * la pregunta inmediata es «¿y si lo cumpliera?». Ponerlo aqui contesta esa pregunta en el
+   * mismo sitio donde nace.
+   *
+   * Se imprime SIEMPRE, aunque el plan cumpla: saber que cumplir cuesta X es igual de util
+   * cuando ya se cumple, porque dice cuanto margen hay.
+   */
+  _escenariosExtra(ctx) {
+    const cmp = ctx.escenarios;
+    if (!cmp || !cmp.filas.length) {
+      return '<h3>Escenarios de horas extra</h3>'
+        + '<p class="sub">No hay escenarios que comparar: hace falta que el modelo declare horas extra '
+        + 'y que la corrida haya producido resultados.</p>';
+    }
+
+    const pp = (v) => (v == null ? '—' : formatCurrency(v, 'MXN'));
+    const base = cmp.base;
+
+    const filas = cmp.filas.map((f) => {
+      const dCosto = base && f.clave !== 'normal' && base.costo > 0
+        ? ((f.costo - base.costo) / base.costo) * 100 : null;
+      const dPiezas = base && f.clave !== 'normal' && base.piezas > 0
+        ? ((f.piezas - base.piezas) / base.piezas) * 100 : null;
+      const delta = (v) => (v == null ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} %`);
+      const ley = f.cumple === true ? '<span class="ok-txt">cumple</span>'
+        : f.cumple === false ? '<span class="mal-txt">NO cumple</span>' : '—';
+      return `<tr>
+        <td>${esc(f.etiqueta)}<br><span class="sub">${esc(f.detalle)}</span></td>
+        <td class="num">${ent(f.piezas)}<br><span class="sub">${delta(dPiezas)}</span></td>
+        <td class="num">${formatCurrency(f.costo, 'MXN')}<br><span class="sub">${delta(dCosto)}</span></td>
+        <td class="num">${pp(f.costoPorPieza)}</td>
+        <td class="num">${f.dias || '—'}</td>
+        <td class="num">${ley}</td></tr>`;
+    }).join('');
+
+    const nota = notaDelTopeLegal(cmp);
+
+    // La leyenda del grafico, impresa: en papel no se puede pasar el raton por encima de las
+    // curvas, asi que el color de cada escenario tiene que estar escrito.
+    const leyenda = cmp.filas.map((f) => `<li><span class="gl" style="background:${f.color};"></span>
+      <strong>${esc(f.etiqueta)}</strong> — ${ent(f.piezas)} piezas en ${f.dias || '?'} días</li>`).join('');
+
+    const series = cmp.filas.map((f) => ({ etiqueta: f.etiqueta, color: f.color, valores: f.serie }));
+
+    return `
+      <h3>Escenarios de horas extra</h3>
+      <p class="sub">
+        Las tres corridas son <strong>una sola simulación con el mismo azar</strong>, así que la diferencia
+        entre escenarios se debe al plan y no a la suerte. El escenario <em>con tope legal</em> aplica los
+        tres límites de la LFT: lo que no cabe en el cupo <strong>espera a la semana siguiente</strong>, que
+        es lo que obliga la ley.
+      </p>
+      <table>
+        <thead><tr><th>Escenario</th><th class="num">Piezas</th><th class="num">Costo</th>
+          <th class="num">Unitario</th><th class="num">Días</th><th class="num">Ley</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      ${nota ? `<div class="aviso ok">${nota}</div>` : ''}
+      <figure>
+        ${svgTresEscenarios({ series, fechas: cmp.fechas, techo: cmp.techo, alto: 240 })}
+        <figcaption><strong>Producción acumulada de los tres escenarios.</strong>
+          Comparten fechas y escala, que es lo que permite compararlos de un vistazo: cuanto antes se
+          separa una curva de las otras, antes entrega ese plan.
+          <ul class="leyenda-escenarios">${leyenda}</ul>
+        </figcaption>
+      </figure>
     `;
   }
 

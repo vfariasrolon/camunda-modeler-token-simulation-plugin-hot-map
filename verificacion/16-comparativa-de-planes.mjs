@@ -7,7 +7,7 @@
 import {
   COLOR_PLAN, UMBRAL_PCT, compararPlanes, notasDeEficiencia, fechasUnidas,
   serieAcumulada, techoComun, techoRedondo, etiquetaDeFecha, deltaPct, svgAcumulada,
-  ESCENARIOS_EXTRA, compararEscenarios, cumpleLaLey, notaDelTopeLegal
+  ESCENARIOS_EXTRA, compararEscenarios, cumpleLaLey, notaDelTopeLegal, svgTresEscenarios
 } from './ComparativaPlanes.mjs';
 
 let fallos = 0;
@@ -347,6 +347,70 @@ console.log('\n== 17. La nota del tope legal distingue los tres desenlaces ==');
   ok(compararEscenarios({ legal: inf(1, 1, true) }) === null,
     'y sin plan normal tampoco: no habria contra que comparar');
   ok(notaDelTopeLegal(null) === null, 'y la nota sin comparativa es null');
+}
+
+console.log('\n== 18. Las TRES series comparten fechas y techo ==');
+{
+  // Es la propiedad que hace que las tres curvas se puedan comparar. Sin ella, cada serie se
+  // dibujaria sobre sus propias fechas y el grafico mentiria sin que se note: dos curvas que
+  // terminan el mismo dia parecerian terminar en momentos distintos.
+  const conDias = (completadas, costo, dias) => ({
+    completedInstances: completadas, totalCost: costo, totalWorkingDays: 10,
+    compliance: { semanasSobreLimite: 0, diasSobreLimiteDiario: 0, semanasSobreDias: 0 },
+    dailyCompletions: new Map(Object.entries(dias))
+  });
+
+  const cmp = compararEscenarios({
+    // El plan legal acaba ANTES (mismo dia) y el libre tambien: las tres series tienen que
+    // medirse sobre el mismo calendario.
+    normal: conDias(80, 9000, { '2026-01-05': 40, '2026-01-06': 40 }),
+    legal: conDias(100, 11000, { '2026-01-05': 60, '2026-01-06': 40 }),
+    extra: conDias(120, 13000, { '2026-01-05': 70, '2026-01-06': 50 })
+  });
+
+  ok(cmp.fechas.length === 2, 'las fechas son las de los tres, unidas', String(cmp.fechas.length));
+  ok(cmp.filas.every((f) => f.serie.length === cmp.fechas.length),
+    'y TODAS las series miden lo mismo que las fechas (nada de series descuadradas)',
+    cmp.filas.map((f) => f.serie.length).join(','));
+  // El techo es el de la serie MAS ALTA, no el de la primera: con el techo de otra, una curva
+  // se saldria por arriba del recuadro.
+  const masAlta = Math.max(...cmp.filas.map((f) => f.serie[f.serie.length - 1]));
+  ok(cmp.techo === masAlta, 'y el techo es el de la serie que mas produce',
+    `${cmp.techo} vs ${masAlta}`);
+  ok(cmp.filas[0].serie[1] === 80, 'cada serie acumula SUS piezas',
+    cmp.filas.map((f) => f.etiqueta + ':' + f.serie[1]).join(' '));
+}
+
+console.log('\n== 19. El SVG de las tres curvas ==');
+{
+  const series = [
+    { etiqueta: 'Sin horas extra', color: '#1d4ed8', valores: [ 10, 20, 30 ] },
+    { etiqueta: 'Extra con tope legal', color: '#15803d', valores: [ 15, 30, 45 ] },
+    { etiqueta: 'Extra sin tope', color: '#b45309', valores: [ 20, 40, 60 ] }
+  ];
+  const svg = svgTresEscenarios({ series, fechas: [ '2026-01-05', '2026-01-06', '2026-01-07' ], techo: 60 });
+
+  ok(svg.startsWith('\n    <svg') || svg.includes('<svg'), 'devuelve un SVG');
+  // TRES polilineas, una por escenario: con dos, un escenario no se veria, y el fallo seria
+  // invisible en el dibujo (la curva que falta no deja hueco).
+  const trazos = (svg.match(/<polyline/g) || []).length;
+  ok(trazos === 3, 'y dibuja TRES trazos, uno por escenario', String(trazos));
+  // Los tres colores presentes: si uno se perdiera, dos curvas saldrian iguales.
+  [ '#1d4ed8', '#15803d', '#b45309' ].forEach((c) => {
+    ok(svg.includes(c), `el color ${c} esta en el grafico`);
+  });
+  ok(svg.includes('Sin horas extra') && svg.includes('Extra con tope legal') && svg.includes('Extra sin tope'),
+    'y la leyenda nombra los tres escenarios');
+  // El numero al final de cada trazo: es lo que desambigua cuando dos curvas se tocan.
+  ok(svg.includes('>30</text>') && svg.includes('>45</text>') && svg.includes('>60</text>'),
+    'y cada curva lleva su valor final, para distinguirlas si se solapan');
+
+  // Sin series no revienta y no dibuja trazos.
+  const vacio = svgTresEscenarios({ series: [], fechas: [], techo: 1 });
+  ok(!vacio.includes('<polyline'), 'sin series no dibuja ningun trazo');
+  // Con un techo de cero no puede salir NaN: la escala dividiria por cero.
+  const cero = svgTresEscenarios({ series, fechas: [ 'a' ], techo: 0 });
+  ok(!/NaN/.test(cero), 'y un techo de cero no produce NaN en las coordenadas');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);

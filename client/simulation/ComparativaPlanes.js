@@ -105,6 +105,11 @@ export const compararEscenarios = (informes) => {
   const { normal, legal, extra } = informes || {};
   if (!normal) return null;
 
+  // Las fechas y el TECHO se calculan UNA vez sobre los tres, y ese es el punto: tres curvas
+  // con un eje ajustado a cada una se verian igual de altas aunque una tarde el doble. Es el
+  // mismo fallo que documenta `techoComun`, ahora con tres series.
+  const fechas = fechasUnidas(normal, legal, extra);
+
   const fila = (clave, informe, escenario) => {
     if (!informe) return null;
     const piezas = num(informe.completedInstances);
@@ -119,7 +124,11 @@ export const compararEscenarios = (informes) => {
       dias,
       costo,
       costoPorPieza: piezas > 0 ? costo / piezas : null,
-      cumple: cumpleLaLey(informe)
+      cumple: cumpleLaLey(informe),
+      // La serie acumulada, para el grafico. Se calcula aqui y no en el controlador para que
+      // venga del MISMO `fechas` que el resto: si cada serie se recalculara con sus propias
+      // fechas, las tres curvas no serian comparables y el fallo no se veria en el dibujo.
+      serie: serieAcumulada(informe, fechas)
     };
   };
 
@@ -129,6 +138,9 @@ export const compararEscenarios = (informes) => {
 
   return {
     filas,
+    fechas,
+    // El techo de los tres: ninguna curva puede salirse del recuadro.
+    techo: Math.max(1, ...filas.flatMap((f) => f.serie)),
     // Referencia del plan base: los deltas se calculan contra el, que es el unico que existe
     // siempre y el que el cliente ya conoce.
     base: filas.find((f) => f.clave === 'normal') || filas[0]
@@ -492,6 +504,76 @@ export const svgAcumulada = ({ titulo, series, fechas, techo, color, alto = 200 
         stroke-linejoin="round" stroke-linecap="round"></polyline>
       ${n ? `<circle cx="${x(n - 1)}" cy="${y(ultimo)}" r="3.4" fill="${color}"></circle>` : ''}
       <text x="${der}" y="${y(ultimo) - 8}" text-anchor="end" font-size="11.5" font-weight="700" fill="${color}">${ultimo}</text>
+      ${etiquetasX}
+    </svg>`;
+};
+
+/**
+ * LAS TRES CURVAS EN UN SOLO GRAFICO.
+ *
+ * POR QUE SUPERPUESTAS Y NO TRES GRAFICOS: el usuario pidio «tres barras» y la version
+ * anterior de esto eran dos graficos lado a lado. Tres graficos no se pueden comparar de un
+ * vistazo -hay que ir saltando de uno a otro con el ojo-, y lo que se quiere ver es
+ * exactamente una cosa: CUANDO cada plan cruza el objetivo, y cual llega antes. Superpuestas
+ * en los mismos ejes, esa lectura es inmediata.
+ *
+ * Lo que se pierde al superponer, dicho en vez de disimulado: con las lineas encima no se ve
+ * el relleno de cada area, asi que las curvas se distinguen por COLOR y por la etiqueta final
+ * de cada una. Por eso cada serie lleva su numero al final de su trazo, y no solo en la
+ * leyenda: si dos curvas se tocan, el numero dice cual es cual.
+ *
+ * COMPARTEN ESCALA Y FECHAS, y eso no es estetica: es la unica forma de que la comparacion
+ * signifique algo. Con un eje ajustado a cada serie, el plan lento se dibujaria igual de alto
+ * que el rapido -que es el fallo que documenta `techoComun`.
+ */
+export const svgTresEscenarios = ({ series, fechas, techo, alto = 260 }) => {
+  const ancho = 660;
+  const izq = 54, der = ancho - 62, arriba = 46, abajo = alto - 30;
+  const n = fechas.length;
+
+  const x = (i) => (n <= 1 ? (izq + der) / 2 : izq + (i / (n - 1)) * (der - izq));
+  const y = (v) => abajo - (Math.min(v, techo) / (techo || 1)) * (abajo - arriba);
+
+  const rejilla = [ 0, 0.25, 0.5, 0.75, 1 ].map((f) => {
+    const valor = techo * f;
+    return `<line x1="${izq}" y1="${y(valor)}" x2="${der}" y2="${y(valor)}" stroke="#e6e8eb" stroke-width="1"></line>`
+      + `<text x="${izq - 6}" y="${y(valor) + 3.5}" text-anchor="end" font-size="10" fill="#6b7280">${Math.round(valor)}</text>`;
+  }).join('');
+
+  const salto = Math.max(1, Math.ceil(n / 6));
+  const etiquetasX = fechas.map((f, i) => (
+    (i === 0 || i === n - 1 || i % salto === 0)
+      ? `<text x="${x(i)}" y="${abajo + 15}" text-anchor="middle" font-size="10" fill="#6b7280">${etiquetaDeFecha(f)}</text>`
+      : ''
+  )).join('');
+
+  // La leyenda va ARRIBA y en una linea, con el nombre de cada escenario. Es lo que permite
+  // leer el grafico sin la tabla al lado.
+  const leyenda = series.map((s, i) => {
+    const anchoCaja = 168;
+    const px = izq + i * anchoCaja;
+    return `<rect x="${px}" y="14" width="11" height="11" rx="2" fill="${s.color}"></rect>`
+      + `<text x="${px + 16}" y="23.5" font-size="11" fill="#334155">${s.etiqueta}</text>`;
+  }).join('');
+
+  // Cada trazo con su numero al final. Se dibujan en el orden en que llegan, asi que el plan
+  // que mas produce queda encima; el numero desambigua cuando dos curvas se tocan.
+  const trazos = series.map((s) => {
+    const puntos = s.valores.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+    const ultimo = s.valores.length ? s.valores[s.valores.length - 1] : 0;
+    return `<polyline points="${puntos}" fill="none" stroke="${s.color}" stroke-width="2.4"
+        stroke-linejoin="round" stroke-linecap="round"></polyline>`
+      + (n ? `<circle cx="${x(n - 1)}" cy="${y(ultimo)}" r="3.4" fill="${s.color}"></circle>
+        <text x="${x(n - 1) + 7}" y="${y(ultimo) + 4}" font-size="11" font-weight="700" fill="${s.color}">${ultimo}</text>` : '');
+  }).join('');
+
+  return `
+    <svg viewBox="0 0 ${ancho} ${alto}" width="100%" height="${alto}" role="img"
+         aria-label="Producción acumulada de los tres escenarios de horas extra, en los mismos ejes.">
+      <text x="${izq}" y="${arriba - 14}" font-size="12.5" font-weight="600" fill="#334155">Producción acumulada: los tres escenarios</text>
+      ${leyenda}
+      ${rejilla}
+      ${trazos}
       ${etiquetasX}
     </svg>`;
 };

@@ -1124,3 +1124,111 @@
   font-size: 13px;
   color: #555;
 }
+
+/* LOS TRES ESCENARIOS DE HORAS EXTRA.
+   Va despues de los dos planes y antes del desglose: la comparacion de dos contesta
+   «¿abro extras?» y esta contesta la que viene despues -«¿y si la ley no me dejara
+   pasarme?»-, que es la que el cliente pregunta en cuanto ve el incumplimiento. */
+.sim-escenarios {
+  margin: 18px 0 6px;
+}
+
+.sim-escenarios h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #1565c0;
+}
+
+.sim-escenarios-intro {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: #555;
+  line-height: 1.5;
+  max-width: 78ch;
+}
+
+.sim-escenarios-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.sim-escenarios-tabla th {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 2px solid #e3ebf5;
+  color: #444;
+  font-weight: 600;
+}
+
+.sim-escenarios-tabla th.num,
+.sim-escenarios-tabla td.num {
+  text-align: right;
+  /* Cifras de ancho fijo: sin esto las columnas de dinero no se alinean y no se
+     pueden comparar de un vistazo, que es justo lo que la tabla viene a hacer. */
+  font-variant-numeric: tabular-nums;
+}
+
+.sim-escenarios-tabla td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: top;
+}
+
+.sim-escenarios-tabla tr:last-child td {
+  border-bottom: none;
+}
+
+.sim-escenarios-tabla .sub {
+  color: #6b7280;
+  font-size: 11.5px;
+  margin-top: 2px;
+  max-width: 46ch;
+}
+
+/* El cuadro de color de cada escenario, el mismo que su curva en el grafico: es lo
+   que une la tabla con el dibujo sin repetir el nombre en los dos sitios. */
+.sim-punto {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: baseline;
+}
+
+.sim-delta {
+  display: block;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.sim-cumple-si {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.sim-cumple-no {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+/* LA NOTA DEL TOPE LEGAL. Es la frase que contesta «¿cuanto me cuesta cumplir la
+   ley?», asi que va destacada y no como un parrafo mas: es el hallazgo. */
+.sim-nota-legal {
+  margin: 12px 0 4px;
+  padding: 9px 12px;
+  background: #f0f9ff;
+  border-left: 3px solid #1565c0;
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.sim-grafico-tres {
+  margin-top: 12px;
+  background: #fff;
+  border: 1px solid #e3ebf5;
+  border-radius: 6px;
+  padding: 6px 8px 0;
+}

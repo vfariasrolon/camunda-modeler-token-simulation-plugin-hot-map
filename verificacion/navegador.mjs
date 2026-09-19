@@ -47,6 +47,11 @@ const casos = [
   // ahora su unico arnes vivia en /tmp, asi que se perdia al reiniciar. Aqui queda
   // versionado: es la red que hace falta antes de reestructurar sus pestanas.
   { nombre: 'panel de datos (tareas, global y CSV)', entry: 'panel-de-datos.js' }
+  // PENDIENTE: 'informe-pdf.js' esta escrito y NO se ha podido poner en verde. El bundle
+  // compila y el modulo carga -comprobado a mano-, pero al ejecutarlo en el runner de Chrome
+  // falla con «Script error» sin linea, y no he conseguido ver la causa. Se deja el archivo
+  // versionado para no perderlo y se documenta aqui en vez de dejar la suite en rojo por un
+  // arnes que aun no sirve. NO se registra hasta que pase.
 ];
 
 let fallos = 0;

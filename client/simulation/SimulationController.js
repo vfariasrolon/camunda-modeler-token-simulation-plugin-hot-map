@@ -12,7 +12,8 @@ import { rangoDeValores, opacidadDe, fraccionDe, textoDeEscala, escalaDeMetrica,
 import { numerarTareas, etiquetaDe } from './TaskIds.js';
 import {
   COLOR_PLAN, compararPlanes, notasDeEficiencia, fechasUnidas,
-  serieAcumulada, techoComun, svgAcumulada, enPorcentaje
+  serieAcumulada, techoComun, svgAcumulada, enPorcentaje,
+  compararEscenarios, notaDelTopeLegal, svgTresEscenarios
 } from './ComparativaPlanes.js';
 import { LADO_CELDA, calcularZonas, ladoQueCabe } from './HeatmapZones.js';
 
@@ -276,6 +277,9 @@ export default class SimulationController {
     return {
       normal: this.normalReport,
       overtime: this.overtimeReport,
+      // El tercer escenario, para que el informe pueda comparar los tres. Puede ser null si la
+      // corrida es de una version anterior; el informe lo trata como «no hay escenarios».
+      legal: this.legalReport,
       tareas: this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:Task')),
       flujos: this._elementRegistry.filter(
         (el) => !isLabel(el) && is(el, 'bpmn:SequenceFlow') && el.source && is(el.source, 'bpmn:ExclusiveGateway')
@@ -2776,31 +2780,85 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
       </div>
     `;
 
-    const bloqueGraficos = fechas.length > 1 ? `
-      <div class="sim-graficos">
-        <h3>Producción acumulada: cuándo se entrega cada plan</h3>
-        <p class="sim-graficos-intro">
-          Los dos gráficos comparten <strong>fechas y escala</strong>. Es lo que permite compararlos de un
-          vistazo: con un eje ajustado a cada uno, el plan lento se dibujaría igual de alto que el rápido.
-        </p>
-        <div class="sim-graficos-par">
-          <div>${svgAcumulada({
-            titulo: `Plan normal — ${cmp.piezas.normal} piezas en ${dias(cmp.plazo.normalDias)}`,
-            series: serieNormal, fechas, techo, color: COLOR_PLAN.normal
-          })}</div>
-          <div>${svgAcumulada({
-            titulo: `Plan con horas extra — ${cmp.piezas.extra} piezas en ${dias(cmp.plazo.extraDias)}`,
-            series: serieExtra, fechas, techo, color: COLOR_PLAN.extra
-          })}</div>
+    // LOS TRES ESCENARIOS. Si el motor no devolvio el informe legal -una version vieja, o una
+    // corrida que fallo- se cae a la comparacion de dos de siempre: es mejor seguir enseñando
+    // dos planes que romper el resumen entero.
+    const comparativa3 = this.legalReport
+      ? compararEscenarios({ normal: normalReport, legal: this.legalReport, extra: report })
+      : null;
+
+    const bloqueEscenarios = comparativa3 ? (() => {
+      const nota = notaDelTopeLegal(comparativa3);
+      const base = comparativa3.base;
+      const importe = (v) => formatCurrency(v, 'MXN');
+      const pp = (v) => (v == null ? '—' : `${formatCurrency(v, 'MXN')}/pza`);
+
+      // La tabla comparativa. El costo POR PIEZA va junto al total porque es lo unico que
+      // permite comparar escenarios que no producen lo mismo: con piezas distintas, el total
+      // mas alto puede ser simplemente el que mas hizo.
+      const filas = comparativa3.filas.map((f) => {
+        const dCosto = base && f.clave !== 'normal' && base.costo > 0
+          ? ((f.costo - base.costo) / base.costo) * 100 : null;
+        const dPiezas = base && f.clave !== 'normal' && base.piezas > 0
+          ? ((f.piezas - base.piezas) / base.piezas) * 100 : null;
+        const marca = f.cumple === true ? '<span class="sim-cumple-si">cumple</span>'
+          : f.cumple === false ? '<span class="sim-cumple-no">NO cumple</span>' : '—';
+        const delta = (v) => (v == null ? '' : `<span class="sim-delta">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)} %</span>`);
+        return `<tr>
+          <td><span class="sim-punto" style="background:${f.color};"></span> ${f.etiqueta}
+            <div class="sub">${f.detalle}</div></td>
+          <td class="num">${f.piezas} ${delta(dPiezas)}</td>
+          <td class="num">${importe(f.costo)} ${delta(dCosto)}</td>
+          <td class="num">${pp(f.costoPorPieza)}</td>
+          <td class="num">${f.dias || '—'}</td>
+          <td class="num">${marca}</td>
+        </tr>`;
+      }).join('');
+
+      // El grafico: las tres series sobre LAS MISMAS fechas y el MISMO techo. El techo se
+      // recalcula sobre las tres, no sobre las dos de antes: con el techo viejo, la serie
+      // legal podia salirse por arriba del recuadro.
+      const series3 = comparativa3.filas.map((f) => ({
+        etiqueta: f.etiqueta, color: f.color, valores: f.serie || []
+      }));
+      const techo3 = comparativa3.techo;
+
+      return `
+        <div class="sim-escenarios">
+          <h3>Los tres escenarios de horas extra</h3>
+          <p class="sim-escenarios-intro">
+            Las tres corridas son <strong>una sola simulación con el mismo azar</strong>, así que la
+            diferencia entre escenarios se debe al plan y no a la suerte. El escenario con tope aplica
+            los límites de la LFT: lo que no cabe <strong>espera a la semana siguiente</strong>, que es lo
+            que obliga la ley.
+          </p>
+          <table class="sim-escenarios-tabla">
+            <thead><tr>
+              <th>Escenario</th><th class="num">Piezas</th><th class="num">Costo</th>
+              <th class="num">Unitario</th><th class="num">Días</th><th class="num">Ley</th>
+            </tr></thead>
+            <tbody>${filas}</tbody>
+          </table>
+          ${nota ? `<p class="sim-nota-legal">${nota}</p>` : ''}
+          <div class="sim-grafico-tres">
+            ${svgTresEscenarios({ series: series3, fechas: comparativa3.fechas, techo: techo3 })}
+          </div>
+          <p class="sim-graficos-intro">
+            Las tres curvas comparten <strong>fechas y escala</strong>. Cuanto antes se separa una curva
+            de las otras, antes entrega ese plan.
+          </p>
         </div>
-      </div>
-    ` : '';
+      `;
+    })() : '';
+
+    const bloqueGraficos = '';
 
     return `
       <div class="sim-summary-container">
         <h2>Resumen General</h2>
         ${bloqueTiempo}
         ${bloquePlanes}
+        ${bloqueEscenarios}
         ${bloqueGraficos}
         <h3 class="sim-detalle-titulo">Detalle del plan con horas extra</h3>
         <div class="sim-summary-grid">
