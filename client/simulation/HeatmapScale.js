@@ -132,6 +132,186 @@ export function gradienteCss(gradiente = GRADIENTE_ESCALA) {
 }
 
 /**
+ * BANDAS DE COLOR POR RANKING, estilo Google Maps.
+ *
+ * EL PROBLEMA QUE RESUELVE, con datos reales: en una corrida de 49 conexiones con rango
+ * 5-154, el tramo muerto de la escala (todo lo que cae por debajo de 0.4 recibe el MISMO
+ * azul) alcanzaba hasta el valor 64,6. De las 49 conexiones, 47 quedaban por debajo: el
+ * 96 % del diagrama salia del mismo color. El mapa no estaba roto, estaba mal calibrado:
+ * el canal del color decia «azul» o «azul».
+ *
+ * POR QUE BANDAS Y NO UN DEGRADADO CONTINUO: un trazo de 4 px no puede comunicar un
+ * matiz. «¿Este azul es 0,21 o 0,28?» no lo responde nadie mirando una linea fina. En
+ * cambio «¿este tramo es rojo o naranja?» se responde de un vistazo, y para eso hacen
+ * falta COLORES SEPARADOS, no una rampa. Es lo que hace Google Maps con el trafico.
+ *
+ * POR QUE POR POSICION Y NO POR VALOR: la pregunta de esta vista es «cuales son los
+ * caminos mas usados», que es una pregunta de ORDEN, no de cantidad. Repartiendo por
+ * posiciones, el 10 % mas usado SIEMPRE sale rojo, aunque la distribucion tenga una cola
+ * larga donde el valor exacto aplastaria a todos hacia el frio. Se pierde distinguir 154
+ * de 111 -para eso estan los numeros de la leyenda-, y se gana ver quien encabeza.
+ *
+ * LAS BANDAS SON POR TANTO RELATIVAS A LA CORRIDA, igual que la escala que sustituyen.
+ * Un mismo camino puede salir rojo en un diagrama y azul en otro. No es un defecto: es
+ * lo que significa «el mas usado DE ESTE diagrama», y por eso la leyenda lleva el rango
+ * real y los numeros.
+ */
+export const BANDAS_RANKING = [
+  { hasta: 0.10, color: 'red', etiqueta: 'El 10 % más usado' },
+  { hasta: 0.30, color: 'orange', etiqueta: 'Siguiente 20 %' },
+  { hasta: 0.60, color: 'yellow', etiqueta: 'Mitad alta' },
+  { hasta: 1.00, color: 'blue', etiqueta: 'Resto' }
+];
+
+/**
+ * Reparto de un conjunto de valores en bandas por POSICION.
+ *
+ * Devuelve una funcion que da la banda de un valor, mas la lista de bandas con su
+ * RANGO REAL de valores y cuantos elementos cayeron en cada una. La leyenda necesita
+ * esos rangos para poder decir «rojo: de 112 a 154 pasos», que es lo que convierte el
+ * color en una medicion y no en un adorno.
+ *
+ * LOS EMPATES CAEN EN LA MISMA BANDA, y esto es una decision, no un descuido: si dos
+ * caminos tienen exactamente los mismos pasos, pintarlos de distinto color afirmaria una
+ * diferencia que no existe. Se usa el mismo criterio que `uniforme`: ante la duda, decir
+ * «son iguales» en vez de inventar un orden.
+ *
+ * `valores` son los de la MAGNITUD que se este repartiendo. Para las lineas se le pasan
+ * SOLO los de las lineas: comparar una linea contra una tarea seria comparar dos cosas
+ * que no son la misma, y mientras las tareas tengan numeros mas altos las lineas no
+ * llegarian nunca al rojo.
+ */
+export function bandasDeValores(valores) {
+  const limpios = (valores || [])
+    .map((v) => Number(v) || 0)
+    .filter((v) => v > 0)
+    .sort((a, b) => b - a);   // de mayor a menor: la posicion manda
+
+  if (!limpios.length) return { bandaDe: () => null, bandas: [], max: 0, min: 0, n: 0 };
+
+  const n = limpios.length;
+  const max = limpios[0];
+  const min = limpios[n - 1];
+
+  // SIN CONTRASTE NO HAY BANDAS QUE REPARTIR: si todos los valores son iguales, el mapa
+  // sale de UN color y no de cuatro. Sin este corte, tres conexiones iguales caian en tres
+  // bandas distintas -una por franja de porcentaje- y el diagrama afirmaba diferencias que
+  // no existen. Es el mismo criterio que el resto de la escala: ante la duda, decir «son
+  // iguales».
+  if (max === min) {
+    const unica = {
+      color: BANDAS_RANKING[0].color,
+      etiqueta: BANDAS_RANKING[0].etiqueta,
+      min: max,
+      max,
+      cuantos: n,
+      uniforme: true
+    };
+    return {
+      bandaDe: (valor) => (Number(valor) === max ? unica : null),
+      bandas: [ unica ],
+      max,
+      min,
+      n
+    };
+  }
+
+  // Cuantos elementos entran en cada banda. Se calcula por POSICION en la lista
+  // ordenada, con `Math.ceil` para que la primera banda nunca quede vacia cuando hay
+  // pocos elementos (con 3 conexiones y suelo, un 10 % redondeado a la baja daria 0).
+  const bandas = [];
+  let desde = 0;
+  BANDAS_RANKING.forEach((definicion, indice) => {
+    let cuantos = Math.ceil(definicion.hasta * n) - desde;
+    if (indice === BANDAS_RANKING.length - 1) cuantos = n - desde;   // el resto, exacto
+    const hasta = Math.max(desde, Math.min(n, desde + cuantos));
+    if (hasta > desde) {
+      bandas.push({
+        color: definicion.color,
+        etiqueta: definicion.etiqueta,
+        min: limpios[hasta - 1],   // el MENOR de la banda
+        max: limpios[desde],       // el MAYOR de la banda
+        cuantos: hasta - desde
+      });
+    }
+    desde = hasta;
+  });
+
+  // LA BANDA DE UN VALOR SE BUSCA POR SU POSICION, y con los empates se usa la PRIMERA
+  // posicion del bloque, no la ultima.
+  //
+  // Es la diferencia entre un reparto que se entiende y uno que no, y se vio con datos
+  // reales: ocho conexiones empatadas a 20 pasos caian en la banda ROJA porque el bloque
+  // entero se contaba al final, y 20 no es «el camino mas usado» de nada. Con la primera
+  // posicion, el bloque recibe la banda de su mejor puesto: ocho caminos iguales comparten
+  // el color que les corresponde por estar donde estan, sin colarse en el grupo de arriba.
+  //
+  // La alternativa -repartir el bloque entre dos bandas- mentiria: afirmaria una
+  // diferencia entre dos caminos que tienen exactamente los mismos pasos.
+  const bandaDe = (valor) => {
+    const v = Number(valor) || 0;
+    if (!(v > 0)) return null;
+    const mayores = limpios.filter((otro) => otro > v).length;
+    const posicion = mayores + 1;
+    let desde = 0;
+    for (const banda of bandas) {
+      if (posicion <= desde + banda.cuantos) return banda;
+      desde += banda.cuantos;
+    }
+    return bandas[bandas.length - 1] || null;
+  };
+
+  return { bandaDe, bandas, max, min, n };
+}
+
+/** CSS del degradado DISCRETO de la leyenda, a partir de las bandas reales. */
+export function gradienteBandas(bandas) {
+  if (!bandas || !bandas.length) return 'blue';
+  if (bandas.length === 1) return bandas[0].color;
+
+  // Cada banda ocupa una franja PROPORCIONAL a cuantos elementos tiene: asi la barra
+  // dice de un vistazo donde se apelotona el diagrama, que es informacion util por si
+  // sola (una barra casi entera azul significa «casi todo el trabajo va por pocos
+  // caminos», y eso es una lectura sobre el proceso, no sobre el dibujo).
+  const total = bandas.reduce((a, b) => a + b.cuantos, 0) || 1;
+  const partes = [];
+  let acumulado = 0;
+  bandas.forEach((banda, indice) => {
+    const desde = Math.round((acumulado / total) * 100);
+    acumulado += banda.cuantos;
+    const hasta = Math.round((acumulado / total) * 100);
+    // Se repite el color en el borde para que la transicion sea un ESCALON y no un
+    // degradado: el color tiene que leerse como una categoria, no como una rampa.
+    if (indice === 0) partes.push(`${banda.color} ${desde}%`);
+    partes.push(`${banda.color} ${hasta}%`);
+  });
+  return `linear-gradient(to right, ${partes.join(', ')})`;
+}
+
+/**
+ * Los caminos mas usados, para la lista de la leyenda.
+ *
+ * POR QUE UN TOPE Y NO TODOS: en un diagrama de 49 conexiones, imprimir los 49 numeros
+ * tapa el propio dibujo y no se lee. Cinco es lo que cabe sin scroll y lo que responde
+ * la pregunta util: «cuales son los caminos principales».
+ *
+ * `etiquetaDe` existe para no meter bpmn-js en un modulo puro: quien llama sabe poner el
+ * nombre del origen y el destino, y aqui solo se ordena y se corta.
+ */
+export function topCaminos(pares, cuantos = 5, etiquetaDe = null) {
+  return (pares || [])
+    .filter((p) => p && Number(p.valor) > 0)
+    .sort((a, b) => (Number(b.valor) || 0) - (Number(a.valor) || 0))
+    .slice(0, cuantos)
+    .map((p) => ({
+      valor: Number(p.valor) || 0,
+      etiqueta: etiquetaDe ? etiquetaDe(p) : p.etiqueta,
+      color: p.color || null
+    }));
+}
+
+
+/**
  * Los nombres de color del degradado, en RGB, para poder INTERPOLAR.
  *
  * Hace falta porque el mapa de calor tiene dos formas de pintar y una sola escala:

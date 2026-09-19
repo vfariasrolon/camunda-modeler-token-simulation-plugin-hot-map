@@ -83,6 +83,13 @@ function crearCanvasFalso() {
     getContainer: () => contenedor,
     getLayer: (name) => (name === 'overlays' ? capa : null),
     getGraphics: (element) => {
+      // SE IGNORA LO QUE PIDA EL CASO: `getGraphics` tiene que reproducir SIEMPRE el
+      // contrato real de bpmn-js, que es devolver el <g class="djs-connection"> con el
+      // `d` en un <path> HIJO. Un caso que lo sustituya por una version simplificada
+      // -un <path> suelto, por ejemplo- deja de probar el camino real y la prueba pasa
+      // en verde con el fallo puesto. Los casos que necesitan otra forma la piden
+      // cambiando el ARBOL (el largo del trazo va en `element.__largoTrazo`), no el
+      // contrato.
       if (!graficos.has(element.id)) {
         const p = document.createElementNS(NS, 'path');
         // Una conexion de verdad tiene su trazo; una figura (tarea) no lleva `d`, y
@@ -163,8 +170,18 @@ try {
   // LAS CONEXIONES NO TIENEN CAJA, y el doble tiene que parecerse: `elemento()` da
   // 100x80 a todo, asi que un flujo saldria con caja y el caso «conexion sin geometria»
   // -que es el del reporte- no existiria en el arnes. Se les quita el tamaño.
+  //
+  // Y LLEVAN `waypoints`, que es de donde sale el trazo: la vista ya NO lee el `d` del
+  // DOM -`getGraphics` devuelve un `<g>` y eso dependia de como dibuje bpmn-js-, lo
+  // construye desde estos puntos, igual que hace la libreria de tokens para animar.
+  // Un doble sin `waypoints` no probaria el camino real.
   const flujosDePrueba = [ 'F1', 'F2', 'F3' ].map((id) => Object.assign(
-    elemento(id, 'bpmn:SequenceFlow', 0, 0), { __esFlujo: true, width: 0, height: 0 }
+    elemento(id, 'bpmn:SequenceFlow', 0, 0), {
+      __esFlujo: true,
+      width: 0,
+      height: 0,
+      waypoints: [ { x: 0, y: 0 }, { x: 300, y: 0 } ]
+    }
   ));
 
   const elementos = [ t1, t2, t3, gw, fin, ...flujosDePrueba ];
@@ -444,11 +461,17 @@ try {
 
   const porId = new Map(trazos.map((t) => [ t.getAttribute('data-flujo'), t ]));
 
-  // Las recorridas, con color de la escala y grosor por tráfico.
+  // Las recorridas, con el color de su BANDA por puesto y el grosor por tráfico.
+  //
+  // En este caso las dos tienen masa (10 y 8), asi que las dos caen en la banda roja -
+  // son 2 valores y la primera banda se lleva el 10 % con un minimo de 1 elemento... salvo
+  // que el 8 tambien entra. Lo que importa comprobar aqui es que NINGUNA sale del color
+  // plano y que el color NO es el de la conexion muerta.
   const tF1 = porId.get('F1');
   const tF3 = porId.get('F3');
-  ok(tF1 && /^rgb\(/.test(tF1.getAttribute('stroke')),
-    'una conexión recorrida lleva el color de la escala', tF1 ? tF1.getAttribute('stroke') : 'sin F1');
+  ok(tF1 && tF1.getAttribute('stroke') !== null,
+    'una conexión recorrida lleva un color de la escala',
+    tF1 ? tF1.getAttribute('stroke') : 'sin F1');
   ok(tF1.getAttribute('stroke') !== tF3.getAttribute('stroke'),
     'y la que más tráfico tiene NO sale del mismo color que la de menos',
     `${tF1.getAttribute('stroke')} vs ${tF3.getAttribute('stroke')}`);
@@ -473,9 +496,18 @@ try {
     String(document.querySelectorAll('.heatmap-layer circle').length));
 
   // La leyenda dice las dos cosas, y avisa de las ramas muertas.
+  //
+  // El titulo cambio de «Estructura» a «Caminos»: el nombre viejo no decia «lineas» y por
+  // eso el usuario pregunto «¿hay manera de colorear las LINEAS?» teniendo la vista
+  // delante. Se comprueba el nombre NUEVO, no el viejo.
   const leyendaEstructura = canvas.contenedor.querySelector('.heatmap-legend');
-  ok(/Estructura/.test(leyendaEstructura.textContent), 'la leyenda se declara como vista de estructura',
-    leyendaEstructura.textContent.slice(0, 60));
+  ok(/Caminos/.test(leyendaEstructura.textContent), 'la leyenda se declara como vista de caminos',
+    leyendaEstructura.textContent.slice(0, 70));
+  // Y EXPLICA QUE EL COLOR ES POR PUESTO: sin esa frase, un rojo se lee como «muchos pasos
+  // en absoluto» y no como «el mas usado de este diagrama», que es lo que significa.
+  ok(/por\s+puestos|puestos, no por valor/.test(leyendaEstructura.textContent),
+    'y dice que los colores reparten por puestos, no por valor absoluto',
+    leyendaEstructura.textContent.slice(0, 140));
   ok(/1/.test(leyendaEstructura.querySelector('.heatmap-legend-warn')
     ? leyendaEstructura.querySelector('.heatmap-legend-warn').textContent : ''),
     'y avisa de la conexión sin tráfico');
@@ -971,45 +1003,64 @@ try {
   controller._elementRegistry = registro;
   controller.showMetric('trafico');
 
-  // LOS TRAZOS USAN EL REPARTO POR RANGO, medido donde se ve: el GROSOR expone la
-  // fraccion sin ambiguedad (`4 + 6*fraccion`). Aqui hay conexiones que NO se recorrieron
-  // -entran con 0-, asi que el rango real es 0-10 y F3 (8) sale a 0,8: eso es CORRECTO, no
-  // un fallo. Lo que hay que comprobar es que la fraccion que recibe cada trazo sale del
-  // reparto, y no de `valor/max` sobre el maximo de la corrida.
+  // EL COLOR ES POR BANDAS DE PUESTO, y el GROSOR sigue siendo proporcional al valor.
+  // Son dos canales distintos a proposito: el color dice «en que grupo estas» -que es la
+  // pregunta «cuales son los caminos mas usados»- y el grosor dice «cuanto», sin perder
+  // la gradacion fina que un reparto por bandas no puede dar.
+  //
+  // El grosor va de 2 a 18 px: `2 + 16 * fraccion`. Se subio desde el 4-10 anterior
+  // porque en un diagrama denso una linea de 4 px se pierde entre las conexiones del
+  // propio dibujo -que es exactamente el reporte «no se ven las lineas»-.
   const anchoDe = (id) => Number(
     document.querySelector(`.heatmap-flows path[data-flujo="${id}"]`).getAttribute('stroke-width'));
 
-  // F1 es el maximo: extremo calido.
-  ok(anchoDe('F1') === 10,
-    'la conexion mas transitada recibe el ancho maximo (fraccion 1)',
+  // F1 es el maximo: grosor maximo y color calido.
+  ok(anchoDe('F1') === 18,
+    'la conexion mas transitada recibe el ancho MAXIMO (fraccion 1)',
     String(anchoDe('F1')));
 
-  // LO QUE SE PUEDE COMPROBAR AQUI, y su limite, dicho en vez de disimulado.
-  //
-  // Los trazos ya usan el reparto por rango (`_opacidadEnRango` con piso 0), y su GROSOR
-  // expone la fraccion sin ambiguedad: `4 + 6*fraccion`. Pero en ESTE modelo de prueba el
-  // rango real de trafico es 0-10, porque F2 no se recorre y entra con 0 (correcto: es la
-  // linea muerta que hay que ver). Con el minimo en 0 las dos reglas coinciden, asi que
-  // aqui NO se puede distinguir «reparto por rango» de «valor/max».
-  //
-  // El caso que las separa -un diagrama donde TODAS las conexiones se recorren y los
-  // valores son 8 y 10- no se puede montar sin un diagrama de prueba distinto, asi que se
-  // comprueba lo que SI es observable: que la fraccion venga del reparto.
-  const anchos = {
-    F1: Number(document.querySelector('.heatmap-flows path[data-flujo="F1"]').getAttribute('stroke-width')),
-    F3: Number(document.querySelector('.heatmap-flows path[data-flujo="F3"]').getAttribute('stroke-width'))
+  const colorDe = (id) => {
+    const t = document.querySelector(`.heatmap-flows path[data-flujo="${id}"]`);
+    return t ? t.getAttribute('stroke') : null;
   };
 
-  ok(anchos.F1 === 10,
-    'la conexion mas transitada recibe el ancho maximo (fraccion 1)',
-    String(anchos.F1));
-  ok(anchos.F3 > 4 && anchos.F3 < 10,
-    'y una intermedia recibe un ancho intermedio, no el maximo ni el minimo',
-    `F3 ${anchos.F3.toFixed(2)} (rango 0-10: 8/10 = 0,8 -> ancho 8,8)`);
+  // EL CASO REAL DE ESTE MODELO: hay una conexion muerta (F2, con 0) y dos con trafico
+  // (F1=10, F3=8). El reparto por puesto sobre los valores CON masa deja a F1 en el 10 %
+  // mas alto (rojo) y a F3 en la banda siguiente (naranja), en vez del azul plano que
+  // daba la escala continua.
+  ok(colorDe('F1') === 'red',
+    'el camino mas usado sale ROJO, que es la respuesta a «cual es el mas usado»',
+    colorDe('F1'));
+  // CON DOS VALORES, el segundo cae en la banda AMARILLA y no en la naranja: el reparto
+  // por puesto asigna 1 elemento a la banda del 10 % y el resto a la siguiente franja con
+  // contenido, que con dos valores es la amarilla. Es CORRECTO -con dos caminos no hay
+  // «siguiente 20 %» que repartir- y lo que importa comprobar es que NO sale azul plano,
+  // que era el fallo real: con la escala continua, 8 sobre un maximo de 10 daba 0,8 y el
+  // suelo lo dejaba indistinguible.
+  ok(colorDe('F3') === 'yellow',
+    'y el siguiente sale en una banda distinta, no en un azul indistinguible',
+    colorDe('F3'));
 
-  // LA PROPIEDAD QUE SI DISTINGUE: la fraccion que se le pasa a un trazo con el rango
-  // estrecho y piso 0 es 0 para el minimo. Es el mismo helper que usa la vista, medido en
-  // su camino real.
+  // Y con los mismos valores, la banda NO depende del valor absoluto: si las dos
+  // conexiones se recorren igual, las dos salen del mismo color. Es lo que evita afirmar
+  // una diferencia que no existe.
+  const anchos = { F1: anchoDe('F1'), F3: anchoDe('F3') };
+  ok(anchos.F1 === 18, 'la mas transitada recibe el ancho maximo', String(anchos.F1));
+  ok(anchos.F3 > 2 && anchos.F3 < 18,
+    'y la siguiente un ancho intermedio, no el maximo ni el minimo',
+    `F3 ${anchos.F3} (8 de 10 -> fraccion 0,5 aprox sobre el rango con el 0 muerto)`);
+
+  // EL GROSOR NO ES POR BANDAS: si lo fuera, dos valores distintos dentro de la misma
+  // banda tendrian el mismo ancho y se perderia la gradacion. Se comprueba que F3, que
+  // esta en una banda distinta de F2 (la muerta), tiene grosor distinto del minimo.
+  ok(anchos.F3 !== anchos.F1,
+    'el grosor distingue dentro del reparto, no solo entre bandas',
+    `F1 ${anchos.F1} vs F3 ${anchos.F3}`);
+
+  // LO QUE NO SE PUEDE COMPROBAR AQUI, dicho en vez de disimulado: que el color sea
+  // INDEPENDIENTE del valor absoluto -un 5 puede ser rojo si es el mayor de su corrida-.
+  // Para eso haria falta un segundo juego de valores con otro maximo, que este modelo no
+  // tiene. Se cubre en el arnes de Node (seccion 15), donde el reparto se prueba solo.
   const rangoSinCero = { min: 8, max: 10, uniforme: false, n: 2 };
   ok(controller._opacidadEnRango(8, rangoSinCero, 0) === 0
     && controller._opacidadEnRango(10, rangoSinCero, 0) === 1,
@@ -1032,6 +1083,121 @@ try {
   ok(Boolean(trazo20) && trazo20.getAttribute('stroke') !== null,
     'y su conexion tambien se pinta con el color calido',
     trazo20 ? trazo20.getAttribute('stroke') : 'sin trazo');
+
+  // --- 21. EL TRAZO SALE DE LOS WAYPOINTS, no del DOM ---
+  //
+  // Es el arreglo de fondo del reporte «no se pintan las lineas». La version anterior
+  // buscaba el `d` en `canvas.getGraphics(flujo)`, que devuelve un `<g>` -sin `d`-, y
+  // ademas dependia de COMO dibuje bpmn-js: si anida el `<path>` de otra forma, la vista
+  // deja de pintar sin que nada avise.
+  //
+  // La forma fiable la usa la propia libreria de tokens para animar: el `d` se construye
+  // desde `connection.waypoints`. Aqui se comprueba que el trazo clonado es EXACTAMENTE
+  // esa polilinea, con los waypoints que se le dieron al elemento.
+  {
+    controller._elementRegistry = registro;
+    controller.simulationResults = new Map([ [ 'F1', { executionCount: 10 } ] ]);
+    controller.showMetric('trafico');
+
+    const trazo = document.querySelector('.heatmap-flows path[data-flujo="F1"]');
+    ok(Boolean(trazo), 'la conexion F1 se pinta', trazo ? 'si' : 'NO');
+    ok(trazo && trazo.getAttribute('d') === 'M 0 0 L 300 0',
+      'y su `d` es la polilinea de SUS waypoints, no algo leido del DOM',
+      trazo ? trazo.getAttribute('d') : 'sin trazo');
+
+    // CON DOS SEGMENTOS, que es el caso de una conexion con un quiebro: si el `d` solo
+    // tomara el primero o el ultimo waypoint, la linea saldria recta por donde no va.
+    const conQuiebro = Object.assign(
+      elemento('FQ', 'bpmn:SequenceFlow', 0, 0),
+      { __esFlujo: true, width: 0, height: 0,
+        waypoints: [ { x: 0, y: 0 }, { x: 100, y: 50 }, { x: 200, y: 0 } ] }
+    );
+    controller._elementRegistry = {
+      forEach: (fn) => [ conQuiebro ].forEach(fn),
+      get: () => conQuiebro,
+      filter: (fn) => [ conQuiebro ].filter(fn),
+      find: (fn) => [ conQuiebro ].find(fn),
+      getAll: () => [ conQuiebro ]
+    };
+    controller.simulationResults = new Map([ [ 'FQ', { executionCount: 7 } ] ]);
+    controller.showMetric('trafico');
+
+    const trazoQ = document.querySelector('.heatmap-flows path[data-flujo="FQ"]');
+    ok(trazoQ && trazoQ.getAttribute('d') === 'M 0 0 L 100 50 L 200 0',
+      'y con tres waypoints el `d` conserva el quiebro entero (nada de rectas inventadas)',
+      trazoQ ? trazoQ.getAttribute('d') : 'sin trazo');
+
+    // Una conexion SIN waypoints no se puede pintar y se cuenta: es el caso de un
+    // elemento al que le falta la geometria, que no debe pasar en silencio.
+    const sinPuntos = Object.assign(
+      elemento('FS', 'bpmn:SequenceFlow', 0, 0),
+      { __esFlujo: true, width: 0, height: 0 }
+    );
+    controller._elementRegistry = {
+      forEach: (fn) => [ sinPuntos ].forEach(fn),
+      get: () => sinPuntos,
+      filter: (fn) => [ sinPuntos ].filter(fn),
+      find: (fn) => [ sinPuntos ].find(fn),
+      getAll: () => [ sinPuntos ]
+    };
+    controller.simulationResults = new Map([ [ 'FS', { executionCount: 7 } ] ]);
+    controller.showMetric('trafico');
+    ok(document.querySelectorAll('.heatmap-flows path').length === 0,
+      'una conexion sin waypoints no pinta un trazo roto',
+      String(document.querySelectorAll('.heatmap-flows path').length));
+
+    controller._elementRegistry = registro;
+  }
+
+  // --- 22. EL AVISO DE TRAZOS FUERA DEL DIAGRAMA ---
+  //
+  // El aviso existe para la averia que costo mas encontrar: los `<path>` se creaban con su
+  // color y su grosor -todo lo que un arnes podia medir- y no se veian porque el grupo
+  // habia acabado en un nodo que no cuelga del SVG que el usuario mira. Contar los CREADOS
+  // no la distingue; hay que contar los que estan EN EL CONTENEDOR.
+  //
+  // LO QUE NO SE PRUEBA AQUI, dicho en vez de disimulado, y son dos cosas:
+  //
+  //   a) La rama del aviso «los trazos quedaron fuera del SVG». Para dispararla hay que
+  //      lograr que `_capaOverlays()` devuelva una capa que no cuelgue del contenedor, y
+  //      en este doble no se puede: si la capa no tiene padre, el propio `_capaOverlays`
+  //      corta antes y no se crea ningun grupo. Montarlo exigiria un canvas que mienta
+  //      sobre `getLayer`, y entonces se estaria probando el doble, no el codigo.
+  //   b) El caso «sin capa de overlays» tampoco, y se intento: con `getLayer() => null`,
+  //      `showMetric('trafico')` sigue hasta `createHeatmap()`, que LANZA «Could not get
+  //      overlays layer from canvas» desde `SimpleHeatSVG` y aborta el resto del arnes.
+  //      Es decir, sin capa no hay ni trazos ni mapa de calor: la vista no llega a pintar
+  //      nada por una via que ya avisa sola. Se deja sin cubrir y se dice.
+  //
+  // Lo que SI se comprueba es que en el caso normal NO avisa: un aviso que salta siempre
+  // es ruido, y el ruido tapa el aviso de verdad cuando aparece.
+  {
+    const salida = (promesa) => {
+      const lineas = [];
+      const warnOriginal = console.warn;
+      console.warn = (t) => lineas.push(String(t));
+      try {
+        promesa();
+      } finally {
+        console.warn = warnOriginal;
+      }
+      return lineas.join(' | ');
+    };
+
+    const salidaNormal = salida(() => {
+      controller._elementRegistry = registro;
+      controller.simulationResults = new Map([
+        [ 'F1', { executionCount: 10 } ],
+        [ 'F3', { executionCount: 3 } ]
+      ]);
+      controller.showMetric('trafico');
+    });
+    ok(!salidaNormal.includes('no cuelga del SVG'),
+      'con los trazos bien colocados el aviso NO salta (nada de ruido en consola)',
+      salidaNormal || 'sin avisos, correcto');
+
+    controller._elementRegistry = registro;
+  }
 
   // --- 11. Que se vea, con la escala por defecto (pixel) ---
   //

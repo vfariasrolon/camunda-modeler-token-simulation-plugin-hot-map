@@ -8,7 +8,7 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
 import { describeLabor } from './LaborRules.js';
-import { rangoDeValores, opacidadDe, fraccionDe, textoDeEscala, gradienteCss, colorFrio, colorDeValor, OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA } from './HeatmapScale.js';
+import { rangoDeValores, opacidadDe, fraccionDe, textoDeEscala, escalaDeMetrica, gradienteCss, colorFrio, colorDeValor, bandasDeValores, gradienteBandas, topCaminos, OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA } from './HeatmapScale.js';
 import { numerarTareas, etiquetaDe } from './TaskIds.js';
 import {
   COLOR_PLAN, compararPlanes, notasDeEficiencia, fechasUnidas,
@@ -982,7 +982,8 @@ export default class SimulationController {
       });
 
       const rangoTrafico = rangoDeValores(pares.map((p) => p.value));
-      this._pintarFlujos(pares.filter((p) => is(p.element, 'bpmn:SequenceFlow')), rangoTrafico);
+      const dibujo = this._pintarFlujos(
+        pares.filter((p) => is(p.element, 'bpmn:SequenceFlow')), rangoTrafico);
 
       // Los circulos van SOLO sobre las figuras: la lista de pares mezcla las dos
       // cosas a proposito (para el rango), pero una linea no lleva mancha.
@@ -997,7 +998,7 @@ export default class SimulationController {
       this._heatmap.data(dataPointsT).max(rangoTrafico.max || 1).radius(this._radius, this._blur).draw();
 
       const sinTrafico = pares.filter((p) => p.value <= 0 && is(p.element, 'bpmn:SequenceFlow')).length;
-      if (rangoTrafico.n > 0) this._leyendaEstructura(metric, rangoTrafico, sinTrafico);
+      if (rangoTrafico.n > 0) this._leyendaEstructura(metric, rangoTrafico, sinTrafico, dibujo);
       this.showOverlays(metric);
       return;
     }
@@ -1307,13 +1308,23 @@ export default class SimulationController {
    * frio de la escala. Es el hallazgo mas util de esta vista -una rama que no se
    * dispara es capacidad que se paga y no se usa- y con el azul se confundiria con
    * «poco trafico», que es otra cosa.
+   *
+   * Devuelve `{ bandas, top }`: las bandas para la leyenda -con el rango REAL de valores
+   * de cada color- y los caminos mas usados con su nombre. Se devuelven en vez de
+   * guardarse en `this` porque los necesita la leyenda, que se dibuja despues y en otro
+   * sitio, y un estado de mas es un sitio mas donde desincronizarse.
    */
   _pintarFlujos(pares, rango) {
     this._limpiarFlujos();
 
     const capa = this._capaOverlays();
-    if (!capa) return;
+    if (!capa) return { bandas: null, top: [] };
 
+    // LAS BANDAS SE CALCULAN CON LOS VALORES DE LAS CONEXIONES SOLO, no con los del
+    // diagrama entero. Es la «escala propia»: comparar una linea contra una tarea seria
+    // comparar dos cosas distintas, y mientras las tareas tengan numeros mas altos las
+    // lineas no llegarian nunca al rojo.
+    const bandasTrafico = bandasDeValores((pares || []).map((p) => p.value));
     const grupo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     grupo.setAttribute('class', 'heatmap-flows');
     capa.appendChild(grupo);
@@ -1347,25 +1358,31 @@ export default class SimulationController {
         trazo.setAttribute('stroke-width', '2');
         trazo.setAttribute('stroke-dasharray', '6 5');
       } else {
-        // LA MISMA ESCALA QUE LAS MANCHAS, y esto es el arreglo de «no pone nada de calor
-        // sobre las lineas»: aqui se calculaba `valor / rango.max`, que es la regla que ya
-        // se corrigio en el mapa por tareas y que NO se aplico en este sitio. Con ella, el
-        // minimo de una corrida cae en la banda plana azul -o directamente en 0 si el rango
-        // es uniforme-, asi que las lineas salian todas del mismo color frio mientras las
-        // tareas, que si usan el reparto, mostraban islas de color. Se veian tareas y no
-        // caminos.
+        // BANDAS POR RANKING, con la escala PROPIA de las lineas.
         //
-        // Con `_opacidadEnRango` las dos cosas usan el MISMO reparto entre minimo y maximo,
-        // que es lo que permite comparar un trazo con una tarea.
-        // PISO EN 0, y es un detalle que importa: en una MANCHA el suelo de 0,10 existe
-        // para que un valor bajo siga viendose -una mancha invisible parece «sin analizar»-,
-        // pero en un TRAZO es danino: aplasta todo el extremo frio al mismo valor y las
-        // lineas dejan de distinguirse entre si. Aqui la visibilidad la da el GROSOR -de 4 a
-        // 10 px-, asi que la fraccion puede llegar a 0 y la linea sigue viendose.
-        const fraccion = this._opacidadEnRango(valor, rango, 0);
-        trazo.setAttribute('stroke', colorDeValor(fraccion));
-        trazo.setAttribute('stroke-width', `${4 + 6 * fraccion}`);
-        trazo.setAttribute('stroke-opacity', '0.9');
+        // Antes se usaba la escala compartida con las figuras -`fraccionDe` sobre el rango
+        // de TODO el diagrama-, y tenia dos problemas que se veian a la vez:
+        //
+        //   1. El tramo muerto: por debajo de 0,4 la escala es un unico azul plano. Con el
+        //      rango real de una corrida (5-154) eso llegaba al valor 64,6, asi que 47 de
+        //      las 49 conexiones salian del MISMO color. El canal del color no decia nada.
+        //   2. Competir con las figuras: el maximo del diagrama suele ser una TAREA (154
+        //      frente a los 111 de la conexion mas cargada), asi que las lineas nunca
+        //      llegaban al rojo. Una tarea ejecutada 154 veces y una linea recorrida 111
+        //      veces no son magnitudes comparables.
+        //
+        // Con las bandas propias, el camino MAS usado de las lineas sale SIEMPRE rojo, y la
+        // pregunta «por que caminos pasa mas el trabajo» se contesta de un vistazo.
+        const banda = bandasTrafico ? bandasTrafico.bandaDe(valor) : null;
+        const color = banda ? banda.color : 'blue';
+        // El GROSOR sigue siendo progresivo -no por bandas-: asi el color dice «en que
+        // grupo estas» y el grosor dice «cuanto», y las dos lecturas no se estorban. Un
+        // grosor por bandas daria cuatro anchos y perderia la gradacion fina.
+        const fraccion = fraccionDe(valor, rango.min, rango.max);
+        const grosor = 2 + 16 * (fraccion == null ? 0.5 : fraccion);
+        trazo.setAttribute('stroke', color);
+        trazo.setAttribute('stroke-width', String(Math.round(grosor * 10) / 10));
+        trazo.setAttribute('stroke-opacity', '0.92');
       }
 
       grupo.appendChild(trazo);
@@ -1374,6 +1391,68 @@ export default class SimulationController {
     if (sinTrazo) {
       console.warn(`[mapa] ${sinTrazo} conexion(es) sin trazo legible: no se pudieron pintar.`
         + ' Su grafico no expone un <path> con `d`, que es lo que se clona.');
+    }
+
+    // DIAGNOSTICO. Se cuenta lo que QUEDO en el DOM, y no lo que se creo: entre el
+    // `appendChild` de arriba y este punto no hay nada, pero si en el Modeler real el
+    // grupo acaba en otro sitio (o el DOM del SVG no es el que cree el codigo), la
+    // diferencia entre «creados» y «en el documento» es justo la respuesta.
+    this._avisarSiNoSeVenFlujos(grupo);
+
+    // LOS CAMINOS MAS USADOS, con nombre y numero. Es lo que convierte el color en una
+    // medicion: un color siempre es ambiguo -¿este naranja es mas que aquel?-, y un color
+    // con su cifra al lado no lo es.
+    const top = topCaminos(
+      (pares || []).map((p) => ({
+        valor: p.value,
+        id: p.element && p.element.id,
+        etiqueta: this._nombreDeConexion(p.element),
+        color: bandasTrafico.bandaDe(p.value) ? bandasTrafico.bandaDe(p.value).color : null
+      })),
+      5
+    );
+
+    return { bandas: bandasTrafico, top };
+  }
+
+  /**
+   * Nombre legible de una conexion: «origen → destino».
+   *
+   * Se usa el NOMBRE del elemento cuando lo tiene y su id cuando no, que es lo que hace
+   * el resto del plugin. Una conexion sin nombre en bpmn-js es lo normal -casi nadie las
+   * etiqueta-, asi que sin esto la lista de los caminos mas usados serian dos ids.
+   */
+  _nombreDeConexion(flujo) {
+    if (!flujo) return '(sin conexion)';
+    const nombreDe = (elemento) => {
+      if (!elemento) return '?';
+      const bo = elemento.businessObject;
+      return (bo && bo.name) || elemento.id || '?';
+    };
+    return `${nombreDe(flujo.source)} → ${nombreDe(flujo.target)}`;
+  }
+
+  /**
+   * AVISA cuando los trazos se crearon pero no llegaron al diagrama.
+   *
+   * Es la averia que costo mas encontrar: los `<path>` existian con su color y su grosor
+   * -los arneses lo daban por bueno- y no se veian porque el grupo habia acabado en un
+   * nodo que no cuelga del SVG que el usuario mira. Contar los CREADOS no la distingue;
+   * hay que contar los que estan EN EL CONTENEDOR, que es lo que se ve.
+   *
+   * Solo avisa cuando hay averia. Una traza informativa en cada pintado acaba siendo ruido
+   * en la consola justo cuando hace falta leerla para algo.
+   */
+  _avisarSiNoSeVenFlujos(grupo) {
+    const creados = grupo ? grupo.querySelectorAll('path').length : 0;
+    if (!creados) return;
+
+    const enDocumento = this._canvas.getContainer().querySelectorAll('.heatmap-flows path').length;
+
+    if (enDocumento < creados) {
+      console.warn(`[mapa] ${creados} trazo(s) creados pero solo ${enDocumento} en el diagrama:`
+        + ' el grupo se inserto en un nodo que no cuelga del SVG. Es la averia de «se pinta'
+        + ' en el vacio» que ya sufrio el mapa de zonas.');
     }
   }
 
@@ -1390,19 +1469,31 @@ export default class SimulationController {
    * `d` de mentira en el nodo devuelto, asi que este camino nunca se probo de verdad.
    */
   _trazoDe(flujo) {
-    const grafico = this._canvas.getGraphics(flujo);
-    if (!grafico || !grafico.getAttribute) return null;
+    // EL `d` SE CONSTRUYE, NO SE BUSCA EN EL DOM, y esto es el arreglo de verdad.
+    //
+    // Se buscaba el trazo en el grafico del elemento -`canvas.getGraphics(flujo)`- y ese
+    // camino dependia de COMO dibuje bpmn-js: devuelve un `<g>`, el `d` esta en un `<path>`
+    // hijo, y si manana lo anida de otra forma la vista deja de pintar. Costo cinco
+    // hipotesis falsas y varias pruebas del usuario.
+    //
+    // La forma FIABLE la usa la propia libreria de tokens para animar: el `d` sale de
+    // `connection.waypoints`, que son las coordenadas del diagrama -el MISMO sistema que
+    // la capa de overlays-. Ver `bpmn-js-token-simulation/lib/animation/Animation.js`,
+    // donde se reduce `waypoints` a `M x y L x y ...`. Aqui se hace lo mismo, sin el
+    // desplazamiento de media ficha que ahi se aplica al `d` del token.
+    //
+    // No se usa `getGraphics` en absoluto: no hace falta el DOM para saber por donde va
+    // una conexion.
+    const waypoints = flujo && flujo.waypoints;
+    if (!waypoints || !waypoints.length) return null;
 
-    const propio = grafico.getAttribute('d');
-    if (propio) return propio;
-
-    const caminos = grafico.querySelectorAll ? grafico.querySelectorAll('path[d]') : [];
-    for (const camino of caminos) {
-      const d = camino.getAttribute('d');
-      if (d) return d;
-    }
-
-    return null;
+    return waypoints.reduce((d, punto, indice) => {
+      const x = Number(punto && punto.x);
+      const y = Number(punto && punto.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return d;
+      d.push([ indice > 0 ? 'L' : 'M', x, y ]);
+      return d;
+    }, []).map((parte) => parte.join(' ')).join(' ') || null;
   }
 
   /**
@@ -1483,7 +1574,7 @@ export default class SimulationController {
    * recorrio. Sin ese aviso, una linea gris se lee como «sin datos» en vez de como
    * «por aqui no paso nada», que es el hallazgo.
    */
-  _leyendaEstructura(metric, rango, sinTrafico) {
+  _leyendaEstructura(metric, rango, sinTrafico, dibujo) {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
@@ -1491,18 +1582,53 @@ export default class SimulationController {
       contenedor.appendChild(leyenda);
     }
 
-    const texto = textoDeEscala(metric, rango);
-    const barra = texto.uniforme ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA);
+    const bandas = dibujo && dibujo.bandas;
+    const top = (dibujo && dibujo.top) || [];
+
+    // LA BARRA ES UN ESCALON, NO UNA RAMPA, y lleva el RANGO REAL de cada color debajo.
+    // Un color sin su cifra es ambiguo: «¿este naranja es mucho o poco?». Con el rango
+    // al lado -«de 66 a 111 pasos»- el color pasa a ser una medicion.
+    const barra = bandas && bandas.bandas.length
+      ? gradienteBandas(bandas.bandas)
+      : (textoDeEscala(metric, rango).uniforme
+        ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA));
+
+    const filasBandas = bandas && bandas.bandas.length
+      ? `<div class="heatmap-legend-bandas">${bandas.bandas.map((b) => `
+          <div class="heatmap-legend-banda">
+            <span class="muestra" style="background: ${b.color};"></span>
+            <span class="rango">${Math.round(b.min)}${b.min === b.max ? '' : '–' + Math.round(b.max)} pasos</span>
+            <span class="cuantos">${b.cuantos} camino(s)</span>
+          </div>`).join('')}</div>`
+      : `<div class="heatmap-legend-detail">${textoDeEscala(metric, rango).detalle}</div>`;
+
+    // LOS CAMINOS MAS USADOS. Es la respuesta directa a «¿por qué líneas pasaron más
+    // tokens?»: un color siempre es ambiguo, un color con su número y su nombre no.
+    const filasTop = top.length
+      ? `<div class="heatmap-legend-top">
+          <div class="heatmap-legend-top-title">Los ${top.length} caminos más usados</div>
+          ${top.map((c) => `
+            <div class="heatmap-legend-top-fila">
+              <span class="muestra" style="background: ${c.color || '#9aa5b1'};"></span>
+              <span class="nombre" title="${c.etiqueta}">${c.etiqueta}</span>
+              <span class="valor">${Math.round(c.valor)}</span>
+            </div>`).join('')}
+        </div>`
+      : '';
+
     const aviso = sinTrafico > 0
       ? `<div class="heatmap-legend-warn"><strong>${sinTrafico}</strong> conexión(es) sin tráfico, en gris`
         + ' discontinuo: por ahí no pasó el trabajo. Una rama que no se usa es capacidad que se paga y no se aprovecha.</div>'
       : '';
 
     leyenda.innerHTML = `
-      <div class="heatmap-legend-title">Estructura · ${texto.titulo}</div>
+      <div class="heatmap-legend-title">Caminos · ${escalaDeMetrica(metric).etiqueta}</div>
       <div class="heatmap-legend-bar" style="background: ${barra};"></div>
-      <div class="heatmap-legend-detail">${texto.detalle}</div>
-      <div class="heatmap-legend-note">Trazos = conexiones · Círculos = figuras. ${texto.nota}</div>
+      ${filasBandas}
+      ${filasTop}
+      <div class="heatmap-legend-note">Los colores reparten las <strong>conexiones</strong> por
+        puestos, no por valor: el rojo es siempre el camino más usado de este diagrama. El
+        grosor sí es proporcional a los pasos.</div>
       ${aviso}
     `;
   }
@@ -1633,24 +1759,53 @@ export default class SimulationController {
    * (el reparto tiene radio de dos celdas) y multiplica el trabajo.
    */
   _puntosDelTrazo(flujo, cada = 40) {
-    const grafico = this._canvas.getGraphics(flujo);
-    if (!grafico || typeof grafico.getTotalLength !== 'function') return null;
+    // SE MIDE SOBRE LOS WAYPOINTS, no sobre el `<g>` del diagrama.
+    //
+    // Antes se pedia `getTotalLength` al grafico del elemento -un `<g>`-, y un `<g>` NO
+    // tiene ese metodo: solo lo tiene el `<path>`. Devolvia null SIEMPRE, asi que la
+    // guarda de `_pintarZonas` -«una conexion sin puntos no aporta»- descartaba todas las
+    // conexiones y la mancha de zonas caia al centro de la figura en vez de seguir la
+    // linea. Es el mismo error que tenia `_trazoDe`, y se arregla igual: midiendo la
+    // polilinea de `waypoints`, que no depende de como dibuje bpmn-js.
+    const waypoints = flujo && flujo.waypoints;
+    if (!waypoints || waypoints.length < 2) return null;
 
-    let largo = 0;
-    try {
-      largo = grafico.getTotalLength();
-    } catch (err) {
-      return null;
-    }
-    // En el arnes y en un diagrama sin renderizar el largo puede ser 0: se cae al
-    // centro en vez de devolver una lista vacia, que dejaria la linea sin masa.
-    if (!(largo > 0)) return null;
+    const limpios = waypoints
+      .map((p) => ({ x: Number(p && p.x), y: Number(p && p.y) }))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (limpios.length < 2) return null;
 
+    // Se recorre la polilinea segmento a segmento y se muestrea cada `cada` px de
+    // RECORRIDO, no por segmento: muestrear por segmento daria mas puntos en los tramos
+    // cortos y el reparto de la masa quedaria sesgado hacia las esquinas.
     const puntos = [];
-    for (let d = 0; d <= largo; d += cada) {
-      const p = grafico.getPointAtLength(d);
-      puntos.push({ x: p.x, y: p.y });
+    let restante = 0;
+    for (let i = 1; i < limpios.length; i++) {
+      const a = limpios[i - 1];
+      const b = limpios[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const largo = Math.sqrt(dx * dx + dy * dy);
+      if (!(largo > 0)) continue;
+
+      for (let avance = restante; avance <= largo; avance += cada) {
+        puntos.push({ x: a.x + (dx * avance) / largo, y: a.y + (dy * avance) / largo });
+      }
+      // Lo que sobra del ultimo paso se arrastra al segmento siguiente, para que la
+      // distancia entre puntos sea constante en toda la linea y no se reinicie en cada
+      // esquina (que amontonaria puntos justo ahi).
+      restante = (restante - largo) % cada;
+      if (restante < 0) restante += cada;
     }
+
+    // El punto final no sale del bucle si el largo no es multiplo de `cada`: la punta de
+    // la conexion se quedaria sin masa y la mancha no llegaria a la figura de destino.
+    const ultimo = limpios[limpios.length - 1];
+    const previo = puntos[puntos.length - 1];
+    if (!previo || Math.abs(previo.x - ultimo.x) > 0.5 || Math.abs(previo.y - ultimo.y) > 0.5) {
+      puntos.push({ x: ultimo.x, y: ultimo.y });
+    }
+
     return puntos.length ? puntos : null;
   }
 

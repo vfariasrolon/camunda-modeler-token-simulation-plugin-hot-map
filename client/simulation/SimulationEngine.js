@@ -1753,6 +1753,9 @@ export default class SimulationEngine {
     }
 
     console.log('ENTRADAS · por tarea');
+    // `console.table` ya imprime la tabla: el `console.log` de antes solo anadia un
+    // «Array(26)» encima de cada tabla, que en una consola con el informe entero
+    // estorba justo cuando se esta buscando un dato.
     console.table(tareas.map((el) => {
       const d = getSimulationData(el) || {};
       const pt = d.processingTime || {};
@@ -1789,6 +1792,32 @@ export default class SimulationEngine {
         costo_total: Number((r.totalCost || 0).toFixed(2))
       };
     }));
+
+    // SALIDAS · por conexion. La tabla de tareas no dice NADA de las lineas, y el mapa
+    // de trafico se lee justo ahi: sin esto, «no se pintan las lineas» no se puede
+    // distinguir de «no pasa nada por las lineas», que son dos averias opuestas.
+    //
+    // Los pasos de una conexion viven en `this.results` como `executionCount`, igual que
+    // los de una tarea: `findNextElements` incrementa el de la salida elegida. Se listan
+    // TODAS las del diagrama, incluso con 0, porque las que no se recorrieron son el
+    // hallazgo de la vista: una rama muerta es capacidad que se paga y no se usa.
+    const flujos = this._elementRegistry.filter((el) => !isLabel(el) && is(el, 'bpmn:SequenceFlow'));
+    if (flujos.length) {
+      const totalPasos = flujos.reduce((acc, el) => acc + ((this.results.get(el.id) || {}).executionCount || 0), 0);
+      console.log('SALIDAS · por conexion (pasos por la linea)');
+      console.table(flujos.map((el) => {
+        const pasos = (this.results.get(el.id) || {}).executionCount || 0;
+        return {
+          origen: el.source ? (el.source.businessObject.name || el.source.id) : '(sin origen)',
+          destino: el.target ? (el.target.businessObject.name || el.target.id) : '(sin destino)',
+          pasos,
+          // La cuota es la lectura util: un reparto 80/20 y uno 50/50 se ven iguales en
+          // pasos absolutos y son procesos distintos.
+          cuota_del_total_pct: totalPasos ? Number((100 * pasos / totalPasos).toFixed(1)) : 0,
+          se_recorrio: pasos > 0 ? 'si' : 'NO (rama muerta)'
+        };
+      }));
+    }
 
     // Totales sobre las tareas: el total del proceso no es la suma de todas las
     // tareas cuando hay ramas, pero si es la suma de lo ejecutado.

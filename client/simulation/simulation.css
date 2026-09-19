@@ -346,6 +346,88 @@
     color: #777;
 }
 
+/* BANDAS POR RANKING: los cuatro colores con el RANGO REAL de cada uno.
+   Va en filas y no en una sola linea porque la leyenda tiene que seguir siendo
+   legible con la fuente del Modeler, y cuatro pares «color + rango + cuantos» en
+   una linea se solapan. `tabular-nums` para que los numeros se alineen en columna:
+   sin eso, el ojo no puede comparar dos rangos de un vistazo. */
+.heatmap-legend-bandas {
+    margin-top: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+.heatmap-legend-banda {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.heatmap-legend-banda .muestra {
+    width: 13px;
+    height: 9px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, .18);
+    flex: 0 0 auto;
+}
+
+.heatmap-legend-banda .rango {
+    min-width: 92px;
+}
+
+.heatmap-legend-banda .cuantos {
+    color: #777;
+}
+
+/* LOS CAMINOS MAS USADOS. Es la parte que responde «¿por cuales pasaron mas
+   tokens?» con datos, y no con un color que hay que interpretar. */
+.heatmap-legend-top {
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.heatmap-legend-top-title {
+    font-weight: 600;
+    color: #444;
+    margin-bottom: 3px;
+}
+
+.heatmap-legend-top-fila {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.heatmap-legend-top-fila .muestra {
+    width: 13px;
+    height: 9px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, .18);
+    flex: 0 0 auto;
+}
+
+/* El nombre se CORTA con puntos suspensivos en vez de partir la linea: una
+   conexion larga -«toma de imagen con sistema de checklist APP -> impresion de
+   ID y datos QR»- empujaria el numero fuera de la leyenda. El `title` conserva
+   el nombre entero al pasar el raton. */
+.heatmap-legend-top-fila .nombre {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 210px;
+}
+
+.heatmap-legend-top-fila .valor {
+    flex: 0 0 auto;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Chart Panel (panel de graficos) */
 .simulation-chart-panel {
   position: absolute;

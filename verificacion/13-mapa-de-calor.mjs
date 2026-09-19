@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import {
   opacidadDe, rangoDeValores, fraccionDe, textoDeEscala, escalaDeMetrica,
   gradienteCss, colorFrio, colorCalido,
+  bandasDeValores, gradienteBandas, topCaminos, BANDAS_RANKING,
   OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA, ESCALA_POR_METRICA
 } from './HeatmapScale.mjs';
 
@@ -208,6 +209,156 @@ console.log('\n== 14. La escala REPARTE entre el minimo y el maximo (el caso del
   // Los valores fuera del rango se acotan: un dato raro no puede salirse de la escala.
   ok(fraccionDe(0, 100, 900) === 0 && fraccionDe(9999, 100, 900) === 1,
     'un valor fuera del rango se acota a los extremos');
+}
+
+console.log('\n== 15. BANDAS POR RANKING: el color dice el PUESTO, no el valor ==');
+{
+  // EL CASO REAL QUE MOTIVO LAS BANDAS. Son los 49 valores de una corrida de verdad, con
+  // el problema que tenia la escala continua: el tramo muerto (todo por debajo de 0,4
+  // recibe el MISMO azul) llegaba al valor 64,6, asi que 47 de 49 conexiones salian del
+  // mismo color. Aqui se comprueba que el reparto nuevo NO deja el diagrama plano.
+  const valores = [
+    38, 13, 25, 30, 18, 12, 13, 8, 5, 20, 20, 20, 111, 20, 91, 40, 20, 20, 18, 20,
+    20, 40, 40, 37, 18, 60, 60, 60, 46, 14, 13, 46, 46, 43, 42, 15, 27, 13, 26, 13,
+    22, 3, 38, 31, 9, 9, 6, 6, 6
+  ];
+  const b = bandasDeValores(valores);
+
+  ok(b.n === 49, 'las 49 conexiones entran en el reparto', String(b.n));
+  ok(b.bandas.length === 4,
+    'y salen las cuatro bandas (el reparto no se colapsa en una)', String(b.bandas.length));
+
+  // LA PROPIEDAD QUE ARREGLA EL PROBLEMA: cada banda tiene elementos. Con la escala
+  // continua, 47 de 49 compartian un unico color; aqui ninguna banda queda vacia.
+  ok(b.bandas.every((x) => x.cuantos > 0),
+    'y ninguna queda vacia, que es lo que dejaba el diagrama de un solo color',
+    b.bandas.map((x) => x.cuantos).join(', '));
+
+  // EL MAXIMO ES ROJO, siempre: es la pregunta de la vista -«cual es el camino mas
+  // usado»- y por tanto no puede depender de cuanto valga.
+  ok(b.bandaDe(111).color === 'red', 'el camino mas usado sale ROJO', b.bandaDe(111).color);
+  ok(b.bandaDe(3).color === 'blue', 'y el menos usado sale azul', b.bandaDe(3).color);
+
+  // LAS BANDAS SON ORDENADAS Y SE TOCAN: los rangos reales van de mayor a menor y cubren
+  // el rango entero. Un hueco significaria valores que no caen en ninguna banda.
+  ok(b.bandas[0].max === 111 && b.bandas[b.bandas.length - 1].min === 3,
+    'los rangos de las bandas cubren de punta a punta el rango real',
+    `${b.bandas[0].min}-${b.bandas[0].max} ... ${b.bandas[3].min}-${b.bandas[3].max}`);
+  ok(b.bandas.every((x) => x.min <= x.max), 'y cada banda tiene su rango bien formado');
+
+  // EL CASO DE LOS EMPATES, con el conjunto que DISCRIMINA.
+  //
+  // Aqui me equivoque al escribir la prueba la primera vez: use los 49 valores reales, y
+  // con ellos el fallo NO se manifiesta -el bloque de ocho 20 cae en la banda amarilla de
+  // las dos formas, porque las bandas son anchas (15 elementos) y la diferencia de
+  // posicion no cruza ninguna frontera-. La prueba pasaba con el bug inyectado, o sea que
+  // no probaba nada.
+  //
+  // El conjunto que SI lo separa es uno PEQUENO, donde el bloque de empatados es mas grande
+  // que la banda que le toca: con 10 valores la banda roja se lleva 1 elemento, y un empate
+  // de 3 en cabeza se sale de ella si se cuenta el bloque entero al final de su posicion.
+  // Con la primera posicion, los tres comparten el rojo, que es su puesto.
+  {
+    const discrimina = [ 9, 9, 9, 5, 4, 4, 3, 3, 2, 1 ];
+    const d = bandasDeValores(discrimina);
+    ok(d.bandas.map((x) => x.color).join(',') === 'red,orange,yellow,blue',
+      'con 10 valores salen las cuatro bandas en orden',
+      d.bandas.map((x) => `${x.color}(${x.cuantos})`).join(' '));
+    ok(d.bandaDe(9).color === 'red',
+      'y el valor MAXIMO empatado SIGUE en la banda roja (aqui se sale si se cuenta mal)',
+      `9 (x3) -> ${d.bandaDe(9).color}`);
+    ok(discrimina.filter((v) => v === 9).every((v) => d.bandaDe(v).color === 'red'),
+      'los tres empatados en la cabeza comparten el rojo, que es su puesto');
+    ok(d.bandaDe(1).color === 'blue', 'y el minimo sigue en el extremo frio', d.bandaDe(1).color);
+  }
+
+  // Y con los 49 valores reales: aqui lo que se comprueba es que el empate no PARTE el
+  // bloque en dos bandas.
+  const veintes = valores.filter((v) => v === 20);
+  ok(veintes.length === 8, 'ocho conexiones empatan a 20 pasos', String(veintes.length));
+  ok(veintes.every((v) => b.bandaDe(v).color === b.bandaDe(20).color),
+    'y todas caen en la MISMA banda: un empate no se reparte');
+  ok(b.bandaDe(20).color !== 'red',
+    'y no se cuelan en el rojo, que es de los caminos realmente mas usados',
+    b.bandaDe(20).color);
+
+  // Un valor del borde: 46 esta dentro del rango de la banda naranja (38-46), asi que le
+  // toca naranja y no rojo. Comprueba que la posicion se calcula desde la PRIMERA
+  // posicion del bloque de empatados y no desde la ultima.
+  ok(b.bandaDe(46).color === 'orange', 'un valor del borde de una banda cae en ELLA', b.bandaDe(46).color);
+
+  // El naranja existe en la paleta: sin el, la banda intermedia saldria sin color.
+  ok(BANDAS_RANKING.some((x) => x.color === 'orange'),
+    'la paleta incluye un color intermedio entre el amarillo y el rojo');
+
+  // Sin masa no hay bandas: una corrida sin trafico no puede inventar colores.
+  const vacio = bandasDeValores([]);
+  ok(vacio.bandas.length === 0 && vacio.n === 0, 'sin valores no hay bandas');
+  ok(vacio.bandaDe(5) === null, 'y la banda de cualquier valor es null');
+  ok(bandasDeValores(null).bandas.length === 0, 'y con null no revienta');
+
+  // Un unico valor: una sola banda, y el mapa no puede salir multicolor.
+  const solo = bandasDeValores([ 7, 7, 7 ]);
+  ok(solo.bandas.length === 1, 'con todos los valores iguales hay UNA sola banda',
+    String(solo.bandas.length));
+  ok(solo.bandaDe(7).color === 'red',
+    'y el mapa sale de un color, con el valor unico en el extremo', solo.bandaDe(7).color);
+}
+
+console.log('\n== 16. La barra de la leyenda es un ESCALON, no una rampa ==');
+{
+  const b = bandasDeValores([ 100, 80, 60, 40, 20, 10, 5, 3, 2, 1 ]);
+  const css = gradienteBandas(b.bandas);
+
+  ok(css.startsWith('linear-gradient'), 'la leyenda lleva un degradado de CSS', css.slice(0, 40));
+  // CADA COLOR APARECE DOS VECES: una al abrir su franja y otra al cerrarla. Eso es lo
+  // que hace el ESCALON. Con una sola aparicion el CSS interpolaria y volveriamos a tener
+  // la rampa que el usuario no podia leer.
+  const rojos = (css.match(/red/g) || []).length;
+  ok(rojos >= 2, 'y cada color se repite para cortar en escalon (nada de rampa)', String(rojos));
+  ok(css.indexOf('red') < css.indexOf('orange'),
+    'los colores van de calido a frio, en el orden de las bandas');
+
+  // La barra NO puede estar vacia aunque haya una sola banda.
+  const una = gradienteBandas([ { color: 'red', min: 5, max: 5, cuantos: 3, etiqueta: 'x' } ]);
+  ok(una === 'red', 'con una sola banda la barra es ese color, no un degradado roto', una);
+  ok(gradienteBandas([]) === 'blue', 'y sin bandas cae al extremo frio');
+  ok(gradienteBandas(null) === 'blue', 'y con null tambien');
+}
+
+console.log('\n== 17. El TOP de caminos responde «por donde pasan mas tokens» ==');
+{
+  // Es la parte que contesta la pregunta del usuario sin depender de interpretar un color.
+  const pares = [
+    { etiqueta: 'a → b', valor: 111, color: 'red' },
+    { etiqueta: 'c → d', valor: 91, color: 'red' },
+    { etiqueta: 'e → f', valor: 60, color: 'red' },
+    { etiqueta: 'g → h', valor: 5, color: 'blue' },
+    { etiqueta: 'i → j', valor: 3, color: 'blue' }
+  ];
+  const top = topCaminos(pares, 3);
+  ok(top.length === 3, 'devuelve como mucho los que se le piden', String(top.length));
+  ok(top[0].valor === 111 && top[1].valor === 91 && top[2].valor === 60,
+    'y van de MAYOR a menor, que es lo que hace util la lista',
+    top.map((c) => c.valor).join(' > '));
+
+  // Los caminos SIN trafico no entran: una lista de «los mas usados» con un cero dentro no
+  // informa de nada, y el cero ya tiene su propio aviso en la leyenda.
+  const conCeros = topCaminos([ { etiqueta: 'x', valor: 0 }, { etiqueta: 'y', valor: 4 } ], 5);
+  ok(conCeros.length === 1 && conCeros[0].valor === 4,
+    'los caminos sin trafico quedan fuera de la lista', JSON.stringify(conCeros));
+
+  // El orden es ESTABLE con valores repetidos: dos caminos iguales no deben intercambiarse
+  // entre repintados, o el numero de la leyenda bailaria sin que cambie nada.
+  const repetidos = [
+    { etiqueta: 'primero', valor: 10 }, { etiqueta: 'segundo', valor: 10 }, { etiqueta: 'tercero', valor: 10 }
+  ];
+  const t1 = topCaminos(repetidos, 3).map((c) => c.etiqueta).join(',');
+  const t2 = topCaminos(repetidos, 3).map((c) => c.etiqueta).join(',');
+  ok(t1 === t2, 'con valores iguales el orden no baila entre repintados', t1);
+
+  ok(topCaminos(null).length === 0, 'y sin pares no revienta');
+  ok(topCaminos([], 5).length === 0, 'ni con una lista vacia');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
