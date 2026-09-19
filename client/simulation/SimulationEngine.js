@@ -4,6 +4,10 @@ import BusinessCalendar from './BusinessCalendar.js';
 import { normalizeWarmup, effectiveDuration, describeWarmup } from './WarmupCurve.js';
 import { resolveLabor, describeLabor } from './LaborRules.js';
 import {
+  crearEstadoSemana, concederExtraDe, describeMotivo,
+  MODO_SIN_EXTRA, MODO_TOPE_LEGAL, MODO_SIN_TOPE
+} from './LegalOvertime.js';
+import {
   normalizeMembers, normalizeCarga, habilidadesRequeridas, puedeHacerla, poolPuedeHacerla,
   cargaDeUnaEjecucion, cargaVacia, acumularCarga, avisosDeCarga, bandaDe, UMBRALES_CARGA
 } from './Workload.js';
@@ -362,6 +366,19 @@ export default class SimulationEngine {
     this.dailyStats = new Map();
     this.daysWithOvertime = new Map();
 
+    // EL TOPE LEGAL COMO RESTRICCION. `_estadoExtra` lleva el cupo consumido por semana y
+    // por dia, y `overtimeMode` decide si se aplica. Se reinician en cada corrida porque cada
+    // escenario es una corrida independiente: arrastrar el cupo de la anterior haria que el
+    // segundo escenario no pudiera hacer ninguna extra, que es un fallo que se ve tarde.
+    this._estadoExtra = crearEstadoSemana();
+    this.overtimeMode = MODO_SIN_TOPE;
+
+    // POR QUE EL TRABAJO ESPERO, cuando el plan respeta el tope. Un plan que se alarga y no
+    // dice por que parece un fallo del modelo; con el motivo, el informe puede explicar que
+    // el plazo se estira porque la ley no deja hacer mas extra. Es el Set y no un contador
+    // porque lo que se reporta es QUE topes se tocaron, no cuantas veces.
+    this._motivosDeEspera = new Set();
+
     // Primas por dia trabajado: dominical (art. 73) y festivo (art. 74). Se
     // llevan en su propio cubo para que el cuadre del informe pueda demostrarlas.
     // Tiempo de proveedor en dia especial y fuera de jornada: se CUENTA pero no se
@@ -559,6 +576,31 @@ export default class SimulationEngine {
     this._costoPorCaso.set(instanceId, (this._costoPorCaso.get(instanceId) || 0) + importe);
   }
 
+  /**
+   * Cuanto del extra pedido concede el plan, con los TRES topes de la LFT aplicados.
+   *
+   * La semana y el dia se sacan de la FECHA DE INICIO de la tarea, que es lo que manda el
+   * art. 65: la extra se imputa al dia en que se EMPIEZA, no al dia en que se termina (una
+   * tarea que cruza la medianoche pertenece al dia en que arranco).
+   */
+  _concederExtra(extraPedida, inicioMs) {
+    if (!(extraPedida > 0)) return { concedidoMs: 0, motivo: null };
+
+    const fecha = new Date(inicioMs);
+    return concederExtraDe({
+      extraMs: extraPedida,
+      modo: this.overtimeMode,
+      topes: {
+        semanalMs: (this.labor.limitHours || 0) * 3600000,
+        diarioMs: (this.labor.dailyOvertimeLimitHours || 0) * 3600000,
+        maxDias: this.labor.maxOvertimeDaysPerWeek || 0
+      },
+      semana: this.calendar.getWeekKey(fecha),
+      dia: this._claveDeFecha(fecha),
+      estado: this._estadoExtra
+    });
+  }
+
   processEvent(event) {
     const { type, element, instanceId, startTime } = event;
     const elementResults = this.results.get(element.id);
@@ -744,9 +786,32 @@ export default class SimulationEngine {
     // dia extendido), pero la extra se mide contra el calendario LEGAL: lo que
     // pasa de la jornada base del turno ya es tiempo extra aunque estuviera
     // dentro del horario declarado.
-    const { overtime, endTime } = this.calendar.calculateBusinessTime(
+    const { overtime: extraPedida, endTime } = this.calendar.calculateBusinessTime(
       new Date(time), duracionEfectivaMs / 60000, this.legalCalendar
     );
+
+    // EL TOPE LEGAL, APLICADO AQUI. `extraPedida` es lo que la tarea necesita para salir
+    // cuando sale; `concedido` es lo que el plan permite. En modo `tope-legal` lo que no cabe
+    // NO se hace: la tarea se recorta y el resto del trabajo espera a la semana siguiente,
+    // que es lo que obliga la ley -no puedes hacer la hora 10, el pedido espera-.
+    //
+    // SOLO SE APLICA AL TRABAJO PROPIO. La extra de un PROVEEDOR no entra en el cupo de la
+    // LFT: es su factura, no tu plantilla. Si se le aplicara el tope, subcontratar quedaria
+    // artificialmente limitado y el escenario legal mentiria sobre su propia produccion.
+    const esExternaAqui = Boolean(pool && pool.origen === 'externo');
+    const concesion = (this.overtimeMode === MODO_TOPE_LEGAL && !esExternaAqui)
+      ? this._concederExtra(extraPedida, time)
+      : { concedidoMs: extraPedida, motivo: null };
+    const overtime = concesion.concedidoMs;
+
+    // Se acota el fin de reloj a lo concedido: si se recorto la extra, la tarea termina
+    // antes y el motor la reprograma cuando la ley vuelva a permitir. Sin esto, el grafico
+    // del dia y los tramos horarios seguirian contando la extra que NO se hizo.
+    const finAjustado = overtime < extraPedida
+      ? new Date(endTime.getTime() - (extraPedida - overtime))
+      : endTime;
+
+    if (concesion.motivo) this._motivosDeEspera.add(concesion.motivo);
 
     // La extra del dia se apunta al dia en que ARRANCA la tarea (art. 65).
     this._anotarExtraDelDia(time, overtime, duracionEfectivaMs);
@@ -830,7 +895,10 @@ export default class SimulationEngine {
     // Overtime cost is the PREMIUM ONLY.
     // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
     // numero, la semana 1 de un año y la del siguiente compartian contador.
-    const weekKey = this.calendar.getWeekKey(new Date(endTime));
+    // La semana se toma del fin AJUSTADO: una tarea recortada termina antes, y si se
+    // calculara sobre el fin pedido podria caer en la semana siguiente y gastar alli el
+    // cupo de una extra que no se hizo.
+    const weekKey = this.calendar.getWeekKey(finAjustado);
     const currentWeeklyOvertime = this.weeklyStats.get(weekKey) || 0;
     const overtimeRules = this.labor;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
@@ -863,7 +931,9 @@ export default class SimulationEngine {
     const newTaskEvent = {
       type: 'TASK_COMPLETE',
       element,
-      time: endTime.getTime(),
+      // El evento termina cuando la tarea termina DE VERDAD: si se recorto la extra, el
+      // fin es el ajustado, y el trabajo restante lo reprograma el motor.
+      time: finAjustado.getTime(),
       instanceId,
       startTime,
       processingTime,
@@ -1058,7 +1128,23 @@ export default class SimulationEngine {
     this.initialize(rootConfig);
 
     const originalCalendar = this.calendar;
-    if (options.useOvertime && this.rootConfig.overtime) {
+
+    // EL MODO DE HORAS EXTRA. Es lo que permite correr los TRES escenarios que pide una
+    // decision de verdad: sin extra, con el tope legal, y sin tope. Se fija ANTES de
+    // construir el calendario extendido, porque `sin-extra` no debe extender la jornada: su
+    // plan es la jornada base y punto.
+    const modoPedido = options.overtimeMode;
+    this.overtimeMode = [ MODO_SIN_EXTRA, MODO_TOPE_LEGAL, MODO_SIN_TOPE ].includes(modoPedido)
+      ? modoPedido
+      : (options.useOvertime ? MODO_SIN_TOPE : MODO_SIN_EXTRA);
+
+    // La jornada se extiende cuando el plan contempla extra, sea con tope o sin el. Un plan
+    // «con tope» que no extendiera la jornada no tendria donde poner la extra que si permite
+    // la ley, y su produccion seria identica a la del plan sin extra: dos escenarios iguales
+    // con nombres distintos.
+    const extiendeJornada = options.useOvertime && this.overtimeMode !== MODO_SIN_EXTRA;
+
+    if (extiendeJornada && this.rootConfig.overtime) {
       const overtimeCalendarConfig = JSON.parse(JSON.stringify(rootConfig.calendar));
       // El cupo que reparte las horas extra entre los dias laborables es el de la
       // version de las reglas que rige en esta corrida, no el del diagrama: si la

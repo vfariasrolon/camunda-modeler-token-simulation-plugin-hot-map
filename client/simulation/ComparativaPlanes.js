@@ -37,7 +37,11 @@ import { formatCurrency } from './util';
  */
 export const COLOR_PLAN = {
   normal: '#1d4ed8',
-  extra: '#b45309'
+  extra: '#b45309',
+  // El tercer escenario: extra CON los topes de la LFT. Verde oscuro, que no compite con el
+  // azul del plan base ni con el naranja del plan libre, y mantiene la separacion por
+  // luminancia que hace legible el grafico en escala de grises.
+  legal: '#15803d'
 };
 
 /**
@@ -48,15 +52,141 @@ export const COLOR_PLAN = {
  */
 export const UMBRAL_PCT = 1;
 
+// Utilidades numericas. Van ARRIBA y no junto a su primer uso: `const` no tiene hoisting, y
+// aunque estas funciones se llamen despues -asi que en runtime funciona-, dejar la
+// definicion mas abajo invita a mover la funcion que las usa y romperlo sin que se note.
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
-/** Diferencia relativa en % de `valor` frente a `base`. 0 si la base no es util. */
-export const deltaPct = (valor, base) => (base > 0 ? ((valor - base) / base) * 100 : 0);
 
 const redondear = (v, dec = 1) => {
   const f = Math.pow(10, dec);
   return Math.round(v * f) / f;
 };
+
+/**
+ * Los tres escenarios de horas extra, con su etiqueta y su explicacion.
+ *
+ * POR QUE TRES Y NO DOS: el informe decia «no cumple el tope legal» y ahi se acababa. El
+ * cliente lee el diagnostico y pregunta lo unico que le importa: «¿y si lo cumpliera?». Con
+ * los tres escenarios corridos sobre la MISMA semilla, la respuesta es una tabla.
+ *
+ * El escenario legal es el unico que hace lo que manda la ley: lo que no cabe en los topes
+ * espera a la semana siguiente. Por eso su produccion puede ser menor -o igual- que la del
+ * plan libre, y por eso su costo tambien.
+ */
+export const ESCENARIOS_EXTRA = [
+  {
+    clave: 'normal',
+    etiqueta: 'Sin horas extra',
+    color: COLOR_PLAN.normal,
+    detalle: 'Jornada base. Cumple la ley por definición, y es el plazo más largo.'
+  },
+  {
+    clave: 'legal',
+    etiqueta: 'Extra con tope legal',
+    color: COLOR_PLAN.legal,
+    detalle: 'Lo que no cabe en los topes de la LFT espera a la semana siguiente.'
+  },
+  {
+    clave: 'extra',
+    etiqueta: 'Extra sin tope',
+    color: COLOR_PLAN.extra,
+    detalle: 'La extra termina cuando termina el trabajo. Es el más rápido y el que incumple.'
+  }
+];
+
+/**
+ * Compara los TRES escenarios y redacta la lectura.
+ *
+ * `informes` es `{ normal, legal, extra }`, y cualquiera puede faltar (un modelo sin tarifas
+ * de horas extra no tiene los tres). Se devuelve `null` si falta el plan base, porque sin el
+ * no hay contra que comparar.
+ */
+export const compararEscenarios = (informes) => {
+  const { normal, legal, extra } = informes || {};
+  if (!normal) return null;
+
+  const fila = (clave, informe, escenario) => {
+    if (!informe) return null;
+    const piezas = num(informe.completedInstances);
+    const dias = num(informe.totalWorkingDays) || num(informe.dias);
+    const costo = num(informe.totalCost);
+    return {
+      clave,
+      etiqueta: escenario.etiqueta,
+      color: escenario.color,
+      detalle: escenario.detalle,
+      piezas,
+      dias,
+      costo,
+      costoPorPieza: piezas > 0 ? costo / piezas : null,
+      cumple: cumpleLaLey(informe)
+    };
+  };
+
+  const filas = ESCENARIOS_EXTRA
+    .map((e) => fila(e.clave, informes[e.clave], e))
+    .filter(Boolean);
+
+  return {
+    filas,
+    // Referencia del plan base: los deltas se calculan contra el, que es el unico que existe
+    // siempre y el que el cliente ya conoce.
+    base: filas.find((f) => f.clave === 'normal') || filas[0]
+  };
+};
+
+/** ¿Ese informe cumple los topes de la LFT? Se lee del propio cumplimiento del motor. */
+export const cumpleLaLey = (informe) => {
+  const c = informe && (informe.compliance || informe.cumplimiento);
+  if (!c) return null;
+  return !(c.semanasSobreLimite > 0 || c.diasSobreLimiteDiario > 0 || c.semanasSobreDias > 0);
+};
+
+/**
+ * La nota que responde «¿cuanto me cuesta cumplir la ley?».
+ *
+ * Es la unica frase que el cliente necesita de todo el analisis, y hay tres desenlaces
+ * posibles, todos informativos:
+ *
+ *   - El plan legal produce LO MISMO y cuesta MENOS: la extra libre se estaba tirando.
+ *   - El plan legal produce MENOS: la ley tiene un coste de oportunidad, y hay que decidir.
+ *   - El plan legal produce LO MISMO y cuesta MAS: la extra no compra produccion, y el
+ *     cuello esta en otra parte (tipicamente un recurso, no el reloj).
+ */
+export const notaDelTopeLegal = (comparativa) => {
+  if (!comparativa || !comparativa.filas.length) return null;
+  const legal = comparativa.filas.find((f) => f.clave === 'legal');
+  const libre = comparativa.filas.find((f) => f.clave === 'extra');
+  if (!legal || !libre) return null;
+
+  const dPiezas = libre.piezas > 0 ? ((legal.piezas - libre.piezas) / libre.piezas) * 100 : 0;
+  const dCosto = libre.costo > 0 ? ((legal.costo - libre.costo) / libre.costo) * 100 : 0;
+
+  const pct = (v) => `${Math.abs(redondear(v, 1))} %`;
+
+  // SIN DIFERENCIA DE PRODUCCION: es el hallazgo mas util y el mas facil de pasar por alto.
+  if (Math.abs(dPiezas) < UMBRAL_PCT) {
+    if (dCosto <= -UMBRAL_PCT) {
+      return `Cumplir la ley produce <strong>las mismas piezas</strong> y cuesta ${pct(dCosto)} menos. `
+        + 'La horas extra libres no estaban comprando producción: se estaban pagando sin mover el resultado.';
+    }
+    if (dCosto >= UMBRAL_PCT) {
+      return `Cumplir la ley produce <strong>las mismas piezas</strong> y cuesta ${pct(dCosto)} más. `
+        + 'La extra no compra producción, así que el límite del proceso no es el reloj sino otra cosa '
+        + '(recursos, colas o reprocesos).';
+    }
+    return 'Cumplir la ley no cambia ni la producción ni el costo en el margen de la simulación.';
+  }
+
+  // CON DIFERENCIA: la ley tiene un coste de oportunidad que hay que poner en numeros.
+  const signo = dCosto >= 0 ? 'más' : 'menos';
+  return `Cumplir la ley produce ${pct(dPiezas)} menos piezas y cuesta ${pct(dCosto)} ${signo}. `
+    + 'Ese es el precio de la legalidad, y la decisión es si se cubre con capacidad (más gente o turno) '
+    + 'o se asume el plazo.';
+};
+
+/** Diferencia relativa en % de `valor` frente a `base`. 0 si la base no es util. */
+export const deltaPct = (valor, base) => (base > 0 ? ((valor - base) / base) * 100 : 0);
 
 /** Total de un campo del informe sumando sus resultados por elemento. */
 const totalDe = (report, campo) => {

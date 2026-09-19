@@ -1263,13 +1263,17 @@ ChartPanel.$inject = [ 'canvas', 'eventBus' ];
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   COLOR_PLAN: () => (/* binding */ COLOR_PLAN),
+/* harmony export */   ESCENARIOS_EXTRA: () => (/* binding */ ESCENARIOS_EXTRA),
 /* harmony export */   UMBRAL_PCT: () => (/* binding */ UMBRAL_PCT),
+/* harmony export */   compararEscenarios: () => (/* binding */ compararEscenarios),
 /* harmony export */   compararPlanes: () => (/* binding */ compararPlanes),
+/* harmony export */   cumpleLaLey: () => (/* binding */ cumpleLaLey),
 /* harmony export */   deltaPct: () => (/* binding */ deltaPct),
 /* harmony export */   enPorcentaje: () => (/* binding */ enPorcentaje),
 /* harmony export */   etiquetaDeFecha: () => (/* binding */ etiquetaDeFecha),
 /* harmony export */   fechasDe: () => (/* binding */ fechasDe),
 /* harmony export */   fechasUnidas: () => (/* binding */ fechasUnidas),
+/* harmony export */   notaDelTopeLegal: () => (/* binding */ notaDelTopeLegal),
 /* harmony export */   notasDeEficiencia: () => (/* binding */ notasDeEficiencia),
 /* harmony export */   serieAcumulada: () => (/* binding */ serieAcumulada),
 /* harmony export */   svgAcumulada: () => (/* binding */ svgAcumulada),
@@ -1316,7 +1320,11 @@ __webpack_require__.r(__webpack_exports__);
  */
 const COLOR_PLAN = {
   normal: '#1d4ed8',
-  extra: '#b45309'
+  extra: '#b45309',
+  // El tercer escenario: extra CON los topes de la LFT. Verde oscuro, que no compite con el
+  // azul del plan base ni con el naranja del plan libre, y mantiene la separacion por
+  // luminancia que hace legible el grafico en escala de grises.
+  legal: '#15803d'
 };
 
 /**
@@ -1327,15 +1335,141 @@ const COLOR_PLAN = {
  */
 const UMBRAL_PCT = 1;
 
+// Utilidades numericas. Van ARRIBA y no junto a su primer uso: `const` no tiene hoisting, y
+// aunque estas funciones se llamen despues -asi que en runtime funciona-, dejar la
+// definicion mas abajo invita a mover la funcion que las usa y romperlo sin que se note.
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
-/** Diferencia relativa en % de `valor` frente a `base`. 0 si la base no es util. */
-const deltaPct = (valor, base) => (base > 0 ? ((valor - base) / base) * 100 : 0);
 
 const redondear = (v, dec = 1) => {
   const f = Math.pow(10, dec);
   return Math.round(v * f) / f;
 };
+
+/**
+ * Los tres escenarios de horas extra, con su etiqueta y su explicacion.
+ *
+ * POR QUE TRES Y NO DOS: el informe decia «no cumple el tope legal» y ahi se acababa. El
+ * cliente lee el diagnostico y pregunta lo unico que le importa: «¿y si lo cumpliera?». Con
+ * los tres escenarios corridos sobre la MISMA semilla, la respuesta es una tabla.
+ *
+ * El escenario legal es el unico que hace lo que manda la ley: lo que no cabe en los topes
+ * espera a la semana siguiente. Por eso su produccion puede ser menor -o igual- que la del
+ * plan libre, y por eso su costo tambien.
+ */
+const ESCENARIOS_EXTRA = [
+  {
+    clave: 'normal',
+    etiqueta: 'Sin horas extra',
+    color: COLOR_PLAN.normal,
+    detalle: 'Jornada base. Cumple la ley por definición, y es el plazo más largo.'
+  },
+  {
+    clave: 'legal',
+    etiqueta: 'Extra con tope legal',
+    color: COLOR_PLAN.legal,
+    detalle: 'Lo que no cabe en los topes de la LFT espera a la semana siguiente.'
+  },
+  {
+    clave: 'extra',
+    etiqueta: 'Extra sin tope',
+    color: COLOR_PLAN.extra,
+    detalle: 'La extra termina cuando termina el trabajo. Es el más rápido y el que incumple.'
+  }
+];
+
+/**
+ * Compara los TRES escenarios y redacta la lectura.
+ *
+ * `informes` es `{ normal, legal, extra }`, y cualquiera puede faltar (un modelo sin tarifas
+ * de horas extra no tiene los tres). Se devuelve `null` si falta el plan base, porque sin el
+ * no hay contra que comparar.
+ */
+const compararEscenarios = (informes) => {
+  const { normal, legal, extra } = informes || {};
+  if (!normal) return null;
+
+  const fila = (clave, informe, escenario) => {
+    if (!informe) return null;
+    const piezas = num(informe.completedInstances);
+    const dias = num(informe.totalWorkingDays) || num(informe.dias);
+    const costo = num(informe.totalCost);
+    return {
+      clave,
+      etiqueta: escenario.etiqueta,
+      color: escenario.color,
+      detalle: escenario.detalle,
+      piezas,
+      dias,
+      costo,
+      costoPorPieza: piezas > 0 ? costo / piezas : null,
+      cumple: cumpleLaLey(informe)
+    };
+  };
+
+  const filas = ESCENARIOS_EXTRA
+    .map((e) => fila(e.clave, informes[e.clave], e))
+    .filter(Boolean);
+
+  return {
+    filas,
+    // Referencia del plan base: los deltas se calculan contra el, que es el unico que existe
+    // siempre y el que el cliente ya conoce.
+    base: filas.find((f) => f.clave === 'normal') || filas[0]
+  };
+};
+
+/** ¿Ese informe cumple los topes de la LFT? Se lee del propio cumplimiento del motor. */
+const cumpleLaLey = (informe) => {
+  const c = informe && (informe.compliance || informe.cumplimiento);
+  if (!c) return null;
+  return !(c.semanasSobreLimite > 0 || c.diasSobreLimiteDiario > 0 || c.semanasSobreDias > 0);
+};
+
+/**
+ * La nota que responde «¿cuanto me cuesta cumplir la ley?».
+ *
+ * Es la unica frase que el cliente necesita de todo el analisis, y hay tres desenlaces
+ * posibles, todos informativos:
+ *
+ *   - El plan legal produce LO MISMO y cuesta MENOS: la extra libre se estaba tirando.
+ *   - El plan legal produce MENOS: la ley tiene un coste de oportunidad, y hay que decidir.
+ *   - El plan legal produce LO MISMO y cuesta MAS: la extra no compra produccion, y el
+ *     cuello esta en otra parte (tipicamente un recurso, no el reloj).
+ */
+const notaDelTopeLegal = (comparativa) => {
+  if (!comparativa || !comparativa.filas.length) return null;
+  const legal = comparativa.filas.find((f) => f.clave === 'legal');
+  const libre = comparativa.filas.find((f) => f.clave === 'extra');
+  if (!legal || !libre) return null;
+
+  const dPiezas = libre.piezas > 0 ? ((legal.piezas - libre.piezas) / libre.piezas) * 100 : 0;
+  const dCosto = libre.costo > 0 ? ((legal.costo - libre.costo) / libre.costo) * 100 : 0;
+
+  const pct = (v) => `${Math.abs(redondear(v, 1))} %`;
+
+  // SIN DIFERENCIA DE PRODUCCION: es el hallazgo mas util y el mas facil de pasar por alto.
+  if (Math.abs(dPiezas) < UMBRAL_PCT) {
+    if (dCosto <= -UMBRAL_PCT) {
+      return `Cumplir la ley produce <strong>las mismas piezas</strong> y cuesta ${pct(dCosto)} menos. `
+        + 'La horas extra libres no estaban comprando producción: se estaban pagando sin mover el resultado.';
+    }
+    if (dCosto >= UMBRAL_PCT) {
+      return `Cumplir la ley produce <strong>las mismas piezas</strong> y cuesta ${pct(dCosto)} más. `
+        + 'La extra no compra producción, así que el límite del proceso no es el reloj sino otra cosa '
+        + '(recursos, colas o reprocesos).';
+    }
+    return 'Cumplir la ley no cambia ni la producción ni el costo en el margen de la simulación.';
+  }
+
+  // CON DIFERENCIA: la ley tiene un coste de oportunidad que hay que poner en numeros.
+  const signo = dCosto >= 0 ? 'más' : 'menos';
+  return `Cumplir la ley produce ${pct(dPiezas)} menos piezas y cuesta ${pct(dCosto)} ${signo}. `
+    + 'Ese es el precio de la legalidad, y la decisión es si se cubre con capacidad (más gente o turno) '
+    + 'o se asume el plazo.';
+};
+
+/** Diferencia relativa en % de `valor` frente a `base`. 0 si la base no es util. */
+const deltaPct = (valor, base) => (base > 0 ? ((valor - base) / base) * 100 : 0);
 
 /** Total de un campo del informe sumando sus resultados por elemento. */
 const totalDe = (report, campo) => {
@@ -7208,6 +7342,288 @@ const describeLabor = (r) => {
 
 /***/ }),
 
+/***/ "./client/simulation/LegalOvertime.js":
+/*!********************************************!*\
+  !*** ./client/simulation/LegalOvertime.js ***!
+  \********************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   MODOS: () => (/* binding */ MODOS),
+/* harmony export */   MODO_SIN_EXTRA: () => (/* binding */ MODO_SIN_EXTRA),
+/* harmony export */   MODO_SIN_TOPE: () => (/* binding */ MODO_SIN_TOPE),
+/* harmony export */   MODO_TOPE_LEGAL: () => (/* binding */ MODO_TOPE_LEGAL),
+/* harmony export */   concederExtra: () => (/* binding */ concederExtra),
+/* harmony export */   concederExtraDe: () => (/* binding */ concederExtraDe),
+/* harmony export */   crearEstadoSemana: () => (/* binding */ crearEstadoSemana),
+/* harmony export */   describeMotivo: () => (/* binding */ describeMotivo),
+/* harmony export */   describeTopes: () => (/* binding */ describeTopes),
+/* harmony export */   etiquetaModo: () => (/* binding */ etiquetaModo)
+/* harmony export */ });
+/**
+ * EL TOPE LEGAL DE HORAS EXTRA COMO RESTRICCION, no como veredicto.
+ *
+ * QUE CAMBIA ESTE MODULO, y por que hacia falta: hasta ahora la ley se usaba para
+ * JUZGAR DESPUES. El motor simulaba libremente, contaba las horas extra que habian salido,
+ * y al final `_calcularCumplimiento` decia «no cumple: 4 de 4 semanas sobre el limite».
+ * Eso es un diagnostico, no una respuesta: el cliente lee «te pasas» y la pregunta natural
+ * -«¿y si no me pasara?»- quedaba sin contestar.
+ *
+ * Aqui se convierte el tope en una RESTRICCION que el motor aplica MIENTRAS simula. Con eso
+ * se pueden correr los tres escenarios que pide una decision de verdad:
+ *
+ *   1. SIN EXTRA      el trabajo sale en jornada base. Produccion minima, plazo mas largo.
+ *   2. TOPE LEGAL     el trabajo se hace dentro de los tres topes de la LFT. Lo que no cabe
+ *                     ESPERA a la semana siguiente, que es lo que obliga la ley: no puedes
+ *                     hacer la hora 10, el pedido espera.
+ *   3. SIN TOPE       lo que ya hacia el motor: la extra termina cuando termina el trabajo.
+ *
+ * LOS TRES TOPES DE LA LFT, y son tres porque uno solo no basta:
+ *
+ *   - SEMANAL (art. 66): 9 h de extra por semana.
+ *   - DIARIO (art. 65): 3 h de extra por dia.
+ *   - DIAS CON EXTRA (art. 65): la jornada se puede prolongar como maximo 3 veces por semana.
+ *
+ * Sin los tres, un escenario podria declararse «cumple» mientras hace 6 h de extra en un
+ * solo dia, que es ilegal. El veredicto tiene que ser de los tres o no significa nada.
+ *
+ * ESTE MODULO ES PURO: recibe la peticion de extra y el estado de la semana, y devuelve
+ * cuanto se concede. No toca el motor ni el calendario, asi que el arnes comprueba la
+ * ARITMETICA -que es donde un tope mal aplicado no se nota mirando el dibujo- sin navegador.
+ */
+
+/** Los tres modos, tal como los nombra el informe. */
+const MODO_SIN_EXTRA = 'sin-extra';
+const MODO_TOPE_LEGAL = 'tope-legal';
+const MODO_SIN_TOPE = 'sin-tope';
+
+const MODOS = [ MODO_SIN_EXTRA, MODO_TOPE_LEGAL, MODO_SIN_TOPE ];
+
+/**
+ * Cuanto tiempo extra se CONCEDE de lo que se pide, segun el modo y el estado de la semana.
+ *
+ * Devuelve `{ concedidoMs, motivo }`. El motivo importa tanto como el numero: es lo que
+ * permite al informe decir POR QUE el trabajo espero, en vez de que el plazo se alargue sin
+ * explicacion. Un plan que se alarga y no dice por que parece un fallo del modelo.
+ *
+ * El estado de la semana lo lleva quien llama -el motor-, porque es el unico que sabe en que
+ * semana cae cada tarea. Aqui solo se decide con lo que se recibe.
+ *
+ * @param {Object} peticion
+ * @param {number} peticion.extraMs        extra que la tarea necesita, en ms
+ * @param {string} peticion.modo           uno de MODO_*
+ * @param {Object} peticion.topes          { semanalMs, diarioMs, maxDias }
+ * @param {Object} peticion.semana         { usadaMs, diasUsados, esDiaNuevo }
+ * @param {number} peticion.extraDelDiaMs  extra ya hecha ESE dia (sin contar esta tarea)
+ *
+ * OJO CON `esDiaNuevo`: va DENTRO de `semana`, y no es un capricho de estilo. En la primera
+ * version del arnes se llamo con `esDiaNuevo` como propiedad de primer nivel, y como la
+ * funcion desestructura `semana` el valor se perdia EN SILENCIO: el tope de dias no se
+ * aplicaba y el resultado -conceder la extra- era perfectamente plausible. Un parametro en
+ * el sitio equivocado que no da error es peor que uno que revienta, asi que ademas de
+ * documentarlo se comprueba en el arnes con las DOS formas de llamar.
+ */
+const concederExtra = ({
+  extraMs,
+  modo = MODO_SIN_TOPE,
+  topes = {},
+  semana = {},
+  extraDelDiaMs = 0
+}) => {
+  const pedido = Math.max(0, Number(extraMs) || 0);
+  if (pedido <= 0) return { concedidoMs: 0, motivo: null };
+
+  // ESCENARIO SIN EXTRA: la jornada base es todo lo que hay. No es «aplicar un tope de
+  // cero»: es declarar que este plan no contempla trabajar fuera de jornada, y por eso el
+  // motivo se dice distinto («el plan no contempla horas extra»), que es mas honesto que
+  // «se paso del tope» cuando no hay tope que pasar.
+  if (modo === MODO_SIN_EXTRA) {
+    return { concedidoMs: 0, motivo: 'sin-extra' };
+  }
+
+  if (modo === MODO_SIN_TOPE) {
+    return { concedidoMs: pedido, motivo: null };
+  }
+
+  // --- A PARTIR DE AQUI, MODO_TOPE_LEGAL: se aplican LOS TRES TOPES ---
+  const semanalMs = Math.max(0, Number(topes.semanalMs) || 0);
+  const diarioMs = Math.max(0, Number(topes.diarioMs) || 0);
+  const maxDias = Math.max(0, Number(topes.maxDias) || 0);
+
+  const usadaMs = Math.max(0, Number(semana.usadaMs) || 0);
+  const diasUsados = Math.max(0, Number(semana.diasUsados) || 0);
+  const esDiaNuevo = Boolean(semana.esDiaNuevo);
+
+  // EL TOPE DE DIAS VA PRIMERO, y el orden no es casual: es el unico que puede conceder
+  // CERO de golpe aunque quede cupo semanal. Si se comprobara despues, una tarea recibiria
+  // «concedido» y luego se descubriria que su dia no estaba permitido, y el motor tendria
+  // que deshacer trabajo ya programado.
+  const diasQueOcuparia = diasUsados + (esDiaNuevo ? 1 : 0);
+  if (maxDias > 0 && diasQueOcuparia > maxDias) {
+    return { concedidoMs: 0, motivo: 'tope-dias' };
+  }
+
+  // Cuanto cabe por cada tope, por separado. Se calculan los tres y se toma el MENOR: es la
+  // forma de no equivocarse con el orden, porque si el semanal sobra pero el diario no,
+  // concede el diario; y al reves.
+  const cabeSemanal = Math.max(0, semanalMs - usadaMs);
+  const cabeDiario = Math.max(0, diarioMs - (Number(extraDelDiaMs) || 0));
+
+  const concedidoMs = Math.min(pedido, cabeSemanal, cabeDiario);
+
+  if (concedidoMs <= 0) {
+    // Se dice CUAL tope corto, para que el informe pueda explicar la espera. Si cortaran los
+    // dos a la vez, manda el diario: es el que se agota primero en la practica y el que el
+    // lector puede comprobar mirando un solo dia.
+    const motivo = cabeDiario <= 0 ? 'tope-diario' : 'tope-semanal';
+    return { concedidoMs: 0, motivo };
+  }
+
+  // Concedido en parte: la tarea hara lo que quepa y el resto esperara. No se devuelve
+  // motivo porque SI se concedio algo, y marcar la tarea como «recortada» a medias llenaria
+  // el informe de avisos sin decir nada util; la espera se ve en el plazo.
+  return { concedidoMs, motivo: concedidoMs < pedido ? null : null };
+};
+
+/**
+ * Estado de la semana de extra. Lo lleva el MOTOR, una instancia por corrida.
+ *
+ * POR QUE ES UN OBJETO CON METODOS Y NO TRES NUMEROS SUELTOS: en la primera version esta
+ * funcion recibia `{ usadaMs, diasUsados, esDiaNuevo }` y confiaba en que quien llamaba
+ * llevara bien las tres cuentas. Al probarla con una semana entera se vio el fallo: el
+ * contador de DIAS del llamante se desincronizaba del que veia la funcion, y ademas el
+ * `extraDelDiaMs` habia que resetearlo en cada dia nuevo -fuera de la funcion-. Un dato que
+ * se lleva a mano en dos sitios se desincroniza: aqui no hay dos sitios.
+ *
+ * La clave del dia es lo unico que hay que pasar, y el estado deduce el resto.
+ */
+const crearEstadoSemana = () => ({
+  // Por semana ISO: { usadaMs, dias: Set(clavesDedía), extraPorDia: Map }
+  porSemana: new Map(),
+
+  /** Lo que ya se hizo en una semana, tal como lo necesita `concederExtraDe`. */
+  de(semana) {
+    const s = this.porSemana.get(semana);
+    if (!s) return { usadaMs: 0, diasUsados: 0, maxDias: 0 };
+    return { usadaMs: s.usadaMs, diasUsados: s.dias.size, maxDias: s.dias.size };
+  },
+
+  /** Lo que se lleva hecho ESE dia, para el tope diario. */
+  delDia(semana, dia) {
+    const s = this.porSemana.get(semana);
+    return (s && s.extraPorDia.get(dia)) || 0;
+  },
+
+  /**
+   * Anota lo concedido. Es lo que hace que el estado no se pueda desincronizar: la misma
+   * llamada que suma las horas suma el dia, asi que no hay forma de contar uno y no el otro.
+   */
+  anotar(semana, dia, concedidoMs) {
+    if (!(concedidoMs > 0)) return;
+    if (!this.porSemana.has(semana)) {
+      this.porSemana.set(semana, { usadaMs: 0, dias: new Set(), extraPorDia: new Map() });
+    }
+    const s = this.porSemana.get(semana);
+    s.usadaMs += concedidoMs;
+    s.dias.add(dia);
+    s.extraPorDia.set(dia, (s.extraPorDia.get(dia) || 0) + concedidoMs);
+  }
+});
+
+/**
+ * Version de `concederExtra` que trabaja con el ESTADO, para que no haya que pasar los tres
+ * contadores a mano. Es la que usa el motor; `concederExtra` sigue existiendo aparte porque
+ * es la que se puede probar con valores sueltos sin montar el estado.
+ */
+const concederExtraDe = ({ extraMs, modo, topes, semana, dia, estado }) => {
+  // SIN EXTRA Y SIN TOPE no consultan el estado, asi que no hay nada que leer ni que anotar.
+  if (modo === MODO_SIN_EXTRA || modo === MODO_SIN_TOPE) {
+    return concederExtra({ extraMs, modo, topes });
+  }
+
+  const acumulado = estado.porSemana.get(semana);
+
+  const r = concederExtra({
+    extraMs,
+    modo,
+    topes,
+    // `esDiaNuevo` VA DENTRO DE `semana`, y este fue un fallo REAL que costo varias vueltas:
+    // estaba puesto como propiedad de primer nivel, asi que `concederExtra` -que lee
+    // `semana.esDiaNuevo`- lo veia siempre `undefined` -> `false`. Con eso, el tope de DIAS
+    // no se aplicaba nunca desde el motor: el escenario «con tope legal» hacia extra en 4
+    // dias de una semana cuyo tope era 3, y lo hacia sin dar ningun error. El sintoma que lo
+    // delato fue que el propio verificador de cumplimiento marcaba «no cumple» en el
+    // escenario que se supone que cumple.
+    //
+    // Para que no pueda repetirse, se lee el estado UNA vez, aqui, y se construye el objeto
+    // completo: al no haber dos formas de llamar, no hay forma de equivocarse.
+    semana: {
+      usadaMs: acumulado ? acumulado.usadaMs : 0,
+      diasUsados: acumulado ? acumulado.dias.size : 0,
+      esDiaNuevo: !acumulado || !acumulado.dias.has(dia)
+    },
+    extraDelDiaMs: estado.delDia(semana, dia)
+  });
+
+  estado.anotar(semana, dia, r.concedidoMs);
+  return r;
+};
+
+/**
+ * Texto del motivo, para el informe. Vive aqui y no en la plantilla del PDF para que el
+ * vocabulario sea el mismo en la app y en el documento, y para que el arnes lo pueda
+ * comprobar: un motivo sin texto dejaria la espera sin explicar.
+ */
+const describeMotivo = (motivo) => {
+  switch (motivo) {
+    case 'sin-extra':
+      return 'el plan no contempla horas extra';
+    case 'tope-semanal':
+      return 'se alcanzó el tope legal de horas extra de la semana';
+    case 'tope-diario':
+      return 'se alcanzó el tope legal de horas extra del día';
+    case 'tope-dias':
+      return 'ya se prolongó la jornada los días que permite la semana';
+    default:
+      return null;
+  }
+};
+
+/**
+ * Resumen del escenario para el informe: los tres topes en palabras, con su articulo.
+ *
+ * Se citan los articulos porque el cliente que lee «no cumple» necesita saber QUE ley, y el
+ * que lee «cumple» necesita saber contra que se le compara. Un veredicto sin la norma detras
+ * no es auditable.
+ */
+const describeTopes = (topes) => {
+  if (!topes) return 'sin topes declarados';
+  const h = (ms) => {
+    const n = (Number(ms) || 0) / 3600000;
+    return `${n.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')} h`;
+  };
+  const partes = [];
+  if (topes.semanalMs > 0) partes.push(`máximo ${h(topes.semanalMs)} por semana (LFT art. 66)`);
+  if (topes.diarioMs > 0) partes.push(`máximo ${h(topes.diarioMs)} al día (LFT art. 65)`);
+  if (topes.maxDias > 0) partes.push(`hasta ${topes.maxDias} días con extra por semana (LFT art. 65)`);
+  return partes.length ? partes.join(' · ') : 'sin topes declarados';
+};
+
+/** Etiqueta corta del modo, para encabezados de tabla y leyendas de grafico. */
+const etiquetaModo = (modo) => {
+  switch (modo) {
+    case MODO_SIN_EXTRA: return 'Sin horas extra';
+    case MODO_TOPE_LEGAL: return 'Extra con tope legal';
+    case MODO_SIN_TOPE: return 'Extra sin tope';
+    default: return String(modo || '');
+  }
+};
+
+
+/***/ }),
+
 /***/ "./client/simulation/MatrixLoader.js":
 /*!*******************************************!*\
   !*** ./client/simulation/MatrixLoader.js ***!
@@ -9055,6 +9471,9 @@ class SimulationController {
     this.simulationResults = null;
     this.simulationReports = [];
     this.overtimeReport = null;
+    // El tercer escenario: extra dentro de los topes de la LFT. Se corre siempre, junto a los
+    // otros dos, para que la comparacion «que cuesta cumplir la ley» este completa.
+    this.legalReport = null;
     this.normalReport = null;
     this.lastMetric = null;
     // Los IDs visibles arrancan ENCENDIDOS: son la etiqueta con la que se mide en
@@ -9267,6 +9686,12 @@ class SimulationController {
         // y al reves: los dos ejes se reportan por separado y con su propio `n`.
         instanceCosts: (this._simulationEngine.instanceCosts || []).slice(),
 
+        // QUE ESCENARIO ES ESTE y POR QUE espero el trabajo. Es lo que permite al informe
+        // comparar los tres planes sabiendo cual es cual, y explicar el plazo cuando el plan
+        // se alarga: sin el motivo, un plan que respeta el tope parece un modelo lento.
+        overtimeMode: this._simulationEngine.overtimeMode,
+        motivosDeEspera: [ ...(this._simulationEngine._motivosDeEspera || []) ],
+
         // Utilizacion (rho) por piscina, ya calculada por el motor con el
         // calendario de ESTE plan.
         utilization: new Map(this._simulationEngine.utilization || []),
@@ -9425,6 +9850,17 @@ class SimulationController {
     // Run overtime simulation
     // We DON'T clear here so the calendar from the normal run is preserved for the overtime run
     this.overtimeReport = this._runAndGetReport({ useOvertime: true });
+
+    // EL TERCER ESCENARIO: la extra con los topes de la LFT aplicados como restriccion.
+    //
+    // Se corre SIEMPRE, sin casilla que lo active, porque es la pregunta que el cliente hace
+    // en cuanto ve «no cumple»: «¿y si lo cumpliera?». Dejar los tres escenarios siempre
+    // significa que la comparacion esta completa sin que nadie tenga que saber que existe.
+    //
+    // La semilla es la MISMA que en los otros dos (no se llama a `nuevaCorrida`), asi que la
+    // diferencia entre escenarios es del plan y no de la suerte. Es lo que permite decir «el
+    // plan legal cuesta X mas» sin que sea una comparacion entre dos azares distintos.
+    this.legalReport = this._runAndGetReport({ useOvertime: true, overtimeMode: 'tope-legal' });
 
     if (!this.normalReport || !this.overtimeReport) {
       this._notifications.showNotification({ text: 'Una de las simulaciones falló. No se pueden mostrar resultados comparativos.', type: 'error', duration: 6000 });
@@ -12510,12 +12946,14 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationEngine)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./BusinessCalendar.js */ "./client/simulation/BusinessCalendar.js");
 /* harmony import */ var _WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./WarmupCurve.js */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
-/* harmony import */ var _Workload_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./Workload.js */ "./client/simulation/Workload.js");
+/* harmony import */ var _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./LegalOvertime.js */ "./client/simulation/LegalOvertime.js");
+/* harmony import */ var _Workload_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./Workload.js */ "./client/simulation/Workload.js");
+
 
 
 
@@ -12676,7 +13114,7 @@ class ResourcePool {
 
     // Miembros con nombre. SIN miembros la piscina se comporta exactamente como
     // antes de A5: esto es lo que hace que ningun diagrama existente cambie.
-    this.members = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.normalizeMembers)(config.members);
+    this.members = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.normalizeMembers)(config.members);
     // Turno de reparto en ronda. Con «siempre la primera» una persona acapararia
     // el trabajo y la otra saldria ociosa en el informe, cuando en la planta se
     // reparten.
@@ -12689,7 +13127,7 @@ class ResourcePool {
       tarifaHora: m.tarifaHora,
       tareas: 0,
       busyMinutes: 0,
-      carga: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)()
+      carga: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)()
     } ]));
   }
 
@@ -12703,7 +13141,7 @@ class ResourcePool {
    * las tiene, la tarea se BLOQUEA: es la decision conservadora.
    */
   puedeAtender(requeridas) {
-    return (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.poolPuedeHacerla)(this, requeridas);
+    return (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.poolPuedeHacerla)(this, requeridas);
   }
 
   /**
@@ -12725,7 +13163,7 @@ class ResourcePool {
 
   _elegir(requeridas) {
     if (!this.conNombres) return null;
-    const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.puedeHacerla)(m, requeridas));
+    const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.puedeHacerla)(m, requeridas));
     if (!aptos.length) return null;
     // Ronda sobre los APTOS: se avanza el turno segun cuantos hayan.
     this._ultimoMiembro = (this._ultimoMiembro + 1) % aptos.length;
@@ -12753,7 +13191,7 @@ class ResourcePool {
     if (!fila) return;
     fila.tareas += 1;
     fila.busyMinutes += Math.max(0, Number(minutos) || 0);
-    if (carga) fila.carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(fila.carga, carga);
+    if (carga) fila.carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(fila.carga, carga);
   }
 }
 
@@ -12877,6 +13315,19 @@ class SimulationEngine {
     this.dailyStats = new Map();
     this.daysWithOvertime = new Map();
 
+    // EL TOPE LEGAL COMO RESTRICCION. `_estadoExtra` lleva el cupo consumido por semana y
+    // por dia, y `overtimeMode` decide si se aplica. Se reinician en cada corrida porque cada
+    // escenario es una corrida independiente: arrastrar el cupo de la anterior haria que el
+    // segundo escenario no pudiera hacer ninguna extra, que es un fallo que se ve tarde.
+    this._estadoExtra = (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.crearEstadoSemana)();
+    this.overtimeMode = _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_TOPE;
+
+    // POR QUE EL TRABAJO ESPERO, cuando el plan respeta el tope. Un plan que se alarga y no
+    // dice por que parece un fallo del modelo; con el motivo, el informe puede explicar que
+    // el plazo se estira porque la ley no deja hacer mas extra. Es el Set y no un contador
+    // porque lo que se reporta es QUE topes se tocaron, no cuantas veces.
+    this._motivosDeEspera = new Set();
+
     // Primas por dia trabajado: dominical (art. 73) y festivo (art. 74). Se
     // llevan en su propio cubo para que el cuadre del informe pueda demostrarlas.
     // Tiempo de proveedor en dia especial y fuera de jornada: se CUENTA pero no se
@@ -12891,7 +13342,7 @@ class SimulationEngine {
     // Y la operatividad: el tiempo muerto por categoria, que es lo que permite
     // decir quien tiene holgura y por que esta parado.
     this.carga = {
-      area: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)(),
+      area: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)(),
       porTarea: new Map(),
       porPersona: new Map(),
       porMiembro: new Map()
@@ -13020,7 +13471,7 @@ class SimulationEngine {
       return [];
     }
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:ParallelGateway')) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -13029,7 +13480,7 @@ class SimulationEngine {
     }
 
     let chosenFlow = null;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = this._random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
@@ -13072,6 +13523,31 @@ class SimulationEngine {
       return;
     }
     this._costoPorCaso.set(instanceId, (this._costoPorCaso.get(instanceId) || 0) + importe);
+  }
+
+  /**
+   * Cuanto del extra pedido concede el plan, con los TRES topes de la LFT aplicados.
+   *
+   * La semana y el dia se sacan de la FECHA DE INICIO de la tarea, que es lo que manda el
+   * art. 65: la extra se imputa al dia en que se EMPIEZA, no al dia en que se termina (una
+   * tarea que cruza la medianoche pertenece al dia en que arranco).
+   */
+  _concederExtra(extraPedida, inicioMs) {
+    if (!(extraPedida > 0)) return { concedidoMs: 0, motivo: null };
+
+    const fecha = new Date(inicioMs);
+    return (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.concederExtraDe)({
+      extraMs: extraPedida,
+      modo: this.overtimeMode,
+      topes: {
+        semanalMs: (this.labor.limitHours || 0) * 3600000,
+        diarioMs: (this.labor.dailyOvertimeLimitHours || 0) * 3600000,
+        maxDias: this.labor.maxOvertimeDaysPerWeek || 0
+      },
+      semana: this.calendar.getWeekKey(fecha),
+      dia: this._claveDeFecha(fecha),
+      estado: this._estadoExtra
+    });
   }
 
   processEvent(event) {
@@ -13135,7 +13611,7 @@ class SimulationEngine {
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(nextElement);
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
 
@@ -13144,7 +13620,7 @@ class SimulationEngine {
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(nextElement, 'bpmn:Task') && data) {
+      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(nextElement, 'bpmn:Task') && data) {
         // Tarea POR LOTE: la ejecuta una sola vez el primer token que llega, y
         // los demas esperan (barrera). Ver _atenderTareaPorLote.
         if (data.frequency === 'lot' && this.lotConfig.enabled) {
@@ -13179,7 +13655,7 @@ class SimulationEngine {
     // categoria de tiempo muerto. Es la decision conservadora (un dato que falta
     // bloquea, no acelera) y es lo unico que puede producir «bloqueado por
     // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
-    const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.habilidadesRequeridas)(data);
+    const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.habilidadesRequeridas)(data);
     if (pool && requeridas.length && !pool.puedeAtender(requeridas)) {
       // El tiempo bloqueado es la DURACION que esa tarea habria ocupado: no hay
       // un reloj corriendo que medir, porque la tarea no llega a arrancar. Tomar
@@ -13259,9 +13735,32 @@ class SimulationEngine {
     // dia extendido), pero la extra se mide contra el calendario LEGAL: lo que
     // pasa de la jornada base del turno ya es tiempo extra aunque estuviera
     // dentro del horario declarado.
-    const { overtime, endTime } = this.calendar.calculateBusinessTime(
+    const { overtime: extraPedida, endTime } = this.calendar.calculateBusinessTime(
       new Date(time), duracionEfectivaMs / 60000, this.legalCalendar
     );
+
+    // EL TOPE LEGAL, APLICADO AQUI. `extraPedida` es lo que la tarea necesita para salir
+    // cuando sale; `concedido` es lo que el plan permite. En modo `tope-legal` lo que no cabe
+    // NO se hace: la tarea se recorta y el resto del trabajo espera a la semana siguiente,
+    // que es lo que obliga la ley -no puedes hacer la hora 10, el pedido espera-.
+    //
+    // SOLO SE APLICA AL TRABAJO PROPIO. La extra de un PROVEEDOR no entra en el cupo de la
+    // LFT: es su factura, no tu plantilla. Si se le aplicara el tope, subcontratar quedaria
+    // artificialmente limitado y el escenario legal mentiria sobre su propia produccion.
+    const esExternaAqui = Boolean(pool && pool.origen === 'externo');
+    const concesion = (this.overtimeMode === _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_TOPE_LEGAL && !esExternaAqui)
+      ? this._concederExtra(extraPedida, time)
+      : { concedidoMs: extraPedida, motivo: null };
+    const overtime = concesion.concedidoMs;
+
+    // Se acota el fin de reloj a lo concedido: si se recorto la extra, la tarea termina
+    // antes y el motor la reprograma cuando la ley vuelva a permitir. Sin esto, el grafico
+    // del dia y los tramos horarios seguirian contando la extra que NO se hizo.
+    const finAjustado = overtime < extraPedida
+      ? new Date(endTime.getTime() - (extraPedida - overtime))
+      : endTime;
+
+    if (concesion.motivo) this._motivosDeEspera.add(concesion.motivo);
 
     // La extra del dia se apunta al dia en que ARRANCA la tarea (art. 65).
     this._anotarExtraDelDia(time, overtime, duracionEfectivaMs);
@@ -13345,7 +13844,10 @@ class SimulationEngine {
     // Overtime cost is the PREMIUM ONLY.
     // Cupo semanal indexado por semana ISO COMPLETA (año + numero). Con solo el
     // numero, la semana 1 de un año y la del siguiente compartian contador.
-    const weekKey = this.calendar.getWeekKey(new Date(endTime));
+    // La semana se toma del fin AJUSTADO: una tarea recortada termina antes, y si se
+    // calculara sobre el fin pedido podria caer en la semana siguiente y gastar alli el
+    // cupo de una extra que no se hizo.
+    const weekKey = this.calendar.getWeekKey(finAjustado);
     const currentWeeklyOvertime = this.weeklyStats.get(weekKey) || 0;
     const overtimeRules = this.labor;
     const limitInMillis = (overtimeRules.limitHours * 3600000) || 0;
@@ -13378,7 +13880,9 @@ class SimulationEngine {
     const newTaskEvent = {
       type: 'TASK_COMPLETE',
       element,
-      time: endTime.getTime(),
+      // El evento termina cuando la tarea termina DE VERDAD: si se recorto la extra, el
+      // fin es el ajustado, y el trabajo restante lo reprograma el motor.
+      time: finAjustado.getTime(),
       instanceId,
       startTime,
       processingTime,
@@ -13492,14 +13996,14 @@ class SimulationEngine {
    * 20 daria 240 kg cuando en planta fue un solo viaje.
    */
   _anotarCarga(event, data, pool) {
-    const carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.normalizeCarga)(data.carga);
-    const inc = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaDeUnaEjecucion)(carga, 1);
+    const carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.normalizeCarga)(data.carga);
+    const inc = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaDeUnaEjecucion)(carga, 1);
 
     const vacia = inc.cargadaKg === 0 && inc.arrastradaKg === 0;
     // El area se anota SIEMPRE, incluso con carga cero: asi el informe puede
     // decir «no hay carga declarada» en vez de tener que distinguir «no hay
     // tareas» de «las tareas no mueven peso».
-    this.carga.area = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(this.carga.area, inc);
+    this.carga.area = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(this.carga.area, inc);
 
     // Minutos del puesto y reparto por persona. Va ANTES del corte por carga
     // vacia y sin depender de ella: el TIEMPO trabajado y la masa movida son dos
@@ -13512,17 +14016,17 @@ class SimulationEngine {
 
     if (vacia) return inc;
 
-    const t = this.carga.porTarea.get(event.element.id) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)();
-    this.carga.porTarea.set(event.element.id, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(t, inc));
+    const t = this.carga.porTarea.get(event.element.id) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)();
+    this.carga.porTarea.set(event.element.id, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(t, inc));
 
     if (event.miembro) {
-      const p = this.carga.porMiembro.get(event.miembro.nombre) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)();
-      this.carga.porMiembro.set(event.miembro.nombre, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(p, inc));
+      const p = this.carga.porMiembro.get(event.miembro.nombre) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)();
+      this.carga.porMiembro.set(event.miembro.nombre, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(p, inc));
     } else if (pool) {
       // Sin nombres, la carga es de la PISCINA: se guarda por piscina para no
       // perderla, y el informe la muestra como «sin nombre asignado».
-      const p = this.carga.porPersona.get(pool.name) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.cargaVacia)();
-      this.carga.porPersona.set(pool.name, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_4__.acumularCarga)(p, inc));
+      const p = this.carga.porPersona.get(pool.name) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)();
+      this.carga.porPersona.set(pool.name, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(p, inc));
     }
 
     return inc;
@@ -13547,7 +14051,7 @@ class SimulationEngine {
   }
 
   _findRootConfig() {
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el)?.isRoot);
 
     if (rootEvents.length === 1) {
@@ -13573,7 +14077,23 @@ class SimulationEngine {
     this.initialize(rootConfig);
 
     const originalCalendar = this.calendar;
-    if (options.useOvertime && this.rootConfig.overtime) {
+
+    // EL MODO DE HORAS EXTRA. Es lo que permite correr los TRES escenarios que pide una
+    // decision de verdad: sin extra, con el tope legal, y sin tope. Se fija ANTES de
+    // construir el calendario extendido, porque `sin-extra` no debe extender la jornada: su
+    // plan es la jornada base y punto.
+    const modoPedido = options.overtimeMode;
+    this.overtimeMode = [ _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_EXTRA, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_TOPE_LEGAL, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_TOPE ].includes(modoPedido)
+      ? modoPedido
+      : (options.useOvertime ? _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_TOPE : _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_EXTRA);
+
+    // La jornada se extiende cuando el plan contempla extra, sea con tope o sin el. Un plan
+    // «con tope» que no extendiera la jornada no tendria donde poner la extra que si permite
+    // la ley, y su produccion seria identica a la del plan sin extra: dos escenarios iguales
+    // con nombres distintos.
+    const extiendeJornada = options.useOvertime && this.overtimeMode !== _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_EXTRA;
+
+    if (extiendeJornada && this.rootConfig.overtime) {
       const overtimeCalendarConfig = JSON.parse(JSON.stringify(rootConfig.calendar));
       // El cupo que reparte las horas extra entre los dias laborables es el de la
       // version de las reglas que rige en esta corrida, no el del diagrama: si la
@@ -13610,14 +14130,14 @@ class SimulationEngine {
 
     console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
 
-    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Participant'));
+    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Participant'));
     const processConfig = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(processRoot);
     const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
 
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent'));
     if (!startEvents.length) {
       console.error("No start event found. Cannot run simulation.");
       return this.results;
@@ -13813,7 +14333,7 @@ class SimulationEngine {
       // Llegada de la siguiente instancia. En modo LOTES no se usa: alli las
       // instancias de un lote entran juntas y el siguiente lote lo dispara el
       // cierre del anterior.
-      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
+      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
         this.instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
@@ -14323,7 +14843,7 @@ class SimulationEngine {
       minutosDelDiaQueYaSonExtra: this.legalDayRecortadoMin || 0
     });
 
-    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task'));
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task'));
 
     if (!tareas.length) {
       console.log('No hay tareas en el diagrama.');
@@ -14380,7 +14900,7 @@ class SimulationEngine {
     // los de una tarea: `findNextElements` incrementa el de la salida elegida. Se listan
     // TODAS las del diagrama, incluso con 0, porque las que no se recorrieron son el
     // hallazgo de la vista: una rama muerta es capacidad que se paga y no se usa.
-    const flujos = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:SequenceFlow'));
+    const flujos = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:SequenceFlow'));
     if (flujos.length) {
       const totalPasos = flujos.reduce((acc, el) => acc + ((this.results.get(el.id) || {}).executionCount || 0), 0);
       console.log('SALIDAS · por conexion (pasos por la linea)');

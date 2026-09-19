@@ -25,6 +25,7 @@ const motor = leer('SimulationEngine.js')
   .replace("from './BusinessCalendar.js'", "from './BusinessCalendar.mjs'")
   .replace("from './WarmupCurve.js'", "from './WarmupCurve.mjs'")
   .replace("from './LaborRules.js'", "from './LaborRules.mjs'")
+  .replace("from './LegalOvertime.js'", "from './LegalOvertime.mjs'")
   .replace("from './Workload.js'", "from './Workload.mjs'")
   .replace("from 'bpmn-js/lib/util/ModelUtil'", "from './ModelUtil.mjs'");
 
@@ -42,6 +43,12 @@ writeFileSync(join(AQUI, 'HeatmapScale.mjs'),
 
 // TaskIds es puro (no importa nada del plugin), se copia tal cual.
 writeFileSync(join(AQUI, 'TaskIds.mjs'), leer('TaskIds.js'));
+
+// LegalOvertime es puro: decide cuanto extra se concede segun los topes de la LFT y no toca
+// ni el motor ni el calendario. Es justo la aritmetica que hay que poder probar sola, porque
+// un tope mal aplicado no se ve en el dibujo -el escenario «con tope» se dibuja igual de bien
+// que el de sin tope- y solo se descubre cuando el informe dice que cumple habiendo hecho de mas.
+writeFileSync(join(AQUI, 'LegalOvertime.mjs'), leer('LegalOvertime.js'));
 
 // HeatmapZones es puro: reparte masa en celdas y no toca el DOM ni bpmn-js.
 writeFileSync(join(AQUI, 'HeatmapZones.mjs'), leer('HeatmapZones.js'));

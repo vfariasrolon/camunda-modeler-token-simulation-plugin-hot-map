@@ -195,6 +195,9 @@ export default class SimulationController {
     this.simulationResults = null;
     this.simulationReports = [];
     this.overtimeReport = null;
+    // El tercer escenario: extra dentro de los topes de la LFT. Se corre siempre, junto a los
+    // otros dos, para que la comparacion «que cuesta cumplir la ley» este completa.
+    this.legalReport = null;
     this.normalReport = null;
     this.lastMetric = null;
     // Los IDs visibles arrancan ENCENDIDOS: son la etiqueta con la que se mide en
@@ -407,6 +410,12 @@ export default class SimulationController {
         // y al reves: los dos ejes se reportan por separado y con su propio `n`.
         instanceCosts: (this._simulationEngine.instanceCosts || []).slice(),
 
+        // QUE ESCENARIO ES ESTE y POR QUE espero el trabajo. Es lo que permite al informe
+        // comparar los tres planes sabiendo cual es cual, y explicar el plazo cuando el plan
+        // se alarga: sin el motivo, un plan que respeta el tope parece un modelo lento.
+        overtimeMode: this._simulationEngine.overtimeMode,
+        motivosDeEspera: [ ...(this._simulationEngine._motivosDeEspera || []) ],
+
         // Utilizacion (rho) por piscina, ya calculada por el motor con el
         // calendario de ESTE plan.
         utilization: new Map(this._simulationEngine.utilization || []),
@@ -565,6 +574,17 @@ export default class SimulationController {
     // Run overtime simulation
     // We DON'T clear here so the calendar from the normal run is preserved for the overtime run
     this.overtimeReport = this._runAndGetReport({ useOvertime: true });
+
+    // EL TERCER ESCENARIO: la extra con los topes de la LFT aplicados como restriccion.
+    //
+    // Se corre SIEMPRE, sin casilla que lo active, porque es la pregunta que el cliente hace
+    // en cuanto ve «no cumple»: «¿y si lo cumpliera?». Dejar los tres escenarios siempre
+    // significa que la comparacion esta completa sin que nadie tenga que saber que existe.
+    //
+    // La semilla es la MISMA que en los otros dos (no se llama a `nuevaCorrida`), asi que la
+    // diferencia entre escenarios es del plan y no de la suerte. Es lo que permite decir «el
+    // plan legal cuesta X mas» sin que sea una comparacion entre dos azares distintos.
+    this.legalReport = this._runAndGetReport({ useOvertime: true, overtimeMode: 'tope-legal' });
 
     if (!this.normalReport || !this.overtimeReport) {
       this._notifications.showNotification({ text: 'Una de las simulaciones falló. No se pueden mostrar resultados comparativos.', type: 'error', duration: 6000 });

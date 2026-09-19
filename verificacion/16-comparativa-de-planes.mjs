@@ -6,7 +6,8 @@
 // el techo compartido, y eso se comprueba con numeros.
 import {
   COLOR_PLAN, UMBRAL_PCT, compararPlanes, notasDeEficiencia, fechasUnidas,
-  serieAcumulada, techoComun, techoRedondo, etiquetaDeFecha, deltaPct, svgAcumulada
+  serieAcumulada, techoComun, techoRedondo, etiquetaDeFecha, deltaPct, svgAcumulada,
+  ESCENARIOS_EXTRA, compararEscenarios, cumpleLaLey, notaDelTopeLegal
 } from './ComparativaPlanes.mjs';
 
 let fallos = 0;
@@ -246,7 +247,106 @@ console.log('\n== 8. Los colores de los dos planes estan declarados ==');
   ok(COLOR_PLAN.normal === '#1d4ed8' && COLOR_PLAN.extra === '#b45309',
     'los dos planes tienen color propio', `${COLOR_PLAN.normal} / ${COLOR_PLAN.extra}`);
   ok(COLOR_PLAN.normal !== COLOR_PLAN.extra, 'y son distintos entre si');
-  ok(deltaPct(100, 0) === 0, 'un delta sobre base cero no divide por cero');
+  ok(deltaPct(100, 0) === 0, 'un delta sobre base no divide por cero');
+}
+
+console.log('\n== 15. Los TRES escenarios de horas extra ==');
+{
+  // El informe decia «no cumple el tope legal» y ahi se acababa. El cliente pregunta lo unico
+  // que le importa -«¿y si lo cumpliera?»- y la respuesta es una tabla de tres escenarios.
+  ok(ESCENARIOS_EXTRA.length === 3, 'hay tres escenarios, no dos',
+    ESCENARIOS_EXTRA.map((e) => e.etiqueta).join(' | '));
+  ok(ESCENARIOS_EXTRA.map((e) => e.clave).join(',') === 'normal,legal,extra',
+    'y en el orden del mas lento al mas rapido, para que la tabla se lea como una escala');
+  // Los tres colores DISTINTOS: dos escenarios con el mismo color en el grafico de tres curvas
+  // serian indistinguibles, que es justo lo que la comparacion viene a evitar.
+  const colores = [ COLOR_PLAN.normal, COLOR_PLAN.legal, COLOR_PLAN.extra ];
+  ok(new Set(colores).size === 3, 'y cada uno con su color', colores.join(' / '));
+  ok(ESCENARIOS_EXTRA.every((e) => e.detalle && e.detalle.length > 20),
+    'los tres explican QUE son, no solo como se llaman');
+}
+
+console.log('\n== 16. Cumplir la ley: la tabla y la nota ==');
+{
+  // El escenario «legal» cumple por construccion; el «sin tope» no. Es la unica afirmacion
+  // que el cliente va a querer comprobar, asi que se lee del cumplimiento del motor.
+  const informe = (completadas, costo, dias, cumple) => ({
+    completedInstances: completadas, totalCost: costo, totalWorkingDays: dias,
+    compliance: { semanasSobreLimite: cumple ? 0 : 3, diasSobreLimiteDiario: 0, semanasSobreDias: 0 }
+  });
+
+  const base = informe(100, 10000, 20, true);
+  ok(cumpleLaLey(base) === true, 'un informe sin excesos cumple');
+  ok(cumpleLaLey(informe(100, 10000, 20, false)) === false, 'y uno con semanas sobre el limite no');
+  ok(cumpleLaLey(null) === null, 'sin informe no se afirma nada (null, no false)');
+  ok(cumpleLaLey({}) === null, 'ni sin datos de cumplimiento');
+
+  const cmp = compararEscenarios({
+    normal: informe(80, 9000, 25, true),
+    legal: informe(95, 11000, 22, true),
+    extra: informe(100, 12000, 20, false)
+  });
+  ok(cmp.filas.length === 3, 'la comparativa trae las tres filas', String(cmp.filas.length));
+  ok(cmp.base.clave === 'normal', 'y la referencia es el plan sin extra');
+  ok(cmp.filas[1].costoPorPieza != null, 'cada fila lleva su costo por pieza',
+    cmp.filas.map((f) => f.costoPorPieza && f.costoPorPieza.toFixed(2)).join(' / '));
+  ok(cmp.filas.every((f) => typeof f.cumple === 'boolean'),
+    'y si cumple o no la ley', cmp.filas.map((f) => `${f.etiqueta}:${f.cumple}`).join(' '));
+
+  // La nota: con MENOS produccion, el precio de la legalidad en numeros.
+  const nota = notaDelTopeLegal(cmp);
+  ok(/menos piezas/.test(nota), 'con menos produccion la nota dice cuanto se pierde', nota);
+  ok(/Cumplir la ley/.test(nota), 'y empieza nombrando la decision');
+}
+
+console.log('\n== 17. La nota del tope legal distingue los tres desenlaces ==');
+{
+  const inf = (completadas, costo, cumple) => ({
+    completedInstances: completadas, totalCost: costo, totalWorkingDays: 20,
+    compliance: { semanasSobreLimite: cumple ? 0 : 2, diasSobreLimiteDiario: 0, semanasSobreDias: 0 }
+  });
+
+  // DESENLACE 1: misma produccion y MENOS costo. Es el hallazgo que justifica el analisis:
+  // las horas extra libres no estaban comprando nada.
+  const mismoYMasBarato = compararEscenarios({
+    normal: inf(100, 9000, true), legal: inf(100, 9500, true), extra: inf(100, 12000, false)
+  });
+  const n1 = notaDelTopeLegal(mismoYMasBarato);
+  ok(/mismas piezas/.test(n1) && /menos/.test(n1),
+    'misma produccion y menos costo: la extra libre se estaba tirando', n1);
+
+  // DESENLACE 2: misma produccion y MAS costo. El cuello NO es el reloj.
+  const mismoYMasCaro = compararEscenarios({
+    normal: inf(100, 9000, true), legal: inf(100, 13000, true), extra: inf(100, 12000, false)
+  });
+  const n2 = notaDelTopeLegal(mismoYMasCaro);
+  ok(/mismas piezas/.test(n2) && /más/.test(n2),
+    'misma produccion y mas costo: el limite no es el reloj', n2);
+  ok(/recursos|colas|reprocesos/.test(n2),
+    'y la nota dice donde mirar en vez de dejarlo en el aire');
+
+  // DESENLACE 3: la ley cuesta oportunidad, y se pone en cifra.
+  const pierdeProduccion = compararEscenarios({
+    normal: inf(80, 8000, true), legal: inf(90, 10000, true), extra: inf(100, 12000, false)
+  });
+  const n3 = notaDelTopeLegal(pierdeProduccion);
+  ok(/precio de la legalidad/.test(n3), 'con menos produccion, la nota habla del precio',
+    n3);
+
+  // Sin diferencia apreciable, la nota NO inventa un hallazgo: una nota que dijera «sube un
+  // 0,4 %» ensenaria a desconfiar de todas las demas.
+  const iguales = compararEscenarios({
+    normal: inf(100, 10000, true), legal: inf(100, 10020, true), extra: inf(100, 10010, false)
+  });
+  const n4 = notaDelTopeLegal(iguales);
+  ok(/no cambia/.test(n4), 'sin diferencia apreciable lo dice, en vez de exagerarla', n4);
+
+  // Sin los tres informes no hay comparativa, y no revienta.
+  ok(compararEscenarios(null) === null, 'sin informes no hay comparativa');
+  ok(compararEscenarios({}) === null, 'ni sin el plan base, que es la referencia');
+  ok(compararEscenarios({ legal: inf(1, 1, true) }) === null,
+    'y sin plan normal tampoco: no habria contra que comparar');
+  ok(notaDelTopeLegal(null) === null, 'y la nota sin comparativa es null');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
