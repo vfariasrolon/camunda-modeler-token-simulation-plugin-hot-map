@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import {
   opacidadDe, rangoDeValores, fraccionDe, textoDeEscala, escalaDeMetrica,
   gradienteCss, colorFrio, colorCalido,
-  bandasDeCuota, gradienteBandas, topCaminos, BANDAS_CUOTA,
+  bandasDeCuota, bandasDeValores, gradienteBandas, topCaminos, BANDAS_CUOTA, BANDAS_RANKING,
   OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA, ESCALA_POR_METRICA
 } from './HeatmapScale.mjs';
 
@@ -280,6 +280,69 @@ console.log('\n== 15. BANDAS DE CUOTA: umbrales fijos, no puestos ==');
   const colores = BANDAS_CUOTA.map((x) => x.color);
   ok(new Set(colores).size === 4, 'los cuatro colores son distintos', colores.join(' / '));
   ok(colores.includes('orange'), 'y hay un color intermedio entre el amarillo y el rojo');
+}
+
+console.log('\n== 15b. BANDAS POR POSICION: para la masa de las zonas ==');
+{
+  // LA MASA DE LAS ZONAS NO TIENE ESCALA NATURAL: 900 minutos es mucho en un diagrama y poco en
+  // otro. Ahi lo correcto es repartir por PUESTOS -el 10 % de celdas mas cargadas es rojo,
+  // siempre-, que es lo que arregla el reporte «trafico todo se ve azul»: antes se pintaba con
+  // `valor / max` y la escala es azul plano hasta 0,4, asi que casi todo caia en el mismo azul.
+  const valores = [ 500, 480, 200, 180, 40, 20, 5, 3, 2, 1 ];
+  const b = bandasDeValores(valores);
+
+  ok(b.n === 10, 'las 10 celdas entran en el reparto', String(b.n));
+  ok(b.max === 500 && b.min === 1, 'con su maximo y su minimo', `${b.min}..${b.max}`);
+  ok(b.bandaDe(500).color === 'red', 'la celda mas cargada sale ROJA', b.bandaDe(500).color);
+  ok(b.bandaDe(1).color === 'blue', 'y la mas floja sale azul', b.bandaDe(1).color);
+
+  // LA PROPIEDAD QUE ARREGLA EL «TODO AZUL»: el color se reparte por TODA la escala, no se apila
+  // en el extremo frio. Es lo que la regla vieja no hacia.
+  const colores = new Set(valores.map((v) => b.bandaDe(v).color));
+  ok(colores.size === 4, 'el mapa usa las CUATRO bandas', [ ...colores ].join(', '));
+
+  // LA EQUIVALENCIA QUE PERMITE QUE ESTO SEA RAPIDO: `bandaDe` se resuelve por umbrales -la
+  // primera banda cuyo minimo no pase del valor- en vez de contar posiciones, porque con 12000
+  // celdas contar seria cuadratico y la app se colgaria. Tiene que dar EXACTAMENTE lo mismo que
+  // contar, que es lo que se comprueba aqui valor a valor.
+  const porPosicion = (v) => {
+    const ordenados = valores.slice().sort((a, c) => c - a);
+    const mayores = ordenados.filter((otro) => otro > v).length;
+    const posicion = mayores + 1;
+    let desde = 0;
+    for (const banda of b.bandas) {
+      if (posicion <= desde + banda.cuantos) return banda;
+      desde += banda.cuantos;
+    }
+    return null;
+  };
+  ok(valores.every((v) => b.bandaDe(v).color === porPosicion(v).color),
+    'y la version rapida da el MISMO resultado que contar posiciones, valor a valor',
+    valores.map((v) => `${v}:${b.bandaDe(v).color}`).join(' '));
+
+  // LOS EMPATES COMPARTEN BANDA, y con umbrales esto es inmediato: dos valores iguales caen en la
+  // misma banda por definicion. Se comprueba porque la version por posiciones podia partirlos.
+  const empatados = bandasDeValores([ 9, 9, 9, 5, 4, 4, 3, 3, 2, 1 ]);
+  ok(empatados.bandaDe(9).color === 'red',
+    'un empate en la cabeza sigue en la banda de arriba, sin colarse ni caerse',
+    empatados.bandaDe(9).color);
+  ok([ 9, 9, 9 ].every((v) => empatados.bandaDe(v).color === empatados.bandaDe(9).color),
+    'y los empatados comparten color: un empate no se pinta como una diferencia');
+
+  // Sin contraste, UNA banda: si todos los valores son iguales, el mapa sale de un color y no de
+  // cuatro, que es el mismo criterio que el resto de la escala.
+  const plano = bandasDeValores([ 7, 7, 7 ]);
+  ok(plano.bandas.length === 1, 'con todos los valores iguales hay UNA sola banda',
+    String(plano.bandas.length));
+  ok(plano.bandaDe(7).color === 'red', 'y el valor unico queda en el extremo');
+
+  // Sin masa no hay bandas.
+  ok(bandasDeValores([]).bandas.length === 0, 'sin valores no hay bandas');
+  ok(bandasDeValores(null).bandas.length === 0, 'y con null no revienta');
+  ok(bandasDeValores([]).bandaDe(5) === null, 'y la banda de cualquier valor es null');
+  ok(bandasDeValores([ 5 ]).bandaDe(NaN) === null, 'una valor NaN no cae en ninguna banda');
+  ok(BANDAS_RANKING.some((x) => x.color === 'orange'),
+    'la paleta por puesto incluye un color intermedio entre el amarillo y el rojo');
 }
 
 console.log('\n== 16. La barra de la leyenda es un ESCALON, no una rampa ==');

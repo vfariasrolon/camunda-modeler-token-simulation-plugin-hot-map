@@ -662,6 +662,41 @@ try {
     'las dos lecturas pintan su rejilla',
     `${conTrafico.rellenos.length} / ${conTiempo.rellenos.length}`);
 
+  // --- LA PRUEBA QUE FALTABA, y es exactamente el reporte del usuario ---
+  //
+  // El reporte fue: «trafico todo se ve azul literal». Y la comprobacion que habia arriba
+  // -«hay alguna celda roja»- PASABA con el fallo puesto, porque el rojo si estaba: en la
+  // celda mas caliente. Lo que no estaba era el RESTO de la escala.
+  //
+  // La causa: las celdas se pintaban con `valor / max` y la escala es AZUL PLANO hasta 0,4,
+  // asi que casi todas caian por debajo y salian del mismo azul.
+  //
+  // Aqui se comprueba el REPARTO, que es lo que se ve: el mapa tiene que usar varios colores.
+  // EL DISCRIMINADOR ES QUE LOS COLORES SEAN POCOS Y DISCRETOS.
+  //
+  // Mi primer intento de esta prueba -«que haya al menos 3 colores y no todo azul»- PASABA con
+  // el fallo puesto, y el motivo es instructivo: el reparto dentro de una tarea genera por si
+  // solo un gradiente, asi que hasta el codigo viejo producia varios colores. Medir la CANTIDAD
+  // de colores no distingue una escala de bandas de una rampa continua.
+  //
+  // Lo que si distingue: con bandas, los rellenos son EXACTAMENTE los nombres de la paleta
+  // -cuatro valores, sin interpolar-; con la rampa vieja son cientos de `rgb(r, g, b)` distintos.
+  const BANDAS_ESPERADAS = [ 'red', 'orange', 'yellow', 'blue' ];
+  const coloresZonas = new Set(conTrafico.rellenos);
+  const fueraDePaleta = [ ...coloresZonas ].filter((c) => !BANDAS_ESPERADAS.includes(c));
+  ok(fueraDePaleta.length === 0,
+    'las celdas usan las BANDAS de la paleta, no una rampa interpolada',
+    fueraDePaleta.length ? `${fueraDePaleta.length} color(es) fuera: ${fueraDePaleta.slice(0, 3).join(', ')}` : `${coloresZonas.size} colores: ${[ ...coloresZonas ].join(', ')}`);
+  ok(coloresZonas.size >= 3,
+    'y el mapa usa varias bandas, no una sola',
+    `${coloresZonas.size}: ${[ ...coloresZonas ].join(', ')}`);
+  // La banda mas fria NO puede llevarse casi todo el mapa: eso es el reporte «todo azul»,
+  // que es lo que pasa cuando la mayoria de las celdas cae en el tramo plano de la escala.
+  const azules = conTrafico.rellenos.filter((f) => f === 'blue').length;
+  ok(azules < conTrafico.rellenos.length,
+    'y ninguna banda se lleva TODAS las celdas (el mapa reparte de verdad)',
+    `${azules} azules de ${conTrafico.rellenos.length}`);
+
   // LA PRUEBA QUE DISTINGUE LAS DOS LECTURAS. No se mide la OPACIDAD pintada: se satura
   // en 1 en la celda mas caliente de cada lectura, asi que daria 1.00 en las dos y no
   // distinguiria nada (es el primer intento, que paso en falso). Se mide el VALOR de la
@@ -673,16 +708,17 @@ try {
     const zona = { x: null };
     void zona;
     controller.showMetric(metrica);
-    // El valor por celda se reconstruye desde los rects: el relleno es
-    // colorDeValor(valor/max), y la opacidad es opacidadDe(valor, max). Se usa la
-    // opacidad RELATIVA, que conserva el orden aunque se sature en el maximo.
+    // SE LEE EL VALOR DE LA CELDA, no la opacidad. Antes se reconstruia desde la opacidad
+    // -que era `valor/max`- porque no habia otra via; ahora la opacidad es CONSTANTE (a
+    // proposito: si variara, un rojo palido y uno fuerte parecerian dos colores distintos) y
+    // ese apaño ya no funciona. El dato esta en `data-valor`, que es donde tiene que estar.
     const cerca = [ ...document.querySelectorAll('.heatmap-zones rect') ]
-      .map((r) => ({ x: Number(r.getAttribute('x')), o: Number(r.getAttribute('opacity')) }))
-      .filter((c) => Math.abs(c.x - x) < 200);
+      .map((r) => ({ x: Number(r.getAttribute('x')), v: Number(r.getAttribute('data-valor')) }))
+      .filter((c) => Math.abs(c.x - x) < 200 && Number.isFinite(c.v));
     if (!cerca.length) return null;
-    // El maximo NO sirve (1 en las dos): se mira la MEDIA de la franja, que si refleja
-    // cuanto trabajo hay repartido por ahi.
-    return cerca.reduce((a, c) => a + c.o, 0) / cerca.length;
+    // La MEDIA de la franja: refleja cuanto trabajo hay repartido por ahi, y no el pico de una
+    // sola celda.
+    return cerca.reduce((a, c) => a + c.v, 0) / cerca.length;
   };
 
   const traficoEnTask1 = valorCercaDe('zonasTrafico', 100);   // Task_1 (transitada)

@@ -8,7 +8,7 @@ import SimpleHeatSVG from '../simpleheat-svg.js';
 import Chart from 'chart.js/auto';
 import { getSimulationData, getExtensionProperty, formatMilliseconds, formatMinutes, formatCurrency, isLabel, nombreElemento, resumenMuestras, histograma, describirUtilizacion } from './util';
 import { describeLabor } from './LaborRules.js';
-import { rangoDeValores, opacidadDe, fraccionDe, textoDeEscala, escalaDeMetrica, gradienteCss, colorFrio, colorDeValor, bandasDeCuota, gradienteBandas, topCaminos, OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA } from './HeatmapScale.js';
+import { rangoDeValores, opacidadDe, fraccionDe, textoDeEscala, escalaDeMetrica, gradienteCss, colorFrio, colorDeValor, bandasDeCuota, bandasDeValores, gradienteBandas, topCaminos, OPACIDAD_UNIFORME, OPACIDAD_MINIMA, GRADIENTE_ESCALA } from './HeatmapScale.js';
 import { numerarTareas, etiquetaDe } from './TaskIds.js';
 import {
   COLOR_PLAN, compararPlanes, notasDeEficiencia, fechasUnidas,
@@ -1062,7 +1062,7 @@ export default class SimulationController {
       }
 
       const lado = resultado.zonas.lado;
-      this._leyendaZonas(resultado.zonas, lado, lado !== LADO_CELDA, metric);
+      this._leyendaZonas(resultado.zonas, lado, lado !== LADO_CELDA, metric, resultado.bandas);
       // Sin circulos ni trazos: esta vista ES la rejilla. Mezclarlas daria dos
       // significados al mismo color sobre el mismo diagrama.
       return;
@@ -1878,6 +1878,20 @@ export default class SimulationController {
     capa.appendChild(grupo);
     this._zonasGrupo = grupo;
 
+    // BANDAS POR PUESTO, y esto es el arreglo del reporte «trafico todo se ve azul».
+    //
+    // Antes cada celda se pintaba con `valor / max`, y la escala es AZUL PLANO hasta 0,4: con una
+    // cola larga -lo normal: dos zonas cargadas y cientos flojas- casi todas las celdas caian por
+    // debajo del 40 % del maximo y salian EXACTAMENTE del mismo azul. El mapa no estaba roto,
+    // estaba mal calibrado: el canal del color no decia nada.
+    //
+    // La masa de las zonas no tiene escala natural -900 minutos es mucho en un diagrama y poco en
+    // otro-, asi que aqui lo correcto es repartir por PUESTOS: el 10 % de celdas mas cargadas
+    // siempre es rojo. Es la misma escala que usa la vista de lineas, para que las dos se lean
+    // igual, pero con el criterio opuesto al de la cuota: alli la magnitud es un porcentaje y va
+    // por umbrales fijos.
+    const bandasZonas = bandasDeValores(zonas.celdas.map((c) => c.valor));
+
     zonas.celdas.forEach((celda) => {
       const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       rect.setAttribute('x', celda.x);
@@ -1886,12 +1900,21 @@ export default class SimulationController {
       // sin eso la mancha sale cuadriculada en vez de continua.
       rect.setAttribute('width', zonas.lado + 1);
       rect.setAttribute('height', zonas.lado + 1);
-      rect.setAttribute('fill', colorDeValor(zonas.max > 0 ? celda.valor / zonas.max : 0));
-      rect.setAttribute('opacity', String(opacidadDe(celda.valor, zonas.max, false)));
+      const banda = bandasZonas.bandaDe(celda.valor);
+      rect.setAttribute('fill', banda ? banda.color : colorFrio(GRADIENTE_ESCALA));
+      // OPACIDAD CONSTANTE, y es una decision: si la opacidad variara con el valor, un rojo
+      // palido y un rojo fuerte se leerian como dos colores distintos y la banda dejaria de
+      // significar «este grupo». Con la opacidad fija, el color es la unica senal y las bandas se
+      // comparan entre si. El valor sigue estando en la leyenda.
+      rect.setAttribute('opacity', '0.62');
+      // El VALOR de la celda, en el propio rect. Es el dato -«por aqui pasaron 480 pasos»- y sin
+      // el solo se puede adivinar mirando el color, que es una banda y no un numero. La leyenda lo
+      // usa para el rango, y el arnes para comprobar que el color y el numero concuerdan.
+      rect.setAttribute('data-valor', String(celda.valor));
       grupo.appendChild(rect);
     });
 
-    return { pintadas: zonas.celdas.length, zonas };
+    return { pintadas: zonas.celdas.length, zonas, bandas: bandasZonas };
   }
 
   /**
@@ -1966,7 +1989,7 @@ export default class SimulationController {
   }
 
   /** Leyenda de la vista de zonas: la unidad dicha, y el aviso de la resolucion. */
-  _leyendaZonas(zonas, lado, ajustado, metric) {
+  _leyendaZonas(zonas, lado, ajustado, metric, bandas) {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
@@ -1983,13 +2006,29 @@ export default class SimulationController {
       : (v) => `${formatMinutes(v / 60000)} de trabajo`;
 
     const rango = rangoDeValores(zonas.celdas.map((c) => c.valor));
-    const barra = rango.uniforme ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA);
+    // LA BARRA ES UN ESCALON con los MISMOS colores que las celdas. Antes era la rampa continua y
+    // no describia lo que se ve: el mapa pinta bandas y la leyenda enseñaba un degradado, asi que
+    // el lector buscaba en el diagrama colores que la leyenda no tenia.
+    const barra = (bandas && bandas.bandas.length)
+      ? gradienteBandas(bandas.bandas)
+      : (rango.uniforme ? colorFrio(GRADIENTE_ESCALA) : gradienteCss(GRADIENTE_ESCALA));
 
     // La unidad va ESCRITA. Sin ella, «1.200» en una celda no dice nada, y una mancha
     // que nadie sabe de donde sale es un adorno, no una medicion.
     const detalle = rango.uniforme
       ? `Uniforme: ${formatea(rango.min)} por celda`
       : `${formatea(rango.min)} → ${formatea(rango.max)} por celda`;
+
+    // EL RANGO REAL DE CADA COLOR. Es lo que convierte el color en una medicion: «este rojo son
+    // mas de 480 pasos», no «este rojo es mas que el otro».
+    const filasBandas = (bandas && bandas.bandas.length)
+      ? `<div class="heatmap-legend-bandas">${bandas.bandas.map((b) => `
+          <div class="heatmap-legend-banda">
+            <span class="muestra" style="background: ${b.color};"></span>
+            <span class="rango">${formatea(b.min)}${b.min === b.max ? '' : ' – ' + formatea(b.max)}</span>
+            <span class="cuantos">${b.cuantos} celda(s)</span>
+          </div>`).join('')}</div>`
+      : '';
 
     const aviso = ajustado
       ? `<div class="heatmap-legend-warn">El diagrama es grande y se subió el tamaño de celda a`
@@ -2002,8 +2041,9 @@ export default class SimulationController {
         ? 'Zonas · por dónde PASAN los tokens (tráfico)'
         : 'Zonas · dónde se va el TIEMPO (minutos de trabajo)'}</div>
       <div class="heatmap-legend-bar" style="background: ${barra};"></div>
+      ${filasBandas}
       <div class="heatmap-legend-detail">${detalle}</div>
-      <div class="heatmap-legend-note">${zonas.n} celdas de ${lado} px · la celda es un trozo fijo del diagrama, así que el número no cambia al acercarse. ${rango.uniforme ? '' : 'Azul = menos trabajo · Rojo = más'}</div>
+      <div class="heatmap-legend-note">${zonas.n} celdas de ${lado} px · la celda es un trozo fijo del diagrama, así que el número no cambia al acercarse. ${rango.uniforme ? '' : 'Los colores reparten las celdas por puestos: el rojo es siempre la zona más cargada de este diagrama.'}</div>
       ${aviso}
     `;
   }

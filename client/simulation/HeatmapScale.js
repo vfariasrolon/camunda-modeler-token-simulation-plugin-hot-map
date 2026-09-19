@@ -132,6 +132,104 @@ export function gradienteCss(gradiente = GRADIENTE_ESCALA) {
 }
 
 /**
+ * BANDAS POR POSICION: para una magnitud SIN ESCALA NATURAL.
+ *
+ * CUANDO SE USA ESTO Y CUANDO LOS UMBRALES FIJOS de `bandasDeCuota`, que es la distincion que
+ * costo un fallo real:
+ *
+ *   - Un PORCENTAJE tiene escala natural. El 80 % significa «la mayoria» en cualquier diagrama, asi
+ *     que va por UMBRALES FIJOS y se puede comparar entre corridas.
+ *   - Una MASA (minutos de trabajo, tokens por celda) NO la tiene: 900 minutos es mucho en un
+ *     diagrama y poco en otro. Ahi lo que se puede hacer es repartir por PUESTOS dentro de la
+ *     corrida, y por eso el minimo sale frio y el maximo calido SIEMPRE, aunque la distribucion
+ *     tenga cola larga.
+ *
+ * EL FALLO QUE ESTO ARREGLA, medido: la vista de zonas pintaba cada celda con `valor / max`, y la
+ * escala es AZUL PLANO hasta 0.4. Con una cola larga casi todas las celdas quedan por debajo, asi
+ * que el mapa salia ENTERO AZUL -el reporte fue literal: «trafico todo se ve azul»-. Repartiendo
+ * por puestos, el 10 % de celdas mas cargadas es rojo y el resto se reparte por la escala.
+ */
+export const BANDAS_RANKING = [
+  { hasta: 0.10, color: 'red', etiqueta: 'El 10 % más cargado' },
+  { hasta: 0.30, color: 'orange', etiqueta: 'Siguiente 20 %' },
+  { hasta: 0.60, color: 'yellow', etiqueta: 'Mitad alta' },
+  { hasta: 1.00, color: 'blue', etiqueta: 'Resto' }
+];
+
+/**
+ * Reparto de un conjunto de valores en bandas por POSICION.
+ *
+ * LOS EMPATES CAEN EN LA MISMA BANDA, y es una decision: si dos celdas tienen exactamente la misma
+ * masa, pintarlas de distinto color afirmaria una diferencia que no existe.
+ *
+ * `bandaDe` SE RESUELVE POR UMBRALES, no contando posiciones. Hacerlo contando seria O(n) por celda
+ * y las zonas tienen hasta 12000: el repintado se volveria cuadratico y la app se colgaria. Como
+ * cada banda ya guarda el MENOR valor que contiene, basta con devolver la primera cuyo minimo no
+ * pase del valor. Da el mismo resultado -una banda contiene valores contiguos de la lista
+ * ordenada- y cuesta cuatro comparaciones.
+ */
+export function bandasDeValores(valores) {
+  const limpios = (valores || [])
+    .map((v) => Number(v) || 0)
+    .filter((v) => v > 0)
+    .sort((a, b) => b - a);   // de mayor a menor: la posicion manda
+
+  if (!limpios.length) return { bandaDe: () => null, bandas: [], max: 0, min: 0, n: 0 };
+
+  const n = limpios.length;
+  const max = limpios[0];
+  const min = limpios[n - 1];
+
+  // SIN CONTRASTE NO HAY BANDAS QUE REPARTIR: si todos los valores son iguales, el mapa sale de UN
+  // color y no de cuatro. Sin este corte, valores iguales caerian en bandas distintas -una por
+  // franja de porcentaje- y el diagrama afirmaria diferencias que no existen.
+  if (max === min) {
+    const unica = {
+      color: BANDAS_RANKING[0].color,
+      etiqueta: BANDAS_RANKING[0].etiqueta,
+      min: max,
+      max,
+      cuantos: n,
+      uniforme: true
+    };
+    const bandaDe = (valor) => (Number(valor) === max ? unica : null);
+    return { bandaDe, bandas: [ unica ], max, min, n };
+  }
+
+  const bandas = [];
+  let desde = 0;
+  BANDAS_RANKING.forEach((definicion, indice) => {
+    let cuantos = Math.ceil(definicion.hasta * n) - desde;
+    if (indice === BANDAS_RANKING.length - 1) cuantos = n - desde;   // el resto, exacto
+    const hasta = Math.max(desde, Math.min(n, desde + cuantos));
+    if (hasta > desde) {
+      bandas.push({
+        color: definicion.color,
+        etiqueta: definicion.etiqueta,
+        min: limpios[hasta - 1],   // el MENOR de la banda
+        max: limpios[desde],       // el MAYOR de la banda
+        cuantos: hasta - desde
+      });
+    }
+    desde = hasta;
+  });
+
+  // Las bandas van de mayor a menor, asi que la primera cuyo minimo no pase del valor es la suya.
+  // Un valor empatado en la frontera de dos bandas cae en la de ARRIBA, que es lo que hace que un
+  // empate no se parta en dos colores.
+  const bandaDe = (valor) => {
+    const v = Number(valor) || 0;
+    if (!(v > 0)) return null;
+    for (const banda of bandas) {
+      if (v >= banda.min) return banda;
+    }
+    return bandas[bandas.length - 1] || null;
+  };
+
+  return { bandaDe, bandas, max, min, n };
+}
+
+/**
  * BANDAS DE LA CUOTA, POR UMBRALES FIJOS.
  *
  * POR QUE UMBRALES Y NO UN RANKING POR PUESTO, que es como estaba antes: la cuota es un
