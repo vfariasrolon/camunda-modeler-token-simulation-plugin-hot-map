@@ -6,6 +6,7 @@ import {
   resumenMuestras, describirUtilizacion
 } from './util';
 import { compararEscenarios, notaDelTopeLegal, svgTresEscenarios } from './ComparativaPlanes.js';
+import { diagnosticarCapacidad, avisosPorSaturacion } from './CapacityGuard.js';
 
 const OPEN_CLS = 'sim-report-open';
 
@@ -310,6 +311,10 @@ export default class ReportPanel {
       primaRelativa,
       esperaTotal, esperaPorCaso, esperaRelativa,
       utilizacion, utilizacionMax,
+      // EL DIAGNOSTICO DE SATURACION. Va en el contexto y no dentro de una seccion porque lo leen
+      // VARIAS: la portada, el resumen, los percentiles de ciclo y el Pareto de esperas. Cada una
+      // tiene que decir su propia parte, y para eso necesita el mismo diagnostico.
+      saturacion: diagnosticarCapacidad(utilizacion),
       ciclo, cicloNormal,
       tasaFallos, ejecucionesTareas,
       cvProduccion,
@@ -496,6 +501,7 @@ export default class ReportPanel {
         ${this._kpi('Tasa de fallos', ctx.tasaFallos == null ? '—' : `${num(ctx.tasaFallos * 100, 1)} %`)}
       </div>
 
+      ${this._avisoSaturacion(ctx)}
       <div class="aviso">
         <strong>Advertencia metodológica.</strong> Estos resultados salen de <strong>una sola
         réplica</strong> del modelo y <strong>sin intervalo de confianza</strong>. El motor repite la corrida
@@ -1080,16 +1086,9 @@ export default class ReportPanel {
         <th class="num">Min·recurso disponibles</th><th class="num">ρ</th><th>Lectura</th></tr></thead>
         <tbody>${filas}</tbody>
       </table>
-      <div class="aviso ${critico.utilization >= 0.9 ? 'mal' : critico.utilization >= 0.8 ? '' : 'ok'}">
-        <strong>Recurso crítico: ${esc(critico.name)} (ρ = ${num(critico.utilization, 3)}).</strong>
-        ${critico.utilization >= 1
-          ? ' Está saturado: la cola crece sin límite y el sistema no alcanza el régimen estable. Es el primer punto que hay que resolver.'
-          : critico.utilization >= 0.9
-            ? ' Está al límite: la espera se dispara de forma no lineal en este tramo. Cualquier variabilidad se convierte en cola.'
-            : critico.utilization >= 0.8
-              ? ' Está alto: funciona, pero con poca holgura ante picos.'
-              : ' Tiene holgura suficiente.'}
-      </div>
+      ${this._avisoSaturacion(ctx)}
+      ${avisosPorSaturacion(ctx.saturacion).espera
+        ? `<div class="aviso mal">${avisosPorSaturacion(ctx.saturacion).espera}</div>` : ''}
       ${this._figuraHtml(figuras, 'paretoWait', 'Pareto de esperas', 'Las tareas que se llevan la mayor parte de la espera son las que hay que atacar primero.')}
       <p class="sub">Nota: si las tareas no comparten piscina, la espera observada señala el efecto, pero no
       identifica por sí sola el recurso saturado. La tabla de utilización sí lo identifica.</p>
@@ -1166,6 +1165,37 @@ export default class ReportPanel {
   }
 
   /** Nota de 0 a 100, renormalizando los pesos de las dimensiones medidas. */
+  /**
+   * AVISO DE SATURACION, arriba del todo.
+   *
+   * VA ANTES DE LAS CIFRAS DEL RESUMEN, y ese es el punto entero: el usuario de `bob_retrabajo`
+   * leyo «cientos de dias» de espera en un proceso de 15 y lo reporto como un error de la app. Los
+   * numeros eran correctos -rho = 1,4, la cola crece sin limite- pero NO significan nada, y el
+   * informe los daba sin avisar. Un lector que ve primero las cifras ya se las creyo.
+   *
+   * Solo aparece cuando hay algo que decir: con capacidad holgada no se imprime nada, porque un
+   * aviso permanente se aprende a ignorar.
+   */
+  _avisoSaturacion(ctx) {
+    const d = ctx.saturacion;
+    if (!d || d.nivel === 'holgado' || d.nivel === 'sin-recursos') return '';
+
+    const nivel = d.nivel === 'saturado' ? 'mal' : (d.nivel === 'al-limite' ? '' : 'ok');
+    const lista = d.criticos.length
+      ? `<ul class="sub" style="margin:6px 0 0;padding-left:18px">${d.criticos.map((c) =>
+          `<li><strong>${esc(c.name)}</strong> — ρ = ${num(c.utilization, 3)} con ${ent(c.quantity)} unidad(es)</li>`
+        ).join('')}</ul>`
+      : '';
+
+    return `
+      <div class="aviso ${nivel}">
+        <strong>${esc(d.titulo)}.</strong> ${d.consecuencia}
+        ${lista}
+        ${d.accion ? `<div style="margin-top:6px"><strong>Qué hacer:</strong> ${d.accion}</div>` : ''}
+      </div>
+    `;
+  }
+
   _puntajeTotal(ctx) {
     const dimensiones = this._dimensionesScorable(ctx)
       .map((d) => ({ ...d, puntos: rampa(d.valor, d.bueno, d.malo) }))
@@ -1413,6 +1443,9 @@ export default class ReportPanel {
       <h2 class="salto">10 · Anexos</h2>
 
       <h3>Tiempo de ciclo: percentiles</h3>
+      ${avisosPorSaturacion(ctx.saturacion).ciclo
+        ? `<div class="aviso mal"><strong>Estos percentiles no sirven como plazo.</strong> ${
+            avisosPorSaturacion(ctx.saturacion).ciclo}</div>` : ''}
       ${percentiles}
 
       <h3>Costo por caso: escenarios</h3>

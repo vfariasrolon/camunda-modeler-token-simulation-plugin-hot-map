@@ -19,6 +19,7 @@ verificacion/ComparativaPlanes.mjs
 verificacion/HeatmapZones.mjs
 verificacion/LegalOvertime.mjs
 verificacion/DominantRoute.mjs
+verificacion/CapacityGuard.mjs
 verificacion/ModelUtil.mjs
 verificacion/util.mjs
 

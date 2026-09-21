@@ -17,6 +17,7 @@ import {
 } from './ComparativaPlanes.js';
 import { LADO_CELDA, calcularZonas, ladoQueCabe } from './HeatmapZones.js';
 import { normalizarFlujos, cuotasDeRama, rutaDominante, formatearCuota } from './DominantRoute.js';
+import { diagnosticarCapacidad, avisosPorSaturacion } from './CapacityGuard.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -3007,9 +3008,28 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
 
     const bloqueGraficos = '';
 
+    // EL AVISO DE SATURACION EN VIVO, arriba del todo.
+    //
+    // Es la misma logica que usa el PDF -`diagnosticarCapacidad`-, para que la app y el documento no
+    // puedan decir cosas distintas del mismo numero. Va PRIMERO porque un lector que ve las cifras
+    // antes del aviso ya se las creyo: el usuario de `bob` leyo esperas de cientos de dias en un
+    // proceso de 15 y lo reporto como un fallo de la app, cuando era una corrida saturada.
+    const util = [ ...(report.utilization || new Map()).values() ]
+      .map((u) => ({ name: u.name, utilization: u.utilization, quantity: u.quantity }));
+    const diag = diagnosticarCapacidad(util);
+    const bloqueSaturacion = (diag.nivel === 'saturado' || diag.nivel === 'al-limite' || diag.nivel === 'justo')
+      ? `<div class="sim-saturacion ${diag.nivel === 'saturado' ? 'mal' : (diag.nivel === 'al-limite' ? 'aviso' : 'ok')}">
+          <strong>${diag.titulo}.</strong> ${diag.consecuencia}
+          ${diag.criticos.length ? `<ul>${diag.criticos.map((c) =>
+            `<li><strong>${c.name}</strong> — ρ = ${c.utilization.toFixed(3)} con ${c.quantity} unidad(es)</li>`).join('')}</ul>` : ''}
+          ${diag.accion ? `<div class="que-hacer"><strong>Qué hacer:</strong> ${diag.accion}</div>` : ''}
+        </div>`
+      : '';
+
     return `
       <div class="sim-summary-container">
         <h2>Resumen General</h2>
+        ${bloqueSaturacion}
         ${bloqueTiempo}
         ${bloquePlanes}
         ${bloqueEscenarios}

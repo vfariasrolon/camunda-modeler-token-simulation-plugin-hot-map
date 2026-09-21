@@ -450,6 +450,42 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* AVISO DE SATURACION en el resumen en vivo.
+   Va el PRIMERO, antes de cualquier cifra: un lector que ve los numeros antes del aviso ya se los
+   creyo. Los tres niveles se distinguen por el color del borde, no por el fondo entero, para no
+   teñir el panel cuando el aviso es informativo. */
+.sim-saturacion {
+    border-left: 4px solid #f9a825;
+    background: #fffdf5;
+    padding: 11px 14px;
+    border-radius: 5px;
+    margin: 0 0 14px;
+    font-size: 12.5px;
+    line-height: 1.55;
+}
+
+.sim-saturacion.mal {
+    border-color: #c62828;
+    background: #fdecea;
+}
+
+.sim-saturacion.ok {
+    border-color: #2e7d32;
+    background: #f4faf5;
+}
+
+.sim-saturacion ul {
+    margin: 6px 0 0;
+    padding-left: 20px;
+    font-variant-numeric: tabular-nums;
+}
+
+.sim-saturacion .que-hacer {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(0, 0, 0, .08);
+}
+
 /* LA RUTA DOMINANTE. Un color por si solo no dice «estas conexiones forman UN camino»: lo dice
    el halo, y el halo necesita su leyenda o es decoracion que nadie sabe leer. */
 .heatmap-legend-ruta {

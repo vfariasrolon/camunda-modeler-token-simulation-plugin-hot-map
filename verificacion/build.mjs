@@ -55,6 +55,10 @@ writeFileSync(join(AQUI, 'LegalOvertime.mjs'), leer('LegalOvertime.js'));
 // pinta igual de bonita que una correcta.
 writeFileSync(join(AQUI, 'DominantRoute.mjs'), leer('DominantRoute.js'));
 
+// CapacityGuard es puro: convierte la utilizacion en un diagnostico de saturacion. Es la logica
+// que decide si los numeros de la corrida significan algo, asi que hay que poder probarla sola.
+writeFileSync(join(AQUI, 'CapacityGuard.mjs'), leer('CapacityGuard.js'));
+
 // HeatmapZones es puro: reparte masa en celdas y no toca el DOM ni bpmn-js.
 writeFileSync(join(AQUI, 'HeatmapZones.mjs'), leer('HeatmapZones.js'));
 
