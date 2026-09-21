@@ -3,6 +3,7 @@ import { is } from 'bpmn-js/lib/util/ModelUtil';
 import { getSimulationData, setSimulationData, isLabel } from './util';
 import { WARMUP_SHAPES, WARMUP_DEFAULTS, curvePoints, describeWarmup } from './WarmupCurve';
 import { TURNOS, LABOR_DEFAULTS } from './LaborRules';
+import { miembrosDePiscina, habilidadesDisponibles, avisosDeDesignacion } from './MemberAssignment.js';
 import './data-table.css';
 
 const PANEL_CLS = 'sim-data-table-panel';
@@ -179,7 +180,8 @@ const AYUDA_COLUMNAS = {
   frecuencia: 'por token (una vez por pieza) o por lote (una sola vez por lote). Decide si el tiempo y la carga se aplican por pieza o por lote.',
   barrera: 'Solo con «por lote»: quien firma el lote. disp. es la probabilidad de que atiendan; si no atienden, se espera una triangular min/moda/max; tol. es cuanto se tolera antes de marcarlo.',
   carga: 'Opcional. Cargada es la masa que SOPORTA la persona; arrastrada, la que desliza. Se aplican segun la frecuencia: por pieza o una vez por lote.',
-  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Para varias, separadas por comas.'
+  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Solo se ofrecen las que estan dadas de alta en los recursos, para que no se pueda exigir una que nadie tiene.',
+  miembro: 'El miembro CONCRETO que hace esta tarea, si solo la puede hacer esa persona. Con un nombre, la tarea ESPERA a ese miembro aunque otro esté libre (es una restricción, no una preferencia). Sin nombre, el motor elige de la piscina por turnos, que es el comportamiento de siempre. Solo se ofrecen los miembros de la piscina elegida.'
 };
 
 /**
@@ -1057,6 +1059,7 @@ export default class DataTablePanel {
             ${th('Retrabajo', 'retrabajo')}
             ${th('Unidad', 'unidadRetrabajo')}
             ${th('Recurso', 'recurso')}
+            ${th('Miembro (opcional)', 'miembro')}
             ${th('Cant.', 'cant')}
             ${th('Frecuencia', 'frecuencia')}
             ${th('Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia', 'barrera', ' colspan="5" class="col-barrera"')}
@@ -1067,7 +1070,7 @@ export default class DataTablePanel {
                cabecera: eso descuadraria el ancho de esa columna y moveria toda la
                tabla. Aqui el texto sale siempre en el mismo sitio y el ancho no cambia. -->
           <tr class="fila-ayuda-col hidden">
-            <td colspan="22" class="ayuda-campo"></td>
+            <td colspan="23" class="ayuda-campo"></td>
           </tr>
         </thead>
         <tbody>
@@ -1094,6 +1097,35 @@ export default class DataTablePanel {
             const selectPool = opciones.map((n) =>
               `<option value="${esc(n)}" ${actual === n ? 'selected' : ''}>${n === '' ? '(ninguno)' : esc(n)}</option>`
             ).join('');
+
+            // EL MIEMBRO CONCRETO, opcional. Se puebla con los de la piscina elegida: un
+            // desplegable con TODOS los nombres del modelo permitiria designar a alguien de otra
+            // piscina, que es el error que la validacion tiene que atrapar despues. Ofreciendo solo
+            // los suyos, no se puede cometer.
+            // LAS HABILIDADES SON UN DESPLEGABLE DE LAS QUE EXISTEN, no una caja de texto.
+            //
+            // POR QUE: una habilidad que la tarea exige y que NADIE tiene BLOQUEA la tarea, y es el
+            // peor fallo posible porque es silencioso -la corrida termina con trabajo sin hacer y
+            // sin ningun error-. Con las habilidades dadas de alta en los recursos, ese error deja
+            // de poder cometerse por una errata. Se conserva el valor guardado aunque ya no exista,
+            // para no borrarlo sin querer.
+            const habActual = Array.isArray(d.habilidades) ? d.habilidades.join(', ') : (d.habilidad || '');
+            const habs = habilidadesDisponibles(this._getPools());
+            const opcionesHab = [ '' ].concat(habs)
+              .concat(habActual && !habs.includes(habActual) ? [ habActual ] : []);
+            const selectHabilidad = `<select class="cell mini" data-field="habilidad">
+              ${opcionesHab.map((n) => `<option value="${esc(n)}" ${habActual === n ? 'selected' : ''}>${
+                n === '' ? '(ninguna)' : esc(n)}</option>`).join('')}
+            </select>`;
+
+            const miembroActual = (d.resources && d.resources.miembro) || '';
+            const miembros = miembrosDePiscina(this._getPools(), actual);
+            const selectMiembro = [ '' ].concat(miembros)
+              // Si designa a alguien que ya no esta en la piscina se conserva como opcion, para no
+              // borrar la designacion sin querer al abrir la pestana.
+              .concat(miembroActual && !miembros.includes(miembroActual) ? [ miembroActual ] : [])
+              .map((n) => `<option value="${esc(n)}" ${miembroActual === n ? 'selected' : ''}>${
+                n === '' ? '(el que esté libre)' : esc(n)}</option>`).join('');
 
             // Frecuencia y barrera. La barrera SOLO tiene sentido con «por
             // lote» (es lo que hace esperar al lote entero), asi que con «por
@@ -1139,6 +1171,9 @@ export default class DataTablePanel {
                 <td><input type="number" step="any" min="0" class="cell" data-field="reworkTime.value" value="${d.reworkTime.value}"></td>
                 <td><select class="cell" data-field="reworkTime.unit">${units(d.reworkTime.unit)}</select></td>
                 <td><select class="cell" data-field="resources.pool">${selectPool}</select></td>
+                <td><select class="cell" data-field="resources.miembro" ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
+                  ${selectMiembro}
+                </select></td>
                 <td><input type="number" step="1" min="1" class="cell mini" data-field="resources.quantityRequired"
                   value="${(d.resources && d.resources.quantityRequired) || 1}"
                   ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
@@ -1155,8 +1190,7 @@ export default class DataTablePanel {
                 ${celdaCarga('masaCargadaKg', c.masaCargadaKg, 'kg', 'step="any" min="0"')}
                 ${celdaCarga('masaArrastradaKg', c.masaArrastradaKg, 'kg', 'step="any" min="0"')}
                 ${celdaCarga('distanciaM', c.distanciaM, 'm', 'step="any" min="0"')}
-                <td><input type="text" class="cell mini" data-field="habilidad"
-                  value="${esc(habilidad)}" placeholder="p. ej. soldadura"></td>
+                <td>${selectHabilidad}</td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -2264,6 +2298,23 @@ export default class DataTablePanel {
         );
       }
       recurso = { pool, quantityRequired: cantidad };
+
+      // EL MIEMBRO DESIGNADO, si lo hay. Se valida AQUI y no solo al simular, porque un nombre mal
+      // escrito atasca la tarea en cada caso y el sintoma -«la corrida se queda corta»- no dice
+      // cual es el problema. Es la misma validacion que usa el aviso previo al informe.
+      const miembro = val('resources.miembro');
+      if (miembro) {
+        const poolDatos = this._getPools().find((p) => p.name === pool);
+        const suyo = ((poolDatos && poolDatos.members) || []).find((m) => m && m.nombre === miembro);
+        if (!suyo) {
+          const disponibles = ((poolDatos && poolDatos.members) || []).map((m) => m && m.nombre).filter(Boolean);
+          throw new Error(
+            `${name}: «${miembro}» no está en la piscina «${pool}». `
+            + (disponibles.length ? `Los miembros son: ${disponibles.join(', ')}.` : 'Esa piscina no tiene miembros.')
+          );
+        }
+        recurso.miembro = miembro;
+      }
     }
 
     const current = this._taskData(el);

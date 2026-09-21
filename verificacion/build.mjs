@@ -59,6 +59,11 @@ writeFileSync(join(AQUI, 'DominantRoute.mjs'), leer('DominantRoute.js'));
 // que decide si los numeros de la corrida significan algo, asi que hay que poder probarla sola.
 writeFileSync(join(AQUI, 'CapacityGuard.mjs'), leer('CapacityGuard.js'));
 
+// MemberAssignment es puro: valida las designaciones de miembro y arma los desplegables. Sus tres
+// fallos son silenciosos -la corrida se queda corta y no dice por que-, asi que hay que poder
+// probarlos sin navegador.
+writeFileSync(join(AQUI, 'MemberAssignment.mjs'), leer('MemberAssignment.js'));
+
 // HeatmapZones es puro: reparte masa en celdas y no toca el DOM ni bpmn-js.
 writeFileSync(join(AQUI, 'HeatmapZones.mjs'), leer('HeatmapZones.js'));
 

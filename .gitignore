@@ -20,6 +20,7 @@ verificacion/HeatmapZones.mjs
 verificacion/LegalOvertime.mjs
 verificacion/DominantRoute.mjs
 verificacion/CapacityGuard.mjs
+verificacion/MemberAssignment.mjs
 verificacion/ModelUtil.mjs
 verificacion/util.mjs
 

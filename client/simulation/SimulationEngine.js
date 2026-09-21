@@ -203,17 +203,39 @@ class ResourcePool {
    * se reserva tiene que ser la de alguien que sepa. Reservar la de cualquiera y
    * luego buscar persona seria contar capacidad que no existe.
    */
-  request(quantity, task, requeridas) {
+  request(quantity, task, requeridas, designado) {
     if (this.available >= quantity) {
       this.available -= quantity;
-      return { tomada: true, miembro: this._elegir(requeridas) };
+      return { tomada: true, miembro: this._elegir(requeridas, designado) };
     }
-    this.queue.push({ quantity, task, requeridas });
+    this.queue.push({ quantity, task, requeridas, designado });
     return { tomada: false, miembro: null };
   }
 
-  _elegir(requeridas) {
+  /**
+   * Quien hace el trabajo: el designado si la tarea lo nombra, y si no la ronda de siempre.
+   *
+   * LA DESIGNACION ES UNA RESTRICCION, NO UNA PREFERENCIA, y es una decision explicita: si la
+   * tarea dice que la hace «lizz», espera a lizz aunque haya otro miembro libre. Es lo fiel a
+   * «solo lizz hace esto» -una habilitacion nominal, que en planta es lo normal para una maquina
+   * o una certificacion- y lo contrario -caer a otro miembro- haria que el reparto dejara de ser
+   * el declarado sin avisar.
+   *
+   * Y por eso mismo puede BLOQUEAR: si el designado no esta en la piscina, o no tiene la
+   * habilidad exigida, no hay nadie que pueda hacerla. Ese caso NO se resuelve aqui en silencio
+   * -devolver `null` y seguir haria que la tarea se ejecutara sin recurso, contando capacidad que
+   * no existe-. Lo detecta `avisosDeDesignacion` antes de simular, que es donde el usuario puede
+   * arreglarlo.
+   */
+  _elegir(requeridas, designado) {
     if (!this.conNombres) return null;
+
+    // DESIGNACION: solo esa persona, y solo si puede. Sin ronda y sin alternativas.
+    if (designado) {
+      const suyo = this.members.find((m) => m.nombre === designado);
+      return (suyo && puedeHacerla(suyo, requeridas)) ? suyo : null;
+    }
+
     const aptos = this.members.filter((m) => puedeHacerla(m, requeridas));
     if (!aptos.length) return null;
     // Ronda sobre los APTOS: se avanza el turno segun cuantos hayan.
@@ -227,7 +249,7 @@ class ResourcePool {
     this.queue = this.queue.filter(waiting => {
       if (this.available >= waiting.quantity) {
         this.available -= waiting.quantity;
-        newTasks.push({ task: waiting.task, miembro: this._elegir(waiting.requeridas) });
+        newTasks.push({ task: waiting.task, miembro: this._elegir(waiting.requeridas, waiting.designado) });
         return false; // remove from queue
       }
       return true; // keep in queue
@@ -707,6 +729,33 @@ export default class SimulationEngine {
     // bloquea, no acelera) y es lo unico que puede producir «bloqueado por
     // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
     const requeridas = habilidadesRequeridas(data);
+    // EL MIEMBRO DESIGNADO, leido aqui porque la guarda de habilidad lo necesita: si la tarea
+    // nombra a alguien que NO tiene la habilidad exigida, el bloqueo es seguro y hay que detectarlo
+    // igual que el caso de «ninguno de la piscina la tiene». Sin esto, la tarea pasaria la guarda
+    // por la habilidad de OTRO miembro y luego se quedaria sin nadie en `_elegir`, ejecutandose sin
+    // recurso.
+    const designado = (data.resources && data.resources.miembro) || null;
+    const designadoPuede = !designado || !pool
+      || (() => { const m = pool.members.find((x) => x.nombre === designado); return m && puedeHacerla(m, requeridas); })();
+
+    if (pool && !designadoPuede) {
+      const motivo = pool.members.some((m) => m.nombre === designado)
+        ? `"${designado}" no tiene la habilidad exigida (${requeridas.join(', ') || 'ninguna'})`
+        : `"${designado}" no esta en la piscina "${pool.name}"`;
+      const duracionBloqueadaMs = this._msConArranque(
+        timeToMilliseconds((data.processingTime && data.processingTime.value) || 0,
+          data.processingTime && data.processingTime.unit), new Date(this.clock || 0));
+      this.operatividad.bloqueadoPorHabilidadMin += duracionBloqueadaMs / 60000;
+      this.operatividad.tareasBloqueadas++;
+      console.warn(`[A5] tarea bloqueada por designacion: ${element.id} designa a "${designado}" y ${motivo}.`);
+      const r = this.results.get(element.id);
+      if (r) {
+        r.totalBlockedBySkill = (r.totalBlockedBySkill || 0) + 1;
+        r.totalBlockedMinutes = (r.totalBlockedMinutes || 0) + duracionBloqueadaMs / 60000;
+      }
+      return;
+    }
+
     if (pool && requeridas.length && !pool.puedeAtender(requeridas)) {
       // El tiempo bloqueado es la DURACION que esa tarea habria ocupado: no hay
       // un reloj corriendo que medir, porque la tarea no llega a arrancar. Tomar
@@ -744,7 +793,7 @@ export default class SimulationEngine {
       };
       // El marcador se queda en la cola de la piscina; `release()` lo devuelve
       // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
-      const pedido = pool.request(quantityRequired, marcador, requeridas);
+      const pedido = pool.request(quantityRequired, marcador, requeridas, designado);
       if (!pedido.tomada) return;
       miembro = pedido.miembro;
     }

@@ -149,8 +149,18 @@ const simTask3 = {
 };
 
 const startEvent = elemento('StartEvent_1', 'Inicio', { isRoot: true }, 'bpmn:StartEvent');
+// LA PISCINA LLEVA MIEMBROS, y ahora son necesarios: el desplegable de habilidad se puebla con
+// las habilidades dadas de alta en los recursos, y el de miembro con los nombres de la piscina.
+// Sin miembros, los dos desplegables saldrian vacios y las comprobaciones no probarian nada.
 const proceso = elemento('Process_1', 'Proceso', {
-  resourcePools: [ { name: 'Soldadores', quantity: 2 } ]
+  resourcePools: [ {
+    name: 'Soldadores',
+    quantity: 2,
+    members: [
+      { nombre: 'lizz', habilidades: [ 'soldadura', 'pintura' ], tarifaHora: 40 },
+      { nombre: 'tecnico a', habilidades: [ 'soldadura' ], tarifaHora: 80 }
+    ]
+  } ]
 }, 'bpmn:Process');
 
 const task1 = elemento('Task_1', 'Cortar', simTask1);
@@ -244,11 +254,11 @@ check('Tareas: se pintan los valores de barrera guardados',
 //
 // El «?» va en la cabecera y NO en cada celda: con 23 columnas por tarea, un boton
 // por celda serian cientos repitiendo el mismo texto. Se comprueba justo eso, porque
-// es lo que puede degradarse al tocar la tabla: que siga habiendo 16 botones y no 16
+// es lo que puede degradarse al tocar la tabla: que siga habiendo 17 botones y no 17
 // por fila.
 const COLUMNAS_CON_AYUDA = [
   'tarea', 'distribucion', 'tiempo', 'unidad', 'tiempoMin', 'tiempoModa', 'tiempoMax',
-  'tasaFallo', 'retrabajo', 'unidadRetrabajo', 'recurso', 'cant', 'frecuencia',
+  'tasaFallo', 'retrabajo', 'unidadRetrabajo', 'recurso', 'miembro', 'cant', 'frecuencia',
   'barrera', 'carga', 'habilidad'
 ];
 
@@ -270,7 +280,7 @@ check('Tareas: cada «?» apunta a una columna conocida, sin repetirse',
 // cabecera: expandir esa celda descuadraria el ancho de su columna y moveria la tabla.
 const filaAyuda = document.querySelector('thead .fila-ayuda-col');
 check('Tareas: la ayuda va en una fila compartida dentro de la cabecera',
-  Boolean(filaAyuda) && filaAyuda.querySelector('td').getAttribute('colspan') === '22',
+  Boolean(filaAyuda) && filaAyuda.querySelector('td').getAttribute('colspan') === '23',
   filaAyuda ? filaAyuda.querySelector('td').getAttribute('colspan') : 'sin fila');
 
 check('Tareas: la ayuda arranca OCULTA', filaAyuda.classList.contains('hidden'));
@@ -1163,6 +1173,20 @@ check('Carga UI: hay columnas de masa cargada, arrastrada y distancia',
   && Boolean(celda('Task_1', 'carga.distanciaM')));
 check('Carga UI: y una columna de habilidad',
   Boolean(celda('Task_1', 'habilidad')));
+// LA HABILIDAD ES AHORA UN DESPLEGABLE DE LAS QUE EXISTEN, no una caja de texto libre. Es el
+// cambio que evita el peor fallo posible: exigir una habilidad que nadie tiene BLOQUEA la tarea
+// en silencio, y el sintoma -«la corrida se queda corta»- no dice cual es el problema.
+check('Carga UI: la habilidad es un desplegable, no una caja de texto',
+  celda('Task_1', 'habilidad').tagName === 'SELECT',
+  celda('Task_1', 'habilidad').tagName);
+// Y ofrece SOLO lo que hay dado de alta en los recursos. Con una piscina sin miembros no hay
+// ninguna, asi que la unica opcion es vacio: es correcto y hay que poder verlo.
+{
+  const ops = [ ...celda('Task_1', 'habilidad').options ].map((o) => o.value).filter(Boolean);
+  check('Carga UI: y solo ofrece las habilidades dadas de alta en los recursos',
+    ops.includes('soldadura') && ops.includes('pintura') && ops.length === 2,
+    `ofrece [${ops.join(', ')}]: soldadura esta en lizz y en tecnico a, pintura solo en lizz`);
+}
 check('Carga UI: sin carga declarada las casillas salen VACÍAS (no un 0)',
   celda('Task_1', 'carga.masaCargadaKg').value === ''
   && celda('Task_1', 'carga.distanciaM').value === '',
@@ -1181,12 +1205,14 @@ check('Carga UI: una sola habilidad se guarda en singular',
   dCarga.habilidad === 'soldadura' && !('habilidades' in dCarga),
   JSON.stringify({ h: dCarga.habilidad, hs: dCarga.habilidades }));
 
-// Varias habilidades separadas por comas -> lista.
-escribir('Task_1', 'habilidad', 'soldadura, pintura');
+// ELEGIR OTRA del desplegable guarda esa. Antes esto era una caja de texto donde se escribian
+// varias separadas por comas; ahora es un desplegable con las que existen, asi que lo que se
+// comprueba es que la opcion elegida es la que se guarda.
+escribir('Task_1', 'habilidad', 'pintura');
 w = recoger('tasks');
-check('Carga UI: varias habilidades se guardan como lista',
-  iguales(buscar(w, 'Task_1').habilidades, [ 'soldadura', 'pintura' ]),
-  JSON.stringify(buscar(w, 'Task_1').habilidades));
+check('Carga UI: elegir otra habilidad guarda esa',
+  buscar(w, 'Task_1').habilidad === 'pintura',
+  JSON.stringify({ h: buscar(w, 'Task_1').habilidad, hs: buscar(w, 'Task_1').habilidades }));
 
 // Y al vaciarla, se borran las dos formas.
 escribir('Task_1', 'habilidad', '');
@@ -1227,54 +1253,71 @@ check('Miembros UI: se pinta la subtabla de miembros',
 check('Miembros UI: y el botón de añadir miembro',
   Boolean(document.querySelector('.btn-anadir-miembro')));
 
+// La piscina del fixture YA trae dos miembros -`lizz` y `tecnico a`-, porque los desplegables de
+// miembro y habilidad se pueblan con ellos. Asi que se cuenta RELATIVO: añadir tiene que sumar una
+// fila a las que hubiera, no dejar exactamente una.
+const miembrosAntes = document.querySelectorAll('.fila-miembro').length;
 document.querySelector('.btn-anadir-miembro').click();
 check('Miembros UI: añadir crea una fila de miembro con sus cuatro campos',
-  document.querySelectorAll('.fila-miembro').length === 1
+  document.querySelectorAll('.fila-miembro').length === miembrosAntes + 1
   && Boolean(document.querySelector('[data-miembro="nombre"]'))
   && Boolean(document.querySelector('[data-miembro="tarifaHora"]'))
   && Boolean(document.querySelector('[data-miembro="cargaMaximaKg"]'))
   && Boolean(document.querySelector('[data-miembro="habilidades"]')));
 
-document.querySelector('[data-miembro="nombre"]').value = 'Ana';
-document.querySelector('[data-miembro="tarifaHora"]').value = '55';
-document.querySelector('[data-miembro="cargaMaximaKg"]').value = '25';
-document.querySelector('[data-miembro="habilidades"]').value = 'soldadura, pintura';
+// SE ESCRIBE EN LA FILA NUEVA, no en `document.querySelector` a secas: la piscina del fixture ya
+// trae dos miembros, asi que el primer campo del documento es el de `lizz` y no el recien creado.
+// Es el tipo de error que hace que una prueba compruebe OTRA cosa de la que dice.
+const filaDeAna = document.querySelectorAll('.fila-miembro')[miembrosAntes];
+filaDeAna.querySelector('[data-miembro="nombre"]').value = 'Ana';
+filaDeAna.querySelector('[data-miembro="tarifaHora"]').value = '55';
+filaDeAna.querySelector('[data-miembro="cargaMaximaKg"]').value = '25';
+filaDeAna.querySelector('[data-miembro="habilidades"]').value = 'soldadura, pintura';
 
 document.querySelector('.btn-anadir-miembro').click();
-document.querySelectorAll('.fila-miembro')[1].querySelector('[data-miembro="nombre"]').value = 'Luis';
+document.querySelectorAll('.fila-miembro')[miembrosAntes + 1].querySelector('[data-miembro="nombre"]').value = 'Luis';
 
 w = recoger('resources');
 const poolGuardada = w[0].data.resourcePools[0];
+// Los dos del fixture siguen ahi, y los dos nuevos detras: es el mismo orden en que se pintan.
 check('Miembros UI: se guardan los miembros con sus datos',
-  iguales(poolGuardada.members, [
-    { nombre: 'Ana', tarifaHora: 55, cargaMaximaKg: 25, habilidades: [ 'soldadura', 'pintura' ] },
-    { nombre: 'Luis' }
-  ]), JSON.stringify(poolGuardada.members));
+  poolGuardada.members.length === 4
+  && iguales(poolGuardada.members[2], { nombre: 'Ana', tarifaHora: 55, cargaMaximaKg: 25, habilidades: [ 'soldadura', 'pintura' ] })
+  && poolGuardada.members[3].nombre === 'Luis',
+  JSON.stringify(poolGuardada.members));
 check('Miembros UI: la cantidad de la piscina NO cambia por poner nombres',
   poolGuardada.quantity === 2, poolGuardada.quantity);
 
-// Un miembro sin nombre: se avisa.
-document.querySelector('.btn-anadir-miembro').click();
-document.querySelectorAll('.fila-miembro')[2].querySelector('[data-miembro="tarifaHora"]').value = '40';
+// Un miembro sin nombre: se avisa. La fila se localiza por POSICION desde el final -la que se
+// acaba de anadir-, no por un indice fijo: la piscina del fixture trae dos miembros de arranque y
+// un indice escrito a mano apuntaria a `lizz` en vez de a la nueva.
+const filas = () => document.querySelectorAll('.fila-miembro');
+const filaSinNombre = filas()[filas().length - 1];
+filaSinNombre.querySelector('[data-miembro="nombre"]').value = '';
+filaSinNombre.querySelector('[data-miembro="tarifaHora"]').value = '40';
 let errorMiembro = null;
 try { recoger('resources'); } catch (e) { errorMiembro = e.message; }
 check('Miembros UI: un miembro sin nombre se rechaza',
   Boolean(errorMiembro) && /falta el nombre/.test(errorMiembro), errorMiembro);
-document.querySelectorAll('.fila-miembro')[2].remove();
+filaSinNombre.remove();
 
-// Nombre repetido.
-document.querySelectorAll('.fila-miembro')[1].querySelector('[data-miembro="nombre"]').value = 'Ana';
+// Nombre repetido: se repite el de OTRO miembro de la misma piscina, que es lo que hay que
+// rechazar. Se usa `lizz`, que ya existe en el fixture.
+filas()[0].querySelector('[data-miembro="nombre"]').value = 'Ana';
 errorMiembro = null;
 try { recoger('resources'); } catch (e) { errorMiembro = e.message; }
 check('Miembros UI: un nombre repetido en la misma piscina se rechaza',
   Boolean(errorMiembro) && /repetido/.test(errorMiembro), errorMiembro);
-document.querySelectorAll('.fila-miembro')[1].querySelector('[data-miembro="nombre"]').value = 'Luis';
+filas()[0].querySelector('[data-miembro="nombre"]').value = 'lizz';
 
-// El botón de quitar miembro quita SOLO ese miembro.
-document.querySelectorAll('.fila-miembro')[1].querySelector('.btn-quitar-miembro').click();
+// El botón de quitar miembro quita SOLO ese miembro, y no la piscina entera.
+const antesDeQuitar = filas().length;
+filas()[filas().length - 1].querySelector('.btn-quitar-miembro').click();
 check('Miembros UI: quitar un miembro no borra la piscina',
   document.querySelectorAll('.filas-pool > tr').length === 1
-  && document.querySelectorAll('.fila-miembro').length === 1);
+  && document.querySelectorAll('.fila-miembro').length === antesDeQuitar - 1,
+  `piscinas ${document.querySelectorAll('.filas-pool > tr').length}, `
+  + `miembros ${antesDeQuitar} -> ${document.querySelectorAll('.fila-miembro').length}`);
 
 // Y solo hay UNA piscina leída, no una por miembro (filas anidadas).
 document.querySelector('.btn-anadir-miembro').click();

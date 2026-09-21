@@ -2818,12 +2818,14 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ DataTablePanel)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./WarmupCurve */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./LaborRules */ "./client/simulation/LaborRules.js");
-/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+/* harmony import */ var _MemberAssignment_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./MemberAssignment.js */ "./client/simulation/MemberAssignment.js");
+/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+
 
 
 
@@ -3005,7 +3007,8 @@ const AYUDA_COLUMNAS = {
   frecuencia: 'por token (una vez por pieza) o por lote (una sola vez por lote). Decide si el tiempo y la carga se aplican por pieza o por lote.',
   barrera: 'Solo con «por lote»: quien firma el lote. disp. es la probabilidad de que atiendan; si no atienden, se espera una triangular min/moda/max; tol. es cuanto se tolera antes de marcarlo.',
   carga: 'Opcional. Cargada es la masa que SOPORTA la persona; arrastrada, la que desliza. Se aplican segun la frecuencia: por pieza o una vez por lote.',
-  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Para varias, separadas por comas.'
+  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Solo se ofrecen las que estan dadas de alta en los recursos, para que no se pueda exigir una que nadie tiene.',
+  miembro: 'El miembro CONCRETO que hace esta tarea, si solo la puede hacer esa persona. Con un nombre, la tarea ESPERA a ese miembro aunque otro esté libre (es una restricción, no una preferencia). Sin nombre, el motor elige de la piscina por turnos, que es el comportamiento de siempre. Solo se ofrecen los miembros de la piscina elegida.'
 };
 
 /**
@@ -3381,19 +3384,19 @@ class DataTablePanel {
    */
   _esEditable(element) {
     if (!element || (0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(element)) return false;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:StartEvent')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Participant')) return true;
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:SequenceFlow')
-      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element.source, 'bpmn:ExclusiveGateway'));
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:StartEvent')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Participant')) return true;
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:SequenceFlow')
+      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element.source, 'bpmn:ExclusiveGateway'));
   }
 
   _ponerLapiz(element) {
-    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(
+    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(
       `<div class="sim-data-table-overlay" title="Editar los datos de simulación de este elemento"`
       + ` data-tip="Editar en la tabla de datos">${svg(EditIcon)}</div>`
     );
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(nodo, 'click', () => this.openFor(element));
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(nodo, 'click', () => this.openFor(element));
     this._overlayId = this._overlays.add(element, 'sim-data-table', {
       position: { top: -12, left: -12 },
       html: nodo
@@ -3412,7 +3415,7 @@ class DataTablePanel {
   _init() {
     if (this._panel) return;
 
-    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(`
+    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`
       <div class="${PANEL_CLS}">
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
@@ -3447,23 +3450,23 @@ class DataTablePanel {
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
 
     panel.querySelectorAll('.panel-tabs button').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(btn, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
-        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
         // Si la ayuda esta abierta, se RECARGA con la pestana nueva: si no, al
         // cambiar de pestana seguiria explicando la anterior, que es peor que no
         // tener ayuda porque el usuario lee la respuesta equivocada.
-        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._ayuda).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._ayuda).add('hidden');
+        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._ayuda).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._ayuda).add('hidden');
           this._toggleAyuda();
         }
         this._render();
@@ -3471,11 +3474,11 @@ class DataTablePanel {
     });
   }
 
-  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._panel).has(OPEN_CLS); }
+  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._panel).has(OPEN_CLS); }
   toggle() { this.isOpen() ? this.close() : this.open(); }
   open() {
     if (!this._panel) this._init();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._panel).add(OPEN_CLS);
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._panel).add(OPEN_CLS);
     this._render();
   }
 
@@ -3491,10 +3494,10 @@ class DataTablePanel {
   openFor(element) {
     if (!element) return this.open();
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
     else this._activeTab = 'tasks';
 
     this._focusId = element.id;
@@ -3503,11 +3506,11 @@ class DataTablePanel {
     // _render() reconstruye las pestañas sin conservar cual estaba activa, asi
     // que se marca aqui.
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     const fila = this._panel.querySelector(`tbody tr[data-el-id="${element.id}"]`);
     if (fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(fila).add('fila-foco');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).add('fila-foco');
       if (fila.scrollIntoView) fila.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
   }
@@ -3560,7 +3563,7 @@ class DataTablePanel {
     this._activeTab = objetivo.tab || 'tasks';
     this.open();
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     // Despues de abrir y RENDERIZAR: el resaltado trabaja sobre nodos que hasta
     // ahora no existian.
@@ -3600,7 +3603,7 @@ class DataTablePanel {
     this._limpiarDestino();
 
     this._destinoResaltado = objetivos;
-    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(nodo).add('destino-resaltado'));
+    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(nodo).add('destino-resaltado'));
     if (objetivos[0].scrollIntoView) objetivos[0].scrollIntoView({ block: 'center', inline: 'nearest' });
     if (objetivos[0].focus && objetivos[0].focus.call) objetivos[0].focus();
 
@@ -3622,12 +3625,12 @@ class DataTablePanel {
    */
   _limpiarDestino() {
     clearTimeout(this._temporizadorDestino);
-    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(nodo).remove('destino-resaltado'));
+    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(nodo).remove('destino-resaltado'));
     this._destinoResaltado = null;
   }
 
   close() {
-    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._panel).remove(OPEN_CLS);
+    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._panel).remove(OPEN_CLS);
     this._focusId = null;
     // El resaltado del atajo no sobrevive al cierre: al volver a abrir, la tabla tiene
     // que verse limpia y no con la marca de un viaje de hace media hora.
@@ -3669,11 +3672,11 @@ class DataTablePanel {
     this._quitarOferta();
     if (!this._panel) return;
 
-    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(
+    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(
       '<button class="btn-desactivar" type="button">Desactivar modo y reintentar</button>'
     );
 
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(boton, 'click', () => {
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(boton, 'click', () => {
       this._quitarOferta();
       try {
         this._editorActions.trigger('toggleTokenSimulation');
@@ -3699,17 +3702,17 @@ class DataTablePanel {
   // -- acceso a datos -------------------------------------------------------
 
   _getTasks() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task'));
   }
 
   _getFlows() {
     return this._elementRegistry.filter(
-      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el.source, 'bpmn:ExclusiveGateway')
+      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el.source, 'bpmn:ExclusiveGateway')
     );
   }
 
   _getRootStartEvent() {
-    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:StartEvent'));
+    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
     return starts.find((el) => {
       const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el);
       return d && d.isRoot;
@@ -3725,7 +3728,7 @@ class DataTablePanel {
    * algun dia, tiene que cambiar en los dos sitios a la vez.
    */
   _getProcessRoot() {
-    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:Participant')) || null;
+    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Participant')) || null;
   }
 
   /** Piscinas de recursos declaradas en el proceso. */
@@ -3830,7 +3833,7 @@ class DataTablePanel {
       ${listas(a.ojo, 'ojo')}
     `;
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(this._ayuda).toggle('hidden');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._ayuda).toggle('hidden');
   }
 
   /**
@@ -3845,7 +3848,7 @@ class DataTablePanel {
     if (this._getRootStartEvent()) return;
     if (!this._body) return;
 
-    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.domify)(
+    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(
       '<p class="aviso-raiz">Sin evento raíz configurado la simulación no se ejecutará. '
       + 'Ve a la pestaña <strong>Global</strong> para crearlo.</p>'
     );
@@ -3883,6 +3886,7 @@ class DataTablePanel {
             ${th('Retrabajo', 'retrabajo')}
             ${th('Unidad', 'unidadRetrabajo')}
             ${th('Recurso', 'recurso')}
+            ${th('Miembro (opcional)', 'miembro')}
             ${th('Cant.', 'cant')}
             ${th('Frecuencia', 'frecuencia')}
             ${th('Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia', 'barrera', ' colspan="5" class="col-barrera"')}
@@ -3893,7 +3897,7 @@ class DataTablePanel {
                cabecera: eso descuadraria el ancho de esa columna y moveria toda la
                tabla. Aqui el texto sale siempre en el mismo sitio y el ancho no cambia. -->
           <tr class="fila-ayuda-col hidden">
-            <td colspan="22" class="ayuda-campo"></td>
+            <td colspan="23" class="ayuda-campo"></td>
           </tr>
         </thead>
         <tbody>
@@ -3920,6 +3924,35 @@ class DataTablePanel {
             const selectPool = opciones.map((n) =>
               `<option value="${esc(n)}" ${actual === n ? 'selected' : ''}>${n === '' ? '(ninguno)' : esc(n)}</option>`
             ).join('');
+
+            // EL MIEMBRO CONCRETO, opcional. Se puebla con los de la piscina elegida: un
+            // desplegable con TODOS los nombres del modelo permitiria designar a alguien de otra
+            // piscina, que es el error que la validacion tiene que atrapar despues. Ofreciendo solo
+            // los suyos, no se puede cometer.
+            // LAS HABILIDADES SON UN DESPLEGABLE DE LAS QUE EXISTEN, no una caja de texto.
+            //
+            // POR QUE: una habilidad que la tarea exige y que NADIE tiene BLOQUEA la tarea, y es el
+            // peor fallo posible porque es silencioso -la corrida termina con trabajo sin hacer y
+            // sin ningun error-. Con las habilidades dadas de alta en los recursos, ese error deja
+            // de poder cometerse por una errata. Se conserva el valor guardado aunque ya no exista,
+            // para no borrarlo sin querer.
+            const habActual = Array.isArray(d.habilidades) ? d.habilidades.join(', ') : (d.habilidad || '');
+            const habs = (0,_MemberAssignment_js__WEBPACK_IMPORTED_MODULE_3__.habilidadesDisponibles)(this._getPools());
+            const opcionesHab = [ '' ].concat(habs)
+              .concat(habActual && !habs.includes(habActual) ? [ habActual ] : []);
+            const selectHabilidad = `<select class="cell mini" data-field="habilidad">
+              ${opcionesHab.map((n) => `<option value="${esc(n)}" ${habActual === n ? 'selected' : ''}>${
+                n === '' ? '(ninguna)' : esc(n)}</option>`).join('')}
+            </select>`;
+
+            const miembroActual = (d.resources && d.resources.miembro) || '';
+            const miembros = (0,_MemberAssignment_js__WEBPACK_IMPORTED_MODULE_3__.miembrosDePiscina)(this._getPools(), actual);
+            const selectMiembro = [ '' ].concat(miembros)
+              // Si designa a alguien que ya no esta en la piscina se conserva como opcion, para no
+              // borrar la designacion sin querer al abrir la pestana.
+              .concat(miembroActual && !miembros.includes(miembroActual) ? [ miembroActual ] : [])
+              .map((n) => `<option value="${esc(n)}" ${miembroActual === n ? 'selected' : ''}>${
+                n === '' ? '(el que esté libre)' : esc(n)}</option>`).join('');
 
             // Frecuencia y barrera. La barrera SOLO tiene sentido con «por
             // lote» (es lo que hace esperar al lote entero), asi que con «por
@@ -3965,6 +3998,9 @@ class DataTablePanel {
                 <td><input type="number" step="any" min="0" class="cell" data-field="reworkTime.value" value="${d.reworkTime.value}"></td>
                 <td><select class="cell" data-field="reworkTime.unit">${units(d.reworkTime.unit)}</select></td>
                 <td><select class="cell" data-field="resources.pool">${selectPool}</select></td>
+                <td><select class="cell" data-field="resources.miembro" ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
+                  ${selectMiembro}
+                </select></td>
                 <td><input type="number" step="1" min="1" class="cell mini" data-field="resources.quantityRequired"
                   value="${(d.resources && d.resources.quantityRequired) || 1}"
                   ${actual ? '' : 'disabled title="Elige primero una piscina"'}>
@@ -3981,8 +4017,7 @@ class DataTablePanel {
                 ${celdaCarga('masaCargadaKg', c.masaCargadaKg, 'kg', 'step="any" min="0"')}
                 ${celdaCarga('masaArrastradaKg', c.masaArrastradaKg, 'kg', 'step="any" min="0"')}
                 ${celdaCarga('distanciaM', c.distanciaM, 'm', 'step="any" min="0"')}
-                <td><input type="text" class="cell mini" data-field="habilidad"
-                  value="${esc(habilidad)}" placeholder="p. ej. soldadura"></td>
+                <td>${selectHabilidad}</td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -4024,7 +4059,7 @@ class DataTablePanel {
   /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
   _bindAyudaDeColumnas() {
     this._body.querySelectorAll('.btn-ayuda-col').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(btn, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', (e) => {
         if (e && e.preventDefault) e.preventDefault();
         this._mostrarAyudaColumna(btn.dataset.ayudaCol);
       });
@@ -4043,24 +4078,24 @@ class DataTablePanel {
 
     const celda = fila.querySelector('td');
     const texto = AYUDA_COLUMNAS[clave] || '';
-    const yaVisible = !(0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(fila).has('hidden');
+    const yaVisible = !(0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).has('hidden');
 
     if (yaVisible && celda.textContent === texto) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(fila).add('hidden');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).add('hidden');
       this._marcarAyudaColumna(null);
       return;
     }
 
     celda.textContent = texto;
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(fila).remove('hidden');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).remove('hidden');
     this._marcarAyudaColumna(clave);
   }
 
   /** Deja marcado el «?» de la columna cuya ayuda esta a la vista. */
   _marcarAyudaColumna(clave) {
     this._body.querySelectorAll('.btn-ayuda-col').forEach((b) => {
-      if (b.dataset.ayudaCol === clave) (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(b).add('activo');
-      else (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(b).remove('activo');
+      if (b.dataset.ayudaCol === clave) (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).add('activo');
+      else (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).remove('activo');
     });
   }
 
@@ -4085,7 +4120,7 @@ class DataTablePanel {
         });
       };
 
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(select, 'change', sincronizar);
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(select, 'change', sincronizar);
       sincronizar();
     });
   }
@@ -4113,7 +4148,7 @@ class DataTablePanel {
       // muerta para siempre.
       const selPool = tr.querySelector('[data-field="resources.pool"]');
       if (selPool) {
-        min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(selPool, 'change', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(selPool, 'change', () => {
           const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
           if (!cant) return;
           cant.disabled = selPool.value === '';
@@ -4122,7 +4157,7 @@ class DataTablePanel {
       }
 
       tr.querySelectorAll('[data-field]').forEach((campo) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
+        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
       });
     });
   }
@@ -4143,9 +4178,9 @@ class DataTablePanel {
    * aqui es lo que hay guardado». Vuelve a amarillo en cuanto se edita otra vez.
    */
   _autoguardarFila(tr, campo) {
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('invalido');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardado');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('invalido');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('guardando');
 
     let fila;
     try {
@@ -4153,14 +4188,14 @@ class DataTablePanel {
     } catch (err) {
       // Se queda en rojo y SIN guardar, y el texto del usuario no se toca para que
       // pueda corregirlo. Una fila invalida no bloquea a las demas.
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('invalido');
       this._setStatus(err.message, 'error');
       return;
     }
 
     if (!fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
       return;
     }
 
@@ -4184,14 +4219,14 @@ class DataTablePanel {
         return;
       }
 
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('invalido');
       this._setStatus(`No se pudo guardar: ${err.message || err}`, 'error');
       return;
     }
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).remove('guardando');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(campo).add('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('guardado');
     this._setStatus(`Guardado: ${this._label(fila.element)}.`, 'ok');
   }
 
@@ -4250,7 +4285,7 @@ class DataTablePanel {
 
     const boton = this._body.querySelector('.btn-anadir-fila');
     if (boton) {
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(boton, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(boton, 'click', () => {
         const tbody = this._body.querySelector('.filas-pool');
         // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
         // parseo de un contenedor que no sea <table>/<tbody>.
@@ -4271,7 +4306,7 @@ class DataTablePanel {
       // seria guardar y reabrir, que es justo lo que el usuario no hace.
       this._bindCobro(tbody);
 
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(tbody, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(tbody, 'click', (e) => {
         const objetivo = e.target;
         if (!objetivo || !objetivo.closest) return;
 
@@ -4350,8 +4385,8 @@ class DataTablePanel {
       if (pieza) pieza.hidden = !porPieza;
     };
 
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(origen, 'change', sincronizar);
-    min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(cobro, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(origen, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(cobro, 'change', sincronizar);
     sincronizar();
   }
 
@@ -4506,7 +4541,7 @@ class DataTablePanel {
     this._body.querySelectorAll('[data-field="branchingProbability"]').forEach((input) => {
       if (input.disabled) return;
 
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(input, 'input', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(input, 'input', () => {
         this._equilibrar(input);
         this._refrescarSumas();
       });
@@ -4515,7 +4550,7 @@ class DataTablePanel {
       // rango -> al limite. Sin esto el campo podia quedarse en -10 y el
       // indicador decia "100 %" (la suma los recortaba) mientras el guardado lo
       // bloqueaba: indicador y validacion se contradecian.
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(input, 'change', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(input, 'change', () => {
         const crudo = String(input.value).replace(',', '.');
         const n = Number(crudo);
         if (crudo.trim() === '' || Number.isNaN(n)) input.value = '0';
@@ -4622,7 +4657,7 @@ class DataTablePanel {
       // que ya existiera, pero no habia forma de crearlo desde aqui. El usuario
       // rellenaba las tareas, guardaba, y al simular recibia "No root start
       // event found" sin saber que le faltaba. Ahora se puede crear desde aqui.
-      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_4__.is)(el, 'bpmn:StartEvent'));
+      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
 
       if (!inicios.length) {
         this._body.innerHTML = `
@@ -4652,7 +4687,7 @@ class DataTablePanel {
       `;
 
       this._body.querySelectorAll('.btn-raiz').forEach((btn) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
+        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
       });
       return;
     }
@@ -4943,7 +4978,7 @@ class DataTablePanel {
     listas.forEach(({ accion, tbody, fila }) => {
       const boton = this._body.querySelector(`[data-accion="${accion}"]`);
       if (boton) {
-        min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(boton, 'click', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(boton, 'click', () => {
           const cuerpo = this._body.querySelector(tbody);
           // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
           // parseo de un contenedor que no sea <table>/<tbody>.
@@ -4953,7 +4988,7 @@ class DataTablePanel {
 
       const cuerpo = this._body.querySelector(tbody);
       if (cuerpo) {
-        min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(cuerpo, 'click', (e) => {
+        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(cuerpo, 'click', (e) => {
           const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
           if (!btn) return;
           const tr = btn.closest('tr');
@@ -4966,8 +5001,8 @@ class DataTablePanel {
       if (!f.key.startsWith('warmup.')) return;
       const campo = this._body.querySelector(`[data-field="${f.key}"]`);
       if (!campo) return;
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
     });
 
     this._bindAyudaPorCampo(this._body);
@@ -4987,17 +5022,17 @@ class DataTablePanel {
    */
   _bindAyudaPorCampo(alcance) {
     alcance.querySelectorAll('.btn-ayuda-campo').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_5__.event.bind(btn, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', (e) => {
         if (e && e.preventDefault) e.preventDefault();
         const caja = alcance.querySelector(`[data-ayuda-de="${btn.dataset.ayuda}"]`);
         if (!caja) return;
 
-        if ((0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(caja).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(caja).remove('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(btn).add('activo');
+        if ((0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(caja).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(caja).remove('hidden');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(btn).add('activo');
         } else {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(caja).add('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_5__.classes)(btn).remove('activo');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(caja).add('hidden');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(btn).remove('activo');
         }
       });
     });
@@ -5090,6 +5125,23 @@ class DataTablePanel {
         );
       }
       recurso = { pool, quantityRequired: cantidad };
+
+      // EL MIEMBRO DESIGNADO, si lo hay. Se valida AQUI y no solo al simular, porque un nombre mal
+      // escrito atasca la tarea en cada caso y el sintoma -«la corrida se queda corta»- no dice
+      // cual es el problema. Es la misma validacion que usa el aviso previo al informe.
+      const miembro = val('resources.miembro');
+      if (miembro) {
+        const poolDatos = this._getPools().find((p) => p.name === pool);
+        const suyo = ((poolDatos && poolDatos.members) || []).find((m) => m && m.nombre === miembro);
+        if (!suyo) {
+          const disponibles = ((poolDatos && poolDatos.members) || []).map((m) => m && m.nombre).filter(Boolean);
+          throw new Error(
+            `${name}: «${miembro}» no está en la piscina «${pool}». `
+            + (disponibles.length ? `Los miembros son: ${disponibles.join(', ')}.` : 'Esa piscina no tiene miembros.')
+          );
+        }
+        recurso.miembro = miembro;
+      }
     }
 
     const current = this._taskData(el);
@@ -8292,6 +8344,174 @@ class MatrixLoader {
 }
 
 MatrixLoader.$inject = [ 'canvas' ];
+
+
+/***/ }),
+
+/***/ "./client/simulation/MemberAssignment.js":
+/*!***********************************************!*\
+  !*** ./client/simulation/MemberAssignment.js ***!
+  \***********************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   avisosDeDesignacion: () => (/* binding */ avisosDeDesignacion),
+/* harmony export */   habilidadesDisponibles: () => (/* binding */ habilidadesDisponibles),
+/* harmony export */   miembrosDePiscina: () => (/* binding */ miembrosDePiscina)
+/* harmony export */ });
+/**
+ * VALIDACION DE LA DESIGNACION DE MIEMBRO: avisar antes de simular, no despues.
+ *
+ * QUE ES UNA DESIGNACION: una tarea puede nombrar al miembro concreto que la hace («solo lizz
+ * monta esto»). Si lo nombra, el motor ESPERA a esa persona en vez de tomar a cualquiera de la
+ * piscina. Es una habilitacion nominal, que en planta es lo normal para una maquina o una
+ * certificacion.
+ *
+ * POR QUE HACE FALTA VALIDARLA: la designacion es una restriccion, asi que puede ATASCAR el
+ * proceso sin que el usuario se entere hasta ver resultados raros:
+ *
+ *   - El miembro no esta en la piscina: la tarea se bloquea siempre. La corrida termina con
+ *     trabajo sin hacer y sin ningun error visible.
+ *   - El miembro no tiene la habilidad que la tarea exige: lo mismo.
+ *   - La tarea no tiene piscina: el miembro designado no se puede usar, porque sin piscina no hay
+ *     a quien pedirle.
+ *
+ * Y el sintoma de los tres es el MISMO desde fuera -«la simulacion se queda corta»- asi que el
+ * mensaje tiene que decir cual de los tres es y en que tarea.
+ *
+ * ESTE MODULO ES PURO: recibe las tareas y las piscinas ya normalizadas y devuelve avisos. No
+ * toca bpmn-js ni el DOM, asi que el arnes lo comprueba sin navegador.
+ */
+
+/**
+ * Avisos de designacion del modelo entero.
+ *
+ * `tareas` es `[{ id, nombre, pool, miembro, habilidades }]` y `piscinas` es
+ * `[{ name, members: [{ nombre, habilidades }] }]`. Se recibe la lista ya plana -y no los
+ * elementos de bpmn-js- para que el modulo no dependa de la forma del diagrama.
+ *
+ * Devuelve `{ errores, avisos }`: los errores BLOQUEAN la tarea entera, y los avisos solo la
+ * dejan sin el reparto que el usuario cree haber declarado.
+ */
+const avisosDeDesignacion = (tareas, piscinas) => {
+  const errores = [];
+  const avisos = [];
+  const porNombre = new Map((piscinas || []).map((p) => [ p.name, p ]));
+
+  (tareas || []).forEach((t) => {
+    const miembro = t && t.miembro;
+    if (!miembro) return;   // sin designacion no hay nada que validar (el caso normal)
+
+    const etiqueta = (t.nombre || t.id || '(sin nombre)');
+
+    // SIN PISCINA: el miembro no se puede usar. Se avisa distinto de «no esta en la piscina»
+    // porque el arreglo es otro -elegir una piscina, no cambiar el nombre-.
+    if (!t.pool) {
+      errores.push({
+        tarea: t.id,
+        etiqueta,
+        motivo: 'sin-piscina',
+        texto: `La tarea «${etiqueta}» designa a «${miembro}» pero no tiene piscina asignada. `
+          + 'Sin piscina no hay a quién pedirle el recurso, así que la designación no se aplica.'
+      });
+      return;
+    }
+
+    const pool = porNombre.get(t.pool);
+    if (!pool) {
+      errores.push({
+        tarea: t.id,
+        etiqueta,
+        motivo: 'piscina-desconocida',
+        texto: `La tarea «${etiqueta}» designa a «${miembro}» pero su piscina «${t.pool}» no existe. `
+          + 'La tarea se quedará sin recurso.'
+      });
+      return;
+    }
+
+    const suyo = (pool.members || []).find((m) => m && m.nombre === miembro);
+    if (!suyo) {
+      // SE NOMBRAN LOS MIEMBROS DISPONIBLES: es la diferencia entre «hay un error» y «escribe
+      // uno de estos». Un aviso que no dice las alternativas obliga a ir a mirar la otra pestaña.
+      const disponibles = (pool.members || []).map((m) => m && m.nombre).filter(Boolean);
+      errores.push({
+        tarea: t.id,
+        etiqueta,
+        motivo: 'miembro-ausente',
+        texto: `La tarea «${etiqueta}» designa a «${miembro}», que no está en la piscina «${t.pool}». `
+          + (disponibles.length
+            ? `Los miembros de esa piscina son: ${disponibles.join(', ')}.`
+            : 'Esa piscina no tiene ningún miembro dado de alta.')
+      });
+      return;
+    }
+
+    // La habilidad: si la piscina tiene nombres, la designacion tiene que poder hacer la tarea.
+    const requeridas = Array.isArray(t.habilidades) ? t.habilidades.filter(Boolean) : [];
+    if (requeridas.length) {
+      const tiene = Array.isArray(suyo.habilidades) ? suyo.habilidades : [];
+      const faltan = requeridas.filter((h) => !tiene.includes(h));
+      if (faltan.length) {
+        // SI HAY OTRO MIEMBRO QUE SI PUEDE, se dice: el arreglo más rápido es designar a ese, y
+        // el usuario no tiene por qué saberse las habilidades de memoria.
+        const alternativas = (pool.members || [])
+          .filter((m) => m && m.nombre !== miembro && requeridas.every((h) => (m.habilidades || []).includes(h)))
+          .map((m) => m.nombre);
+        avisos.push({
+          tarea: t.id,
+          etiqueta,
+          motivo: 'sin-habilidad',
+          texto: `La tarea «${etiqueta}» designa a «${miembro}», que no tiene `
+            + `${faltan.length === 1 ? 'la habilidad' : 'las habilidades'} `
+            + `${faltan.join(', ')}, y la tarea ${requeridas.length === 1 ? 'la exige' : 'las exige'}. `
+            + 'La tarea se quedará bloqueada en cada caso.'
+            + (alternativas.length ? ` Sí puede(n): ${alternativas.join(', ')}.` : '')
+        });
+      }
+    }
+  });
+
+  return { errores, avisos };
+};
+
+/**
+ * Los miembros disponibles en una piscina, para poblar el desplegable de la tarea.
+ *
+ * Se ordena alfabeticamente porque un desplegable en orden de aparicion obliga a buscarlo a ojo, y
+ * el mismo miembro puede estar en dos piscinas.
+ */
+const miembrosDePiscina = (piscinas, nombrePiscina) => {
+  const pool = (piscinas || []).find((p) => p && p.name === nombrePiscina);
+  if (!pool) return [];
+  return (pool.members || [])
+    .map((m) => m && m.nombre)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'es'));
+};
+
+/**
+ * TODAS las habilidades dadas de alta en los recursos del modelo.
+ *
+ * POR QUE NO SE ESCRIBEN A MANO: una habilidad que la tarea exige y que nadie tiene BLOQUEA la
+ * tarea, y ese es el peor fallo posible porque es silencioso -la corrida termina con trabajo sin
+ * hacer y sin ningun error-. Ofreciendo solo las que existen, el error deja de poder cometerse.
+ *
+ * Sin duplicados y ordenadas: el mismo miembro puede estar en dos piscinas y la misma habilidad en
+ * cinco personas.
+ */
+const habilidadesDisponibles = (piscinas) => {
+  const todas = new Set();
+  (piscinas || []).forEach((p) => {
+    (p && p.members ? p.members : []).forEach((m) => {
+      (m && Array.isArray(m.habilidades) ? m.habilidades : []).forEach((h) => {
+        if (h) todas.add(String(h).trim());
+      });
+    });
+  });
+  return [ ...todas ].filter(Boolean).sort((a, b) => a.localeCompare(b, 'es'));
+};
 
 
 /***/ }),
@@ -14067,17 +14287,39 @@ class ResourcePool {
    * se reserva tiene que ser la de alguien que sepa. Reservar la de cualquiera y
    * luego buscar persona seria contar capacidad que no existe.
    */
-  request(quantity, task, requeridas) {
+  request(quantity, task, requeridas, designado) {
     if (this.available >= quantity) {
       this.available -= quantity;
-      return { tomada: true, miembro: this._elegir(requeridas) };
+      return { tomada: true, miembro: this._elegir(requeridas, designado) };
     }
-    this.queue.push({ quantity, task, requeridas });
+    this.queue.push({ quantity, task, requeridas, designado });
     return { tomada: false, miembro: null };
   }
 
-  _elegir(requeridas) {
+  /**
+   * Quien hace el trabajo: el designado si la tarea lo nombra, y si no la ronda de siempre.
+   *
+   * LA DESIGNACION ES UNA RESTRICCION, NO UNA PREFERENCIA, y es una decision explicita: si la
+   * tarea dice que la hace «lizz», espera a lizz aunque haya otro miembro libre. Es lo fiel a
+   * «solo lizz hace esto» -una habilitacion nominal, que en planta es lo normal para una maquina
+   * o una certificacion- y lo contrario -caer a otro miembro- haria que el reparto dejara de ser
+   * el declarado sin avisar.
+   *
+   * Y por eso mismo puede BLOQUEAR: si el designado no esta en la piscina, o no tiene la
+   * habilidad exigida, no hay nadie que pueda hacerla. Ese caso NO se resuelve aqui en silencio
+   * -devolver `null` y seguir haria que la tarea se ejecutara sin recurso, contando capacidad que
+   * no existe-. Lo detecta `avisosDeDesignacion` antes de simular, que es donde el usuario puede
+   * arreglarlo.
+   */
+  _elegir(requeridas, designado) {
     if (!this.conNombres) return null;
+
+    // DESIGNACION: solo esa persona, y solo si puede. Sin ronda y sin alternativas.
+    if (designado) {
+      const suyo = this.members.find((m) => m.nombre === designado);
+      return (suyo && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.puedeHacerla)(suyo, requeridas)) ? suyo : null;
+    }
+
     const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.puedeHacerla)(m, requeridas));
     if (!aptos.length) return null;
     // Ronda sobre los APTOS: se avanza el turno segun cuantos hayan.
@@ -14091,7 +14333,7 @@ class ResourcePool {
     this.queue = this.queue.filter(waiting => {
       if (this.available >= waiting.quantity) {
         this.available -= waiting.quantity;
-        newTasks.push({ task: waiting.task, miembro: this._elegir(waiting.requeridas) });
+        newTasks.push({ task: waiting.task, miembro: this._elegir(waiting.requeridas, waiting.designado) });
         return false; // remove from queue
       }
       return true; // keep in queue
@@ -14571,6 +14813,33 @@ class SimulationEngine {
     // bloquea, no acelera) y es lo unico que puede producir «bloqueado por
     // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
     const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.habilidadesRequeridas)(data);
+    // EL MIEMBRO DESIGNADO, leido aqui porque la guarda de habilidad lo necesita: si la tarea
+    // nombra a alguien que NO tiene la habilidad exigida, el bloqueo es seguro y hay que detectarlo
+    // igual que el caso de «ninguno de la piscina la tiene». Sin esto, la tarea pasaria la guarda
+    // por la habilidad de OTRO miembro y luego se quedaria sin nadie en `_elegir`, ejecutandose sin
+    // recurso.
+    const designado = (data.resources && data.resources.miembro) || null;
+    const designadoPuede = !designado || !pool
+      || (() => { const m = pool.members.find((x) => x.nombre === designado); return m && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.puedeHacerla)(m, requeridas); })();
+
+    if (pool && !designadoPuede) {
+      const motivo = pool.members.some((m) => m.nombre === designado)
+        ? `"${designado}" no tiene la habilidad exigida (${requeridas.join(', ') || 'ninguna'})`
+        : `"${designado}" no esta en la piscina "${pool.name}"`;
+      const duracionBloqueadaMs = this._msConArranque(
+        timeToMilliseconds((data.processingTime && data.processingTime.value) || 0,
+          data.processingTime && data.processingTime.unit), new Date(this.clock || 0));
+      this.operatividad.bloqueadoPorHabilidadMin += duracionBloqueadaMs / 60000;
+      this.operatividad.tareasBloqueadas++;
+      console.warn(`[A5] tarea bloqueada por designacion: ${element.id} designa a "${designado}" y ${motivo}.`);
+      const r = this.results.get(element.id);
+      if (r) {
+        r.totalBlockedBySkill = (r.totalBlockedBySkill || 0) + 1;
+        r.totalBlockedMinutes = (r.totalBlockedMinutes || 0) + duracionBloqueadaMs / 60000;
+      }
+      return;
+    }
+
     if (pool && requeridas.length && !pool.puedeAtender(requeridas)) {
       // El tiempo bloqueado es la DURACION que esa tarea habria ocupado: no hay
       // un reloj corriendo que medir, porque la tarea no llega a arrancar. Tomar
@@ -14608,7 +14877,7 @@ class SimulationEngine {
       };
       // El marcador se queda en la cola de la piscina; `release()` lo devuelve
       // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
-      const pedido = pool.request(quantityRequired, marcador, requeridas);
+      const pedido = pool.request(quantityRequired, marcador, requeridas, designado);
       if (!pedido.tomada) return;
       miembro = pedido.miembro;
     }
