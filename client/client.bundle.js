@@ -2038,6 +2038,788 @@ const svgTresEscenarios = ({ series, fechas, techo, alto = 260 }) => {
 
 /***/ }),
 
+/***/ "./client/simulation/CsvTareas.js":
+/*!****************************************!*\
+  !*** ./client/simulation/CsvTareas.js ***!
+  \****************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   NOMBRE_DE_PESTANA: () => (/* binding */ NOMBRE_DE_PESTANA),
+/* harmony export */   download: () => (/* binding */ download),
+/* harmony export */   filasDePestana: () => (/* binding */ filasDePestana),
+/* harmony export */   importar: () => (/* binding */ importar),
+/* harmony export */   parseCsv: () => (/* binding */ parseCsv),
+/* harmony export */   pctATexto: () => (/* binding */ pctATexto),
+/* harmony export */   toCsv: () => (/* binding */ toCsv)
+/* harmony export */ });
+/**
+ * CSV DE LA TABLA DE DATOS: exportar e importar las cuatro pestanas.
+ *
+ * QUE ES ESTE MODULO: el texto de ida y vuelta de la tabla de datos -Tareas, Compuertas,
+ * Recursos y Global- y el parseo/serializacion de CSV. Se extrajo de `DataTablePanel.js`, que
+ * tenia 3.800 lineas y estas dos operaciones se llevaban 686 de ellas.
+ *
+ * POR QUE SE PUEDE EXTRAER LIMPIAMENTE: es la parte del panel que NO toca el DOM ni bpmn-js. El
+ * panel le pasa funciones de lectura (`_taskData`, `_getPools`...) y este modulo devuelve filas o
+ * una lista de cambios `{ element, data }`. Asi la ida y vuelta del CSV se puede probar sola, sin
+ * montar un diagrama ni un DOM.
+ *
+ * LO QUE **NO** HACE, y conviene saberlo: no escribe en el diagrama. `importar` decide QUE cambia
+ * -compara con lo que hay y devuelve solo lo distinto-, pero aplicar los cambios es del panel,
+ * porque eso ya necesita `modeling` y puede fallar por modo de solo lectura.
+ */
+
+// ---------------------------------------------------------------------------
+// Parseo y serializacion
+// ---------------------------------------------------------------------------
+
+// Las unidades se escriben en PLURAL. No es una preferencia de estilo: `minute` se leeria como
+// milisegundos -factor 60.000- y la corrida daria numeros absurdos sin ningun aviso, asi que el
+// importador rechaza lo que no este en esta lista en vez de aceptarlo en silencio.
+const TASK_UNITS = ['minutes', 'hours', 'seconds'];
+
+const csvEscape = (value) => {
+  const s = value === undefined || value === null ? '' : String(value);
+  return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+const toCsv = (rows) => rows.map((row) => row.map(csvEscape).join(',')).join('\r\n');
+
+/**
+ * Parser tolerante: comillas dobles escapadas, campos multilinea y separador coma o punto y coma.
+ *
+ * El separador se DETECTA en la primera linea porque Excel en espanol exporta con ';'. Mirar solo
+ * la coma partiria las filas de un CSV guardado desde Excel, y el sintoma -columnas desplazadas-
+ * no dice que el problema es el separador.
+ */
+const parseCsv = (text) => {
+  const clean = String(text || '').replace(/^\uFEFF/, '');
+  const firstLine = clean.split(/\r?\n/)[0] || '';
+  const sep = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
+
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (clean[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === sep) {
+      row.push(field); field = '';
+    } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && clean[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      rows.push(row); row = [];
+    } else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((c) => String(c).trim() !== ''));
+};
+
+/** Dispara la descarga de un archivo de texto. Es lo unico que toca el navegador. */
+const download = (filename, text, mime = 'text/csv;charset=utf-8;') => {
+  const blob = new Blob([ '\uFEFF' + text ], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const NOMBRE_DE_PESTANA = { tasks: 'tareas', flows: 'flujos', resources: 'recursos', global: 'global' };
+
+// ---------------------------------------------------------------------------
+// Utilidades de campos
+// ---------------------------------------------------------------------------
+
+const redondear2 = (n) => Math.round(n * 100) / 100;
+const pctATexto = (p) => String(redondear2((Number(p) || 0) * 100));
+const pad = (n) => String(n).padStart(2, '0');
+// `path` es una LISTA de claves, no un "a.b.c": asi lo declaran GLOBAL_FIELDS y los campos de
+// regla laboral. Partirlo por puntos devolvia una ruta de una sola clave imposible de encontrar y
+// el mapa global salia vacio.
+const getByPath = (o, path) => path.reduce((a, k) => (a == null ? a : a[k]), o);
+const esSi = (v) => String(v || '').trim().toLowerCase() === 'si' || String(v || '').trim() === '1';
+
+// ---------------------------------------------------------------------------
+// EXPORTAR
+// ---------------------------------------------------------------------------
+
+/**
+ * Las filas del CSV de la pestana activa, con su cabecera en la primera.
+ *
+ * `ctx` trae las funciones de lectura del panel. Se pasan y no se importan porque son las que
+ * saben de bpmn-js: este modulo no debe conocerlo.
+ */
+const filasDePestana = (pestana, ctx) => {
+  if (pestana === 'tasks') return filasDeTareas(ctx);
+  if (pestana === 'flows') return filasDeFlujos(ctx);
+  if (pestana === 'resources') return filasDeRecursos(ctx);
+  return filasDeGlobal(ctx);
+};
+
+function filasDeTareas(ctx) {
+  // Se exportan TAMBIEN las columnas de la triangular y las de recurso: antes el CSV solo llevaba
+  // el tiempo fijo, asi que una tarea triangular salia con `tiempo_proceso` vacio y sus min/moda/max
+  // se perdian de vista.
+  //
+  // La tasa de fallo se exporta en % (0-100) y con la columna renombrada a `tasa_fallo_pct`, igual
+  // que el reparto de las compuertas: es lo que se ve en la tabla, y en Excel una columna rotulada
+  // «tasa_fallo» con 0,05 se lee como si fuera medio por ciento. Un CSV exportado ANTES de este
+  // cambio trae `tasa_fallo` en fraccion y se sigue importando (ver `importar`).
+  const rows = [ [
+    'id', 'nombre', 'distribucion',
+    'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
+    'tasa_fallo_pct', 'retrabajo', 'unidad_retrabajo',
+    'recurso', 'cant_recurso',
+    'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol',
+    'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad'
+  ] ];
+
+  ctx.getTasks().forEach((el) => {
+    const d = ctx.taskData(el);
+    const tri = d.processingTime.distribution === 'triangular';
+    // La barrera solo se exporta con «por lote»: en una tarea por token el motor no la lee, y
+    // sacarla rellena daria a entender que si.
+    const esLote = d.frequency === 'lot';
+    const b = d.barrier || {};
+    const c = d.carga || {};
+    const hab = Array.isArray(d.habilidades) ? d.habilidades.join(' ') : (d.habilidad || '');
+
+    rows.push([
+      el.id,
+      ctx.label(el),
+      d.processingTime.distribution || 'fixed',
+      tri ? '' : d.processingTime.value,
+      d.processingTime.unit,
+      tri ? d.processingTime.min : '',
+      tri ? d.processingTime.mode : '',
+      tri ? d.processingTime.max : '',
+      pctATexto(d.failureRate),
+      d.reworkTime.value,
+      d.reworkTime.unit,
+      (d.resources && d.resources.pool) || '',
+      (d.resources && d.resources.quantityRequired) || '',
+      esLote ? 'lot' : 'token',
+      esLote ? b.availableProbability : '',
+      esLote ? b.waitMin : '',
+      esLote ? b.waitMode : '',
+      esLote ? b.waitMax : '',
+      esLote ? b.toleranceMinutes : '',
+      c.masaCargadaKg == null ? '' : c.masaCargadaKg,
+      c.masaArrastradaKg == null ? '' : c.masaArrastradaKg,
+      c.distanciaM == null ? '' : c.distanciaM,
+      hab
+    ]);
+  });
+
+  return rows;
+}
+
+function filasDeFlujos(ctx) {
+  // La columna se llama `probabilidad_pct` y va en % (0-100), no en fraccion: es lo que muestra y
+  // edita la tabla. Un CSV exportado antes de este cambio trae `probabilidad` en 0-1 y se sigue
+  // importando.
+  const rows = [ [ 'id', 'compuerta', 'hacia', 'probabilidad_pct' ] ];
+  ctx.getFlows().forEach((el) => {
+    const d = ctx.flowData(el);
+    rows.push([
+      el.id,
+      ctx.label(el.source),
+      el.target ? ctx.label(el.target) : '',
+      ctx.salidaUnica(el.source) ? '100' : pctATexto(d.branchingProbability)
+    ]);
+  });
+  return rows;
+}
+
+function filasDeRecursos(ctx) {
+  // Los miembros van DENTRO de una celda con `|` entre campos y `;` entre personas, para que el
+  // CSV siga teniendo una fila por piscina y se pueda editar en Excel.
+  const rows = [ [ 'nombre', 'cantidad', 'miembros', 'origen', 'cobro', 'tarifa_hora', 'precio_pieza' ] ];
+  ctx.getPools().forEach((p) => {
+    const miembros = (p.members || []).map((m) => {
+      const partes = [ m.nombre ];
+      partes.push(m.tarifaHora != null ? m.tarifaHora : '');
+      partes.push(m.cargaMaximaKg != null ? m.cargaMaximaKg : '');
+      partes.push((m.habilidades || []).join(' '));
+      return partes.join('|');
+    }).join(';');
+    const externa = p.origen === 'externa';
+    rows.push([
+      p.name,
+      p.quantity,
+      miembros,
+      externa ? 'externa' : '',
+      externa ? (p.cobro || 'hora') : '',
+      externa && p.cobro !== 'pieza' && p.tarifaHora != null ? p.tarifaHora : '',
+      externa && p.cobro === 'pieza' && p.precioPieza != null ? p.precioPieza : ''
+    ]);
+  });
+  return rows;
+}
+
+function filasDeGlobal(ctx) {
+  const info = ctx.globalData();
+  if (!info) throw new Error('No hay evento raíz configurado');
+
+  const rows = [ [ 'campo', 'etiqueta', 'valor' ] ];
+  ctx.globalFields.forEach((f) => {
+    const v = getByPath(info.data, f.path);
+    let text;
+    if (f.kind === 'days') text = Array.isArray(v) ? v.join(',') : '';
+    else if (f.kind === 'time') text = v && typeof v === 'object' ? `${pad(v.hour)}:${pad(v.minute)}` : '';
+    else if (f.kind === 'checkbox') text = v === false ? 'no' : 'si';
+    else text = v == null ? '' : v;
+    rows.push([ f.key, f.label, text ]);
+  });
+
+  // Los descansos son una lista: una fila por dato, con clave `descanso.N.campo`. Asi sigue siendo
+  // editable en Excel y vuelve entera al importar.
+  const hhmm = (t) => (t && Number.isFinite(t.hour) ? `${pad(t.hour)}:${pad(t.minute)}` : '');
+  ((info.data.calendar && info.data.calendar.breaks) || []).forEach((b, i) => {
+    const n = i + 1;
+    rows.push([ `descanso.${n}.inicio`, `Descanso ${n}: desde`, hhmm(b.start) ]);
+    rows.push([ `descanso.${n}.fin`, `Descanso ${n}: hasta`, hhmm(b.end) ]);
+    rows.push([ `descanso.${n}.cuentaComoJornada`, `Descanso ${n}: ¿cuenta como jornada?`, b.cuentaComoJornada ? 'si' : 'no' ]);
+    rows.push([ `descanso.${n}.existeEnExtra`, `Descanso ${n}: ¿también en horas extra?`, b.existeEnExtra === false ? 'no' : 'si' ]);
+  });
+
+  // La tabla de tamanos de lote es otra lista: mismo criterio que los descansos.
+  ((info.data.lots && info.data.lots.table) || []).forEach((f, i) => {
+    const n = i + 1;
+    rows.push([ `lote.${n}.tamano`, `Tamaño de lote ${n}: tamaño`, f.size ]);
+    rows.push([ `lote.${n}.peso`, `Tamaño de lote ${n}: peso`, f.weight ]);
+  });
+
+  // Vigencias de las reglas laborales. Se exportan TODAS las columnas, aunque la celda este vacia:
+  // en la ida y vuelta una columna ausente y una vacia no son lo mismo (vacio = «lo de arriba»,
+  // ausente = columna que no existia).
+  //
+  // `desde` NO esta en `laborRuleFields`, que son solo los valores de la regla. Se emite aparte
+  // porque el importador lo lee como la clave de la fila: sin el, la vigencia llega sin fecha y el
+  // importador la rechaza -o la descarta- aunque las demas columnas vengan bien.
+  ((info.data.labor && info.data.labor.rules) || []).forEach((r, i) => {
+    const n = i + 1;
+    rows.push([ `regla.${n}.desde`, `Regla ${n}: desde`, r.desde == null ? '' : r.desde ]);
+    ctx.laborRuleFields.forEach((f) => {
+      rows.push([ `regla.${n}.${f.key}`, `Regla ${n}: ${f.label}`, r[f.key] == null ? '' : r[f.key] ]);
+    });
+  });
+
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// IMPORTAR
+// ---------------------------------------------------------------------------
+
+/**
+ * Los cambios que aplica un CSV, SIN escribirlos.
+ *
+ * Devuelve `[{ element, data }]`: para cada elemento, como quedaria su `simulationData`. El panel
+ * los compara con lo que hay y aplica solo los distintos.
+ *
+ * VALIDA TODO ANTES DE DEVOLVER NADA: si hay un solo error lanza, y el llamador no aplica ningun
+ * cambio. Un CSV a medias que escribiera las filas buenas y descartara las malas en silencio es
+ * peor que uno que no escribe nada.
+ */
+const importar = (pestana, text, ctx) => {
+  const rows = parseCsv(text);
+  if (!rows.length) throw new Error('El archivo está vacío');
+
+  const header = rows[0].map((h) => String(h).trim().toLowerCase());
+  const body = rows.slice(1);
+  const idx = (name) => {
+    const i = header.indexOf(name);
+    if (i === -1) throw new Error(`Falta la columna «${name}» en el CSV`);
+    return i;
+  };
+
+  if (pestana === 'tasks') return importarTareas(header, body, idx, ctx);
+  if (pestana === 'flows') return importarFlujos(header, body, idx, ctx);
+  if (pestana === 'resources') return importarRecursos(header, body, idx, ctx);
+  return importarGlobal(body, ctx);
+};
+
+function importarTareas(header, body, idx, ctx) {
+  const updates = [];
+  const iId = idx('id');
+  const iU = idx('unidad_proceso');
+  const iR = idx('retrabajo');
+  const iRU = idx('unidad_retrabajo');
+
+  // La unidad se valida contra la lista y se rechaza en singular: `minute` se leeria como
+  // milisegundos -factor 60.000- y la corrida daria numeros absurdos sin ningun aviso.
+  const unidad = (valor) => String(valor || '').trim();
+  const exigirUnidad = (v) => {
+    if (!TASK_UNITS.includes(v)) {
+      throw new Error(`La unidad «${v}» no es válida (usa ${TASK_UNITS.join('/')}, en plural)`);
+    }
+    return v;
+  };
+
+  // Formato nuevo: `tasa_fallo_pct` en % (0-100). Formato heredado: `tasa_fallo` en fraccion (0-1).
+  // Se aceptan los dos para no romper un CSV exportado antes del cambio. El formato se detecta por
+  // el NOMBRE de la columna, no por el valor: adivinar por magnitud convertiria un 1 % legitimo en
+  // otra cosa sin avisar.
+  const iFPct = header.indexOf('tasa_fallo_pct');
+  const iFrac = header.indexOf('tasa_fallo');
+  if (iFPct === -1 && iFrac === -1) throw new Error('Falta la columna «tasa_fallo_pct» en el CSV');
+  const iF = iFPct !== -1 ? iFPct : iFrac;
+  const falloEnPct = iFPct !== -1;
+
+  const iDist = header.indexOf('distribucion');
+  const iVal = header.indexOf('tiempo_proceso');
+  const iMin = header.indexOf('min');
+  const iModa = header.indexOf('moda');
+  const iMax = header.indexOf('max');
+  const iRec = header.indexOf('recurso');
+  const iCant = header.indexOf('cant_recurso');
+  const iMiembro = header.indexOf('miembro');
+  const iFrec = header.indexOf('frecuencia');
+  const iHab = header.indexOf('habilidad');
+
+  /**
+   * Lee una columna de la barrera POR NOMBRE y exige que exista y que la fila la traiga.
+   *
+   * La fila recortada -columnas de barrera borradas a mano en Excel- merece este aviso y no un
+   * «no numérico»: el usuario tiene que poder saber que le falta una columna, no adivinar por qué
+   * el valor no le cuadra.
+   */
+  const leerBarrera = (name, fila) => {
+    const i = header.indexOf(name);
+    if (i === -1) {
+      throw new Error(`Falta la columna «${name}» en el CSV: es necesaria para las tareas «por lote»`);
+    }
+    if (fila[i] === undefined) {
+      throw new Error(`La fila ${fila.__linea}: está incompleta, falta el valor de «${name}»`);
+    }
+    return fila[i];
+  };
+
+  body.forEach((r, n) => {
+    const id = String(r[iId] || '').trim();
+    if (!id) return;
+    r.__linea = n + 2;
+    const el = ctx.getElement(id);
+    if (!el) throw new Error(`La fila ${n + 2}: no existe el elemento «${id}»`);
+
+    const current = ctx.taskData(el);
+    const dist = iDist !== -1 && String(r[iDist] || '').trim() === 'triangular' ? 'triangular' : 'fixed';
+    const unit = exigirUnidad(unidad(r[iU]) || current.processingTime.unit);
+
+    let processingTime;
+    if (dist === 'triangular') {
+      processingTime = {
+        distribution: 'triangular',
+        min: ctx.num(r[iMin], 'min'),
+        mode: ctx.num(r[iModa], 'moda'),
+        max: ctx.num(r[iMax], 'max'),
+        unit
+      };
+    } else {
+      processingTime = { distribution: 'fixed', value: ctx.num(r[iVal], 'tiempo'), unit };
+    }
+
+    const bruto = ctx.num(r[iF], 'tasa de fallo');
+    let failureRate;
+    if (falloEnPct) {
+      if (bruto < 0 || bruto > 100) {
+        throw new Error(`La fila ${n + 2}: la tasa de fallo debe estar entre 0 y 100 % (vale ${bruto})`);
+      }
+      failureRate = bruto / 100;
+    } else {
+      // El aviso dice «fracción» a proposito: un 1,5 puesto en la columna heredada casi siempre
+      // es un porcentaje escrito en el sitio equivocado, y el mensaje tiene que nombrar la unidad
+      // esperada para que el arreglo sea evidente.
+      if (bruto < 0 || bruto > 1) {
+        throw new Error(`La fila ${n + 2}: «tasa_fallo» va en fracción (0-1) pero vale ${bruto}`);
+      }
+      failureRate = bruto;
+    }
+
+    const rework = { ...current.reworkTime, value: ctx.num(r[iR], 'retrabajo') };
+    rework.unit = exigirUnidad(iRU !== -1 && unidad(r[iRU]) ? unidad(r[iRU]) : rework.unit);
+
+    const datos = { ...current, processingTime, failureRate, reworkTime: rework };
+
+    // Recurso: '(ninguno)' o vacio deja el campo sin recurso, que es lo que el motor lee como
+    // «sin restriccion».
+    const pool = iRec !== -1 ? String(r[iRec] || '').trim() : '';
+    if (pool) {
+      const cantTexto = iCant !== -1 ? String(r[iCant] || '').trim() : '';
+      const cantidad = cantTexto === '' ? 1 : ctx.num(cantTexto, 'cantidad de recurso');
+      if (!(cantidad >= 1)) throw new Error(`La fila ${n + 2}: la cantidad de recurso debe ser ≥ 1`);
+      if (!ctx.getPools().some((p) => p.name === pool)) {
+        throw new Error(`La fila ${n + 2}: la piscina «${pool}» no está dada de alta`);
+      }
+      const miembro = iMiembro !== -1 ? String(r[iMiembro] || '').trim() : '';
+      if (miembro) {
+        const poolDatos = ctx.getPools().find((p) => p.name === pool);
+        const suyo = ((poolDatos && poolDatos.members) || []).find((m) => m && m.nombre === miembro);
+        if (!suyo) throw new Error(`La fila ${n + 2}: «${miembro}» no está en la piscina «${pool}»`);
+      }
+      datos.resources = { pool, quantityRequired: cantidad, ...(miembro ? { miembro } : {}) };
+    } else {
+      delete datos.resources;
+    }
+
+    // La frecuencia se limpia cuando el CSV NO la trae: un archivo antiguo -o una columna que
+    // alguien borro a mano- significa «por token», no «dejalo como estaba». Sin esto, una tarea que
+    // venia con barrera conservaba `frequency: 'lot'` y su barrera tras importar un CSV que no las
+    // declaraba, y el usuario no tenia forma de saber de donde salian.
+    if (iFrec === -1) {
+      delete datos.frequency;
+      delete datos.barrier;
+    } else {
+      const crudo = String(r[iFrec] || '').trim().toLowerCase();
+      if (!crudo || crudo === 'token') {
+        // Por token es el caso por defecto: la tarea se queda sin frecuencia ni barrera. Hay que
+        // BORRARLAS, porque `current` trae los valores por defecto para poder pintarlos y si no la
+        // tarea arrastraria una barrera huerfana que el usuario no ha declarado.
+        delete datos.frequency;
+        delete datos.barrier;
+      } else if (crudo === 'lot' || crudo === 'lote') {
+        const disp = ctx.num(leerBarrera('barrera_disp', r), 'disponibilidad de la barrera');
+        if (disp < 0 || disp > 1) {
+          throw new Error(`La fila ${n + 2}: la disponibilidad de la barrera debe estar entre 0 y 1`);
+        }
+        const eMin = ctx.num(leerBarrera('barrera_min', r), 'espera mínima');
+        const eModa = ctx.num(leerBarrera('barrera_moda', r), 'espera modal');
+        const eMax = ctx.num(leerBarrera('barrera_max', r), 'espera máxima');
+        if (!(eMin <= eModa && eModa <= eMax)) {
+          throw new Error(`La fila ${n + 2}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo`);
+        }
+        const tol = ctx.num(leerBarrera('barrera_tol', r), 'tolerancia');
+        if (tol < 0) throw new Error(`La fila ${n + 2}: la tolerancia no puede ser negativa`);
+
+        datos.frequency = 'lot';
+        datos.barrier = {
+          availableProbability: disp,
+          waitMin: eMin,
+          waitMode: eModa,
+          waitMax: eMax,
+          toleranceMinutes: tol
+        };
+      } else {
+        // Antes esto caia en «token» en silencio, asi que un `raro` escrito a mano se importaba
+        // como si fuera una tarea por pieza y la simulacion salia sin la frecuencia pedida.
+        throw new Error(`La fila ${n + 2}: frecuencia «${crudo}» inválida (usa token o lot)`);
+      }
+    }
+
+    if (iHab !== -1) {
+      const hab = String(r[iHab] || '').trim();
+      // Se guarda en la forma CANONICA: una sola se guarda en singular (`habilidad`) y varias como
+      // lista (`habilidades`). El motor lee las dos, pero la ida y vuelta tiene que ser estable o
+      // dos exportaciones seguidas darian archivos distintos.
+      delete datos.habilidad;
+      delete datos.habilidades;
+      if (hab) {
+        const partes = hab.split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+        if (partes.length === 1) datos.habilidad = partes[0];
+        else if (partes.length > 1) datos.habilidades = partes;
+      }
+    } else {
+      // Mismo criterio que la frecuencia: si el CSV no trae la columna, la carga y la habilidad se
+      // LIMPIAN. Un CSV antiguo no las declara, y dejarlas puestas haria que la tarea conservara
+      // una carga fisica que ese archivo nunca pidio.
+      delete datos.carga;
+      delete datos.habilidad;
+      delete datos.habilidades;
+    }
+
+    updates.push({ element: el, data: datos });
+  });
+
+  return updates;
+}
+
+function importarFlujos(header, body, idx, ctx) {
+  const updates = [];
+  const iId = idx('id');
+  const iPct = header.indexOf('probabilidad_pct');
+  const iProb = header.indexOf('probabilidad');
+  if (iPct === -1 && iProb === -1) throw new Error('Falta la columna «probabilidad_pct» en el CSV');
+  const i = iPct !== -1 ? iPct : iProb;
+  const enPct = iPct !== -1;
+
+  body.forEach((r, n) => {
+    const id = String(r[iId] || '').trim();
+    if (!id) return;
+    const el = ctx.getElement(id);
+    if (!el) throw new Error(`La fila ${n + 2}: no existe el elemento «${id}»`);
+
+    const bruto = ctx.num(r[i], 'probabilidad');
+    const valor = enPct ? bruto / 100 : bruto;
+    if (!(valor >= 0 && valor <= 1)) {
+      throw new Error(`La fila ${n + 2}: la probabilidad tiene que estar entre 0 y 100 %`);
+    }
+    const current = ctx.flowData(el);
+    updates.push({ element: el, data: { ...current, branchingProbability: valor } });
+  });
+
+  return updates;
+}
+
+function importarRecursos(header, body, idx, ctx) {
+  const updates = [];
+  const iNombre = idx('nombre');
+  const iCant = idx('cantidad');
+
+  body.forEach((r, n) => {
+    const nombre = String(r[iNombre] || '').trim();
+    if (!nombre) return;
+
+    // `miembros` es OPCIONAL, como la frecuencia o la carga: un CSV exportado antes de que
+    // existieran los colaboradores no la trae. Exigirla con idx() hacia que ese archivo no se
+    // pudiera importar, y ademas con un error de columna que no dice que la columna sobra.
+    const iMiembros = header.indexOf('miembros');
+    const miembros = iMiembros === -1 ? '' : String(r[iMiembros] || '').trim();
+    const lista = miembros === '' ? [] : miembros.split(';').map((s) => s.trim()).filter(Boolean).map((s) => {
+      const [ nombreM, tarifa, carga, habs ] = s.split('|');
+      const m = { nombre: String(nombreM || '').trim() };
+      if (String(tarifa || '').trim() !== '') m.tarifaHora = ctx.num(tarifa, 'tarifa');
+      if (String(carga || '').trim() !== '') m.cargaMaximaKg = ctx.num(carga, 'carga');
+      const habilidades = String(habs || '').split(/[, ]+/).map((x) => x.trim()).filter(Boolean);
+      if (habilidades.length) m.habilidades = habilidades;
+      return m;
+    }).filter((m) => m.nombre);
+
+    const pool = { name: nombre, quantity: ctx.num(r[iCant], 'cantidad') };
+    if (lista.length) pool.members = lista;
+
+    // Toda la parte del proveedor externo es OPCIONAL: un CSV exportado antes de que existiera no
+    // trae ninguna de estas columnas y tiene que seguir entrando. Se leen por nombre y la ausencia
+    // vale vacio, en vez de exigirlas con idx() -que ademas daba un error de «columna que falta»
+    // sin decir que la columna simplemente es nueva-.
+    const opcional = (nombre) => {
+      const i = header.indexOf(nombre);
+      return i === -1 ? '' : String(r[i] || '').trim();
+    };
+
+    if (opcional('origen').toLowerCase() === 'externa') {
+      pool.origen = 'externa';
+      pool.cobro = opcional('cobro').toLowerCase() === 'pieza' ? 'pieza' : 'hora';
+      if (pool.cobro === 'pieza') {
+        // Un cobro POR PIEZA sin precio no se puede costear: el motor no tendria con que
+        // multiplicar. Se rechaza en vez de ignorarlo, porque una piscina que entra sin precio y
+        // sin error se lee como «este proveedor es gratis», que es lo contrario de lo declarado.
+        const p = opcional('precio_pieza');
+        if (p === '') {
+          throw new Error(
+            `La fila ${n + 2}: «${nombre}» cobra POR PIEZA y falta el precio (columna «precio_pieza»)`
+          );
+        }
+        pool.precioPieza = ctx.num(p, 'precio por pieza');
+      } else {
+        const t = opcional('tarifa_hora');
+        if (t !== '') pool.tarifaHora = ctx.num(t, 'tarifa por hora');
+      }
+    }
+
+    updates.push({ pool });
+  });
+
+  return updates;
+}
+
+function importarGlobal(body, ctx) {
+  const info = ctx.globalData();
+  if (!info) throw new Error('No hay evento raíz configurado');
+
+  // `path` es una lista de claves. Se recorre con esto y no con `getByPath` porque ademas hay que
+  // CREAR los niveles que falten: un modelo sin `calendar` tiene que poder recibir sus descansos.
+  const setByPath = (o, path, valor) => {
+    let actual = o;
+    for (let i = 0; i < path.length - 1; i++) {
+      if (actual[path[i]] == null || typeof actual[path[i]] !== 'object') actual[path[i]] = {};
+      actual = actual[path[i]];
+    }
+    actual[path[path.length - 1]] = valor;
+  };
+
+  const data = JSON.parse(JSON.stringify(info.data));
+
+  // Los descansos, la tabla de lotes y las vigencias se leen primero y se QUITAN de la lista de
+  // campos: si no, caerian en el bucle de abajo y saltaria «campo desconocido».
+  const filasDescanso = new Map();
+  const filasLote = new Map();
+  const filasRegla = new Map();
+  const filasCampos = [];
+
+  body.forEach((r) => {
+    const clave = String(r[0] || '').trim();
+    const valor = r[2];
+
+    const md = clave.match(/^descanso\.(\d+)\.(inicio|fin|cuentaComoJornada|existeEnExtra)$/);
+    if (md) {
+      const i = Number(md[1]);
+      if (!filasDescanso.has(i)) filasDescanso.set(i, {});
+      filasDescanso.get(i)[md[2]] = String(valor).trim();
+      return;
+    }
+
+    const ml = clave.match(/^lote\.(\d+)\.(tamano|peso)$/);
+    if (ml) {
+      const i = Number(ml[1]);
+      if (!filasLote.has(i)) filasLote.set(i, {});
+      filasLote.get(i)[ml[2]] = String(valor).trim();
+      return;
+    }
+
+    const mr = clave.match(/^regla\.(\d+)\.desde$|^regla\.(\d+)\.(\w+)$/);
+    if (mr) {
+      const i = Number(mr[1] || mr[2]);
+      if (!filasRegla.has(i)) filasRegla.set(i, {});
+      filasRegla.get(i)[mr[1] ? 'desde' : mr[3]] = String(valor).trim();
+      return;
+    }
+
+    filasCampos.push(r);
+  });
+
+  const siONo = (v) => /^(s|sí|si|true|1|x)/.test(String(v || '').trim().toLowerCase());
+
+  filasCampos.forEach((r, n) => {
+    const linea = n + 2;
+    const field = ctx.globalFields.find((f) => f.key === String(r[0] || '').trim());
+    if (!field) throw new Error(`La fila ${linea}: campo desconocido «${r[0]}»`);
+    const raw = r[2];
+
+    if (field.kind === 'number') {
+      // Campo opcional (la semilla): vacio es «no declarado». Sin esta rama, exportar e importar la
+      // pestaña Global fallaba con la semilla vacia y la ida y vuelta se rompia sola.
+      if (field.optional && String(raw).trim() === '') setByPath(data, field.path, '');
+      else {
+        const num = ctx.num(raw, `La fila ${linea}: ${field.label}`);
+        if (field.min != null && num < field.min) {
+          throw new Error(`La fila ${linea}: ${field.label} debe ser ≥ ${field.min}`);
+        }
+        if (field.max != null && num > field.max) {
+          throw new Error(`La fila ${linea}: ${field.label} debe ser ≤ ${field.max}`);
+        }
+        setByPath(data, field.path, num);
+      }
+    } else if (field.kind === 'select') {
+      const v = String(raw).trim();
+      if (!field.options.includes(v)) {
+        throw new Error(`La fila ${linea}: valor «${v}» inválido (usa ${field.options.join('/')})`);
+      }
+      setByPath(data, field.path, v);
+    } else if (field.kind === 'days') {
+      const dias = String(raw).split(',').map((s) => s.trim()).filter((s) => s !== '').map((s) => {
+        const num = Number(s);
+        if (!Number.isInteger(num) || num < 0 || num > 6) {
+          throw new Error(`La fila ${linea}: día «${s}» inválido (0-6)`);
+        }
+        return num;
+      });
+      setByPath(data, field.path, dias);
+    } else if (field.kind === 'time') {
+      const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) throw new Error(`La fila ${linea}: ${field.label} debe ser HH:MM («${raw}»)`);
+      setByPath(data, field.path, { hour: Number(m[1]), minute: Number(m[2]) });
+    } else if (field.kind === 'checkbox') {
+      setByPath(data, field.path, siONo(raw));
+    } else {
+      setByPath(data, field.path, String(raw));
+    }
+  });
+
+  // Descansos: si el CSV trae alguno, se reconstruye la lista ENTERA con ellos. Si no trae
+  // ninguno, se dejan los que ya tuviera el modelo.
+  if (filasDescanso.size) {
+    const descansos = [];
+    Array.from(filasDescanso.keys()).sort((a, b) => a - b).forEach((idx) => {
+      const f = filasDescanso.get(idx);
+      const hora = (texto, cual) => {
+        const m = String(texto || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+        if (!m) throw new Error(`Descanso ${idx}: ${cual} «${texto}» no es HH:MM`);
+        return { hour: Number(m[1]), minute: Number(m[2]) };
+      };
+      const start = hora(f.inicio, 'desde');
+      const end = hora(f.fin, 'hasta');
+      if (end.hour * 60 + end.minute <= start.hour * 60 + start.minute) {
+        throw new Error(`Descanso ${idx}: el fin debe ser posterior al inicio`);
+      }
+      descansos.push({
+        start,
+        end,
+        cuentaComoJornada: siONo(f.cuentaComoJornada),
+        // Ausente = se toma tambien en horas extra, que es lo normal.
+        existeEnExtra: f.existeEnExtra === undefined ? true : siONo(f.existeEnExtra)
+      });
+    });
+    setByPath(data, [ 'calendar', 'breaks' ], descansos);
+  }
+
+  // Tabla de tamaños de lote: mismo criterio, se reconstruye ENTERA solo si el CSV trae alguna fila.
+  if (filasLote.size) {
+    const tabla = [];
+    Array.from(filasLote.keys()).sort((a, b) => a - b).forEach((idx) => {
+      const f = filasLote.get(idx);
+      const size = ctx.num(f.tamano, `Línea del lote ${idx}: tamaño`);
+      if (!Number.isInteger(size) || size < 1) {
+        throw new Error(`Línea del lote ${idx}: el tamaño debe ser un entero mayor o igual que 1`);
+      }
+      const weight = ctx.num(f.peso, `Línea del lote ${idx}: peso`);
+      if (!(weight > 0)) throw new Error(`Línea del lote ${idx}: el peso debe ser mayor que 0`);
+      tabla.push({ size, weight });
+    });
+    setByPath(data, [ 'lots', 'table' ], tabla);
+  }
+
+  // Vigencias de las reglas laborales: se reconstruye ENTERA solo si el CSV trae alguna. Una celda
+  // vacia es «lo de arriba», que es como se declara una regla que no cambia ese campo.
+  if (filasRegla.size) {
+    const reglas = [];
+    const vistos = new Set();
+    Array.from(filasRegla.keys()).sort((a, b) => a - b).forEach((idx) => {
+      const f = filasRegla.get(idx);
+      const desde = String(f.desde || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) {
+        throw new Error(`Línea de la vigencia ${idx}: «${desde}» no es una fecha AAAA-MM-DD`);
+      }
+      // Una fecha repetida es una regla que se pisa a si misma: la segunda ganaria en silencio.
+      if (vistos.has(desde)) throw new Error(`Línea de la vigencia ${idx}: la fecha ${desde} está repetida`);
+      vistos.add(desde);
+
+      const regla = { desde };
+      ctx.laborRuleFields.forEach((campo) => {
+        const bruto = String(f[campo.key] == null ? '' : f[campo.key]).trim();
+        if (bruto === '') return;
+        const num = ctx.num(bruto, `Línea de la vigencia ${desde}: ${campo.key}`);
+        if (num < 0) throw new Error(`Línea de la vigencia ${desde}: ${campo.key} no puede ser negativo`);
+        regla[campo.key] = num;
+      });
+      reglas.push(regla);
+    });
+    setByPath(data, [ 'labor', 'rules' ], reglas);
+  }
+
+  return [ { element: info.element, data } ];
+}
+
+
+
+
+/***/ }),
+
 /***/ "./client/simulation/DataAudit.js":
 /*!****************************************!*\
   !*** ./client/simulation/DataAudit.js ***!
@@ -2818,13 +3600,15 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ DataTablePanel)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./WarmupCurve */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./LaborRules */ "./client/simulation/LaborRules.js");
 /* harmony import */ var _MemberAssignment_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./MemberAssignment.js */ "./client/simulation/MemberAssignment.js");
-/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+/* harmony import */ var _CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./CsvTareas.js */ "./client/simulation/CsvTareas.js");
+/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+
 
 
 
@@ -3147,6 +3931,26 @@ const GLOBAL_SECCIONES = [
  */
 const GLOBAL_FIELDS = GLOBAL_SECCIONES.reduce((todos, s) => todos.concat(s.campos), []);
 
+/**
+ * Los campos de una vigencia de reglas laborales, con su etiqueta.
+ *
+ * VIVE AQUI Y NO DENTRO DEL CSV, y ese es el arreglo: la lista estaba escrita DOS veces -una en la
+ * exportacion y otra en la importacion- con los mismos ocho nombres. Dos listas que tienen que
+ * coincidir acaban divergiendo, y entonces un CSV exportado deja de importarse y el sintoma es
+ * «faltan datos», no «las listas no coinciden».
+ *
+ * El orden importa: es el orden de las filas del CSV.
+ */
+const CAMPOS_DE_REGLA = [
+  { key: 'limitHours', label: 'cupo semanal (h)' },
+  { key: 'payMultiplier', label: 'prima doble (x)' },
+  { key: 'excessPayMultiplier', label: 'prima triple (x)' },
+  { key: 'dailyOvertimeLimitHours', label: 'tope al día (h)' },
+  { key: 'maxOvertimeDaysPerWeek', label: 'días por semana' },
+  { key: 'sundayPremiumPercent', label: 'dominical (%)' },
+  { key: 'holidayPremiumPercent', label: 'festivo (%)' }
+];
+
 const DEFAULT_GLOBAL = () => ({
   startDate: '',
   // CORREGIDO: antes era `{ value: 60, unit: 'minute' }`, que NO significa «una
@@ -3258,59 +4062,9 @@ const selectorSeguro = (id) => (typeof CSS !== 'undefined' && CSS.escape
   : String(id).replace(/["\\]/g, '\\$&'));
 
 // ---------------------------------------------------------------------------
-// CSV
+// El parseo y la serializacion del CSV viven en `CsvTareas.js`. No se dejan aqui «por comodidad»:
+// una copia local vuelve a divergir del modulo probado en cuanto se toque el separador o el BOM.
 // ---------------------------------------------------------------------------
-const csvEscape = (value) => {
-  const s = value === undefined || value === null ? '' : String(value);
-  return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-const toCsv = (rows) => rows.map((row) => row.map(csvEscape).join(',')).join('\r\n');
-
-// Parser tolerante: soporta comillas dobles escapadas, campos multilinea y
-// separador coma o punto y coma (Excel en español exporta con ';').
-const parseCsv = (text) => {
-  const clean = text.replace(/^\uFEFF/, '');
-  const firstLine = clean.split(/\r?\n/)[0] || '';
-  const sep = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
-
-  const rows = [];
-  let row = [];
-  let field = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < clean.length; i++) {
-    const c = clean[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (clean[i + 1] === '"') { field += '"'; i++; }
-        else inQuotes = false;
-      } else field += c;
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === sep) {
-      row.push(field); field = '';
-    } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && clean[i + 1] === '\n') i++;
-      row.push(field); field = '';
-      rows.push(row); row = [];
-    } else field += c;
-  }
-  if (field !== '' || row.length) { row.push(field); rows.push(row); }
-  return rows.filter((r) => r.some((c) => String(c).trim() !== ''));
-};
-
-const download = (filename, text) => {
-  const blob = new Blob([ '\uFEFF' + text ], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-};
 
 // ---------------------------------------------------------------------------
 // Nota: los elementos del registro incluyen las ETIQUETAS (los textos). Se
@@ -3384,19 +4138,19 @@ class DataTablePanel {
    */
   _esEditable(element) {
     if (!element || (0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(element)) return false;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:StartEvent')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Participant')) return true;
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:SequenceFlow')
-      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element.source, 'bpmn:ExclusiveGateway'));
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:StartEvent')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Participant')) return true;
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:SequenceFlow')
+      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element.source, 'bpmn:ExclusiveGateway'));
   }
 
   _ponerLapiz(element) {
-    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(
+    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(
       `<div class="sim-data-table-overlay" title="Editar los datos de simulación de este elemento"`
       + ` data-tip="Editar en la tabla de datos">${svg(EditIcon)}</div>`
     );
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(nodo, 'click', () => this.openFor(element));
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(nodo, 'click', () => this.openFor(element));
     this._overlayId = this._overlays.add(element, 'sim-data-table', {
       position: { top: -12, left: -12 },
       html: nodo
@@ -3415,7 +4169,7 @@ class DataTablePanel {
   _init() {
     if (this._panel) return;
 
-    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(`
+    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(`
       <div class="${PANEL_CLS}">
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
@@ -3450,23 +4204,23 @@ class DataTablePanel {
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
 
     panel.querySelectorAll('.panel-tabs button').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
-        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
         // Si la ayuda esta abierta, se RECARGA con la pestana nueva: si no, al
         // cambiar de pestana seguiria explicando la anterior, que es peor que no
         // tener ayuda porque el usuario lee la respuesta equivocada.
-        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._ayuda).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._ayuda).add('hidden');
+        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._ayuda).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._ayuda).add('hidden');
           this._toggleAyuda();
         }
         this._render();
@@ -3474,11 +4228,11 @@ class DataTablePanel {
     });
   }
 
-  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._panel).has(OPEN_CLS); }
+  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._panel).has(OPEN_CLS); }
   toggle() { this.isOpen() ? this.close() : this.open(); }
   open() {
     if (!this._panel) this._init();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._panel).add(OPEN_CLS);
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._panel).add(OPEN_CLS);
     this._render();
   }
 
@@ -3494,10 +4248,10 @@ class DataTablePanel {
   openFor(element) {
     if (!element) return this.open();
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
     else this._activeTab = 'tasks';
 
     this._focusId = element.id;
@@ -3506,11 +4260,11 @@ class DataTablePanel {
     // _render() reconstruye las pestañas sin conservar cual estaba activa, asi
     // que se marca aqui.
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     const fila = this._panel.querySelector(`tbody tr[data-el-id="${element.id}"]`);
     if (fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).add('fila-foco');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(fila).add('fila-foco');
       if (fila.scrollIntoView) fila.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
   }
@@ -3563,7 +4317,7 @@ class DataTablePanel {
     this._activeTab = objetivo.tab || 'tasks';
     this.open();
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     // Despues de abrir y RENDERIZAR: el resaltado trabaja sobre nodos que hasta
     // ahora no existian.
@@ -3603,7 +4357,7 @@ class DataTablePanel {
     this._limpiarDestino();
 
     this._destinoResaltado = objetivos;
-    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(nodo).add('destino-resaltado'));
+    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(nodo).add('destino-resaltado'));
     if (objetivos[0].scrollIntoView) objetivos[0].scrollIntoView({ block: 'center', inline: 'nearest' });
     if (objetivos[0].focus && objetivos[0].focus.call) objetivos[0].focus();
 
@@ -3625,12 +4379,12 @@ class DataTablePanel {
    */
   _limpiarDestino() {
     clearTimeout(this._temporizadorDestino);
-    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(nodo).remove('destino-resaltado'));
+    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(nodo).remove('destino-resaltado'));
     this._destinoResaltado = null;
   }
 
   close() {
-    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._panel).remove(OPEN_CLS);
+    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._panel).remove(OPEN_CLS);
     this._focusId = null;
     // El resaltado del atajo no sobrevive al cierre: al volver a abrir, la tabla tiene
     // que verse limpia y no con la marca de un viaje de hace media hora.
@@ -3672,11 +4426,11 @@ class DataTablePanel {
     this._quitarOferta();
     if (!this._panel) return;
 
-    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(
+    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(
       '<button class="btn-desactivar" type="button">Desactivar modo y reintentar</button>'
     );
 
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(boton, 'click', () => {
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(boton, 'click', () => {
       this._quitarOferta();
       try {
         this._editorActions.trigger('toggleTokenSimulation');
@@ -3702,17 +4456,17 @@ class DataTablePanel {
   // -- acceso a datos -------------------------------------------------------
 
   _getTasks() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task'));
   }
 
   _getFlows() {
     return this._elementRegistry.filter(
-      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el.source, 'bpmn:ExclusiveGateway')
+      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el.source, 'bpmn:ExclusiveGateway')
     );
   }
 
   _getRootStartEvent() {
-    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
+    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent'));
     return starts.find((el) => {
       const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el);
       return d && d.isRoot;
@@ -3728,7 +4482,7 @@ class DataTablePanel {
    * algun dia, tiene que cambiar en los dos sitios a la vez.
    */
   _getProcessRoot() {
-    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:Participant')) || null;
+    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Participant')) || null;
   }
 
   /** Piscinas de recursos declaradas en el proceso. */
@@ -3776,10 +4530,16 @@ class DataTablePanel {
         ...d,
         ...raw,
         isRoot: true,
+        // Las vigencias se toman TAL CUAL del modelo, sin pasarlas por `normalizeLabor`.
+        // Por que: esa funcion DESCARTA en silencio las reglas con fecha invalida, y aqui eso rompe
+        // dos cosas. La tabla de vigencias se pintaria vacia aunque el diagrama las tenga -reabrir
+        // el panel pareceria perder el trabajo-, y el importador del CSV no podria rechazar una
+        // fecha mala porque ya no llegaria a verla: el error se habria comido la fila antes.
+        // El motor sigue normalizando por su cuenta al simular, que es donde toca.
+        labor: { ...d.labor, ...(raw.labor || {}) },
         // Los objetos anidados se mezclan uno a uno: con `...raw` a secas, un
         // modelo que solo tenga `labor.shiftType` perdería los demás valores por
         // defecto y las casillas saldrían vacías.
-        labor: { ...d.labor, ...(raw.labor || {}) },
         warmup: { ...d.warmup, ...(raw.warmup || {}) },
         lots: { ...d.lots, ...(raw.lots || {}) }
       }
@@ -3833,7 +4593,7 @@ class DataTablePanel {
       ${listas(a.ojo, 'ojo')}
     `;
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(this._ayuda).toggle('hidden');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(this._ayuda).toggle('hidden');
   }
 
   /**
@@ -3848,7 +4608,7 @@ class DataTablePanel {
     if (this._getRootStartEvent()) return;
     if (!this._body) return;
 
-    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.domify)(
+    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.domify)(
       '<p class="aviso-raiz">Sin evento raíz configurado la simulación no se ejecutará. '
       + 'Ve a la pestaña <strong>Global</strong> para crearlo.</p>'
     );
@@ -4059,7 +4819,7 @@ class DataTablePanel {
   /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
   _bindAyudaDeColumnas() {
     this._body.querySelectorAll('.btn-ayuda-col').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(btn, 'click', (e) => {
         if (e && e.preventDefault) e.preventDefault();
         this._mostrarAyudaColumna(btn.dataset.ayudaCol);
       });
@@ -4078,24 +4838,24 @@ class DataTablePanel {
 
     const celda = fila.querySelector('td');
     const texto = AYUDA_COLUMNAS[clave] || '';
-    const yaVisible = !(0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).has('hidden');
+    const yaVisible = !(0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(fila).has('hidden');
 
     if (yaVisible && celda.textContent === texto) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).add('hidden');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(fila).add('hidden');
       this._marcarAyudaColumna(null);
       return;
     }
 
     celda.textContent = texto;
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(fila).remove('hidden');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(fila).remove('hidden');
     this._marcarAyudaColumna(clave);
   }
 
   /** Deja marcado el «?» de la columna cuya ayuda esta a la vista. */
   _marcarAyudaColumna(clave) {
     this._body.querySelectorAll('.btn-ayuda-col').forEach((b) => {
-      if (b.dataset.ayudaCol === clave) (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).add('activo');
-      else (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(b).remove('activo');
+      if (b.dataset.ayudaCol === clave) (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(b).add('activo');
+      else (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(b).remove('activo');
     });
   }
 
@@ -4120,7 +4880,7 @@ class DataTablePanel {
         });
       };
 
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(select, 'change', sincronizar);
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(select, 'change', sincronizar);
       sincronizar();
     });
   }
@@ -4148,7 +4908,7 @@ class DataTablePanel {
       // muerta para siempre.
       const selPool = tr.querySelector('[data-field="resources.pool"]');
       if (selPool) {
-        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(selPool, 'change', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(selPool, 'change', () => {
           const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
           if (!cant) return;
           cant.disabled = selPool.value === '';
@@ -4157,7 +4917,7 @@ class DataTablePanel {
       }
 
       tr.querySelectorAll('[data-field]').forEach((campo) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
+        min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
       });
     });
   }
@@ -4178,9 +4938,9 @@ class DataTablePanel {
    * aqui es lo que hay guardado». Vuelve a amarillo en cuanto se edita otra vez.
    */
   _autoguardarFila(tr, campo) {
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('invalido');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardado');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).remove('invalido');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).remove('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).add('guardando');
 
     let fila;
     try {
@@ -4188,14 +4948,14 @@ class DataTablePanel {
     } catch (err) {
       // Se queda en rojo y SIN guardar, y el texto del usuario no se toca para que
       // pueda corregirlo. Una fila invalida no bloquea a las demas.
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).add('invalido');
       this._setStatus(err.message, 'error');
       return;
     }
 
     if (!fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).remove('guardando');
       return;
     }
 
@@ -4219,14 +4979,14 @@ class DataTablePanel {
         return;
       }
 
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).add('invalido');
       this._setStatus(`No se pudo guardar: ${err.message || err}`, 'error');
       return;
     }
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).remove('guardando');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(campo).add('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).remove('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(campo).add('guardado');
     this._setStatus(`Guardado: ${this._label(fila.element)}.`, 'ok');
   }
 
@@ -4285,7 +5045,7 @@ class DataTablePanel {
 
     const boton = this._body.querySelector('.btn-anadir-fila');
     if (boton) {
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(boton, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(boton, 'click', () => {
         const tbody = this._body.querySelector('.filas-pool');
         // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
         // parseo de un contenedor que no sea <table>/<tbody>.
@@ -4306,7 +5066,7 @@ class DataTablePanel {
       // seria guardar y reabrir, que es justo lo que el usuario no hace.
       this._bindCobro(tbody);
 
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(tbody, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(tbody, 'click', (e) => {
         const objetivo = e.target;
         if (!objetivo || !objetivo.closest) return;
 
@@ -4385,8 +5145,8 @@ class DataTablePanel {
       if (pieza) pieza.hidden = !porPieza;
     };
 
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(origen, 'change', sincronizar);
-    min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(cobro, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(origen, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(cobro, 'change', sincronizar);
     sincronizar();
   }
 
@@ -4541,7 +5301,7 @@ class DataTablePanel {
     this._body.querySelectorAll('[data-field="branchingProbability"]').forEach((input) => {
       if (input.disabled) return;
 
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(input, 'input', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(input, 'input', () => {
         this._equilibrar(input);
         this._refrescarSumas();
       });
@@ -4550,7 +5310,7 @@ class DataTablePanel {
       // rango -> al limite. Sin esto el campo podia quedarse en -10 y el
       // indicador decia "100 %" (la suma los recortaba) mientras el guardado lo
       // bloqueaba: indicador y validacion se contradecian.
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(input, 'change', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(input, 'change', () => {
         const crudo = String(input.value).replace(',', '.');
         const n = Number(crudo);
         if (crudo.trim() === '' || Number.isNaN(n)) input.value = '0';
@@ -4657,7 +5417,7 @@ class DataTablePanel {
       // que ya existiera, pero no habia forma de crearlo desde aqui. El usuario
       // rellenaba las tareas, guardaba, y al simular recibia "No root start
       // event found" sin saber que le faltaba. Ahora se puede crear desde aqui.
-      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_5__.is)(el, 'bpmn:StartEvent'));
+      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent'));
 
       if (!inicios.length) {
         this._body.innerHTML = `
@@ -4687,7 +5447,7 @@ class DataTablePanel {
       `;
 
       this._body.querySelectorAll('.btn-raiz').forEach((btn) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
+        min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
       });
       return;
     }
@@ -4978,7 +5738,7 @@ class DataTablePanel {
     listas.forEach(({ accion, tbody, fila }) => {
       const boton = this._body.querySelector(`[data-accion="${accion}"]`);
       if (boton) {
-        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(boton, 'click', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(boton, 'click', () => {
           const cuerpo = this._body.querySelector(tbody);
           // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
           // parseo de un contenedor que no sea <table>/<tbody>.
@@ -4988,7 +5748,7 @@ class DataTablePanel {
 
       const cuerpo = this._body.querySelector(tbody);
       if (cuerpo) {
-        min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(cuerpo, 'click', (e) => {
+        min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(cuerpo, 'click', (e) => {
           const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
           if (!btn) return;
           const tr = btn.closest('tr');
@@ -5001,8 +5761,8 @@ class DataTablePanel {
       if (!f.key.startsWith('warmup.')) return;
       const campo = this._body.querySelector(`[data-field="${f.key}"]`);
       if (!campo) return;
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
     });
 
     this._bindAyudaPorCampo(this._body);
@@ -5022,17 +5782,17 @@ class DataTablePanel {
    */
   _bindAyudaPorCampo(alcance) {
     alcance.querySelectorAll('.btn-ayuda-campo').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_6__.event.bind(btn, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_7__.event.bind(btn, 'click', (e) => {
         if (e && e.preventDefault) e.preventDefault();
         const caja = alcance.querySelector(`[data-ayuda-de="${btn.dataset.ayuda}"]`);
         if (!caja) return;
 
-        if ((0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(caja).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(caja).remove('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(btn).add('activo');
+        if ((0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(caja).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(caja).remove('hidden');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(btn).add('activo');
         } else {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(caja).add('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_6__.classes)(btn).remove('activo');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(caja).add('hidden');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_7__.classes)(btn).remove('activo');
         }
       });
     });
@@ -5855,171 +6615,12 @@ class DataTablePanel {
 
   // -- CSV ------------------------------------------------------------------
 
-  _csvForActiveTab() {
-    if (this._activeTab === 'tasks') {
-      // Se exportan TAMBIEN las columnas de la triangular y las de recurso: antes
-      // el CSV solo llevaba el tiempo fijo, asi que una tarea triangular salia
-      // con `tiempo_proceso` vacio y sus min/moda/max se perdian de vista.
-      // La tasa de fallo se exporta en % (0-100) y con la columna renombrada a
-      // `tasa_fallo_pct`, igual que el reparto de las compuertas: es lo que se ve
-      // en la tabla, y en Excel una columna rotulada «tasa_fallo» con 0,05 se lee
-      // como si fuera medio por ciento. Un CSV exportado ANTES de este cambio trae
-      // `tasa_fallo` en fraccion y se sigue importando (ver _applyCsv).
-      const rows = [ [
-        'id', 'nombre', 'distribucion',
-        'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
-        'tasa_fallo_pct', 'retrabajo', 'unidad_retrabajo',
-        'recurso', 'cant_recurso',
-        'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol',
-        'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad'
-      ] ];
-      this._getTasks().forEach((el) => {
-        const d = this._taskData(el);
-        const tri = d.processingTime.distribution === 'triangular';
-        // La barrera solo se exporta con «por lote»: en una tarea por token el
-        // motor no la lee, y sacarla rellena daria a entender que si.
-        const esLote = d.frequency === 'lot';
-        const b = d.barrier || {};
-        rows.push([
-          el.id,
-          this._label(el),
-          d.processingTime.distribution || 'fixed',
-          tri ? '' : d.processingTime.value,
-          d.processingTime.unit,
-          tri ? d.processingTime.min : '',
-          tri ? d.processingTime.mode : '',
-          tri ? d.processingTime.max : '',
-          pctATexto(d.failureRate),
-          d.reworkTime.value,
-          d.reworkTime.unit,
-          (d.resources && d.resources.pool) || '',
-          (d.resources && d.resources.quantityRequired) || '',
-          esLote ? 'lot' : 'token',
-          esLote ? b.availableProbability : '',
-          esLote ? b.waitMin : '',
-          esLote ? b.waitMode : '',
-          esLote ? b.waitMax : '',
-          esLote ? b.toleranceMinutes : '',
-          // La carga se exporta tal como esta declarada: vacio es «no lo sabemos»
-          // y 0 es «no mueve peso». Convertir uno en otro al pasar por Excel
-          // borraria esa diferencia, que es justo la que distingue un dato que
-          // falta de un dato declarado.
-          (d.carga && d.carga.masaCargadaKg != null) ? d.carga.masaCargadaKg : '',
-          (d.carga && d.carga.masaArrastradaKg != null) ? d.carga.masaArrastradaKg : '',
-          (d.carga && d.carga.distanciaM != null) ? d.carga.distanciaM : '',
-          Array.isArray(d.habilidades) ? d.habilidades.join(' ') : (d.habilidad || '')
-        ]);
-      });
-      return rows;
-    }
-
-    if (this._activeTab === 'resources') {
-      // Una fila por PISCINA, y los miembros en columnas aparte. Se aplana en vez
-      // de sacar una fila por miembro porque en Excel una piscina con nombres es
-      // mas facil de leer asi, y al importar se reconstruye igual.
-      //
-      // Las tres columnas del cobro van al final: `propia` y `hora` son el
-      // defecto, asi que un diagrama sin proveedores exporta las columnas vacias y
-      // el CSV sigue siendo el mismo de antes por la izquierda.
-      const rows = [ [ 'nombre', 'cantidad', 'miembros', 'origen', 'cobro', 'tarifa_hora', 'precio_pieza' ] ];
-      this._getPools().forEach((p) => {
-        const miembros = (p.members || []).map((m) => {
-          const partes = [ m.nombre ];
-          partes.push(m.tarifaHora != null ? m.tarifaHora : '');
-          partes.push(m.cargaMaximaKg != null ? m.cargaMaximaKg : '');
-          partes.push((m.habilidades || []).join(' '));
-          return partes.join('|');
-        }).join(';');
-        const externa = p.origen === 'externa';
-        rows.push([
-          p.name,
-          p.quantity,
-          miembros,
-          externa ? 'externa' : '',
-          externa ? (p.cobro || 'hora') : '',
-          externa && p.cobro !== 'pieza' && p.tarifaHora != null ? p.tarifaHora : '',
-          externa && p.cobro === 'pieza' && p.precioPieza != null ? p.precioPieza : ''
-        ]);
-      });
-      return rows;
-    }
-
-    if (this._activeTab === 'flows') {
-      // La columna se llama `probabilidad_pct` y va en % (0-100), no en fraccion:
-      // es lo que muestra y edita la tabla. Un CSV exportado antes de este cambio
-      // trae `probabilidad` en 0-1 y se sigue importando (ver _applyCsv).
-      const rows = [ [ 'id', 'compuerta', 'hacia', 'probabilidad_pct' ] ];
-      this._getFlows().forEach((el) => {
-        const d = this._flowData(el);
-        rows.push([
-          el.id,
-          this._label(el.source),
-          el.target ? this._label(el.target) : '',
-          this._salidaUnica(el.source) ? '100' : pctATexto(d.branchingProbability)
-        ]);
-      });
-      return rows;
-    }
-
-    const info = this._globalData();
-    if (!info) throw new Error('No hay evento raíz configurado');
-
-    const rows = [ [ 'campo', 'etiqueta', 'valor' ] ];
-    GLOBAL_FIELDS.forEach((f) => {
-      const v = getByPath(info.data, f.path);
-      let text;
-      if (f.kind === 'days') text = Array.isArray(v) ? v.join(',') : '';
-      else if (f.kind === 'time') text = v && typeof v === 'object' ? `${pad(v.hour)}:${pad(v.minute)}` : '';
-      else if (f.kind === 'checkbox') text = v === false ? 'no' : 'si';
-      else text = v == null ? '' : v;
-      rows.push([ f.key, f.label, text ]);
-    });
-
-    // Los descansos son una lista: una fila por dato, con clave `descanso.N.campo`.
-    // Asi sigue siendo editable en Excel y vuelve entera al importar.
-    const hhmm = (t) => (t && Number.isFinite(t.hour) ? `${pad(t.hour)}:${pad(t.minute)}` : '');
-    ((info.data.calendar && info.data.calendar.breaks) || []).forEach((b, i) => {
-      const n = i + 1;
-      rows.push([ `descanso.${n}.inicio`, `Descanso ${n}: desde`, hhmm(b.start) ]);
-      rows.push([ `descanso.${n}.fin`, `Descanso ${n}: hasta`, hhmm(b.end) ]);
-      rows.push([ `descanso.${n}.cuentaComoJornada`, `Descanso ${n}: ¿cuenta como jornada?`, b.cuentaComoJornada ? 'si' : 'no' ]);
-      rows.push([ `descanso.${n}.existeEnExtra`, `Descanso ${n}: ¿también en horas extra?`, b.existeEnExtra === false ? 'no' : 'si' ]);
-    });
-
-    // La tabla de tamaños de lote es otra lista: mismo criterio que los descansos.
-    ((info.data.lots && info.data.lots.table) || []).forEach((f, i) => {
-      const n = i + 1;
-      rows.push([ `lote.${n}.tamano`, `Tamaño de lote ${n}: tamaño`, f.size ]);
-      rows.push([ `lote.${n}.peso`, `Tamaño de lote ${n}: peso`, f.weight ]);
-    });
-
-    // Vigencias de las reglas laborales. Se exportan TODAS las columnas, aunque
-    // la celda esté vacía: en la ida y vuelta una columna ausente y una vacía no
-    // son lo mismo (vacío = «lo de arriba», ausente = columna que no existía).
-    ((info.data.labor && info.data.labor.rules) || []).forEach((r, i) => {
-      const n = i + 1;
-      rows.push([ `regla.${n}.desde`, `Vigencia ${n}: desde`, r.desde || '' ]);
-      [
-        [ 'limitHours', 'cupo semanal (h)' ],
-        [ 'payMultiplier', 'prima doble (x)' ],
-        [ 'excessPayMultiplier', 'prima triple (x)' ],
-        [ 'dailyOvertimeLimitHours', 'tope al día (h)' ],
-        [ 'maxOvertimeDaysPerWeek', 'días por semana' ],
-        [ 'sundayPremiumPercent', 'dominical (%)' ],
-        [ 'holidayPremiumPercent', 'festivo (%)' ]
-      ].forEach(([ campo, etiqueta ]) => {
-        rows.push([ `regla.${n}.${campo}`, `Vigencia ${n}: ${etiqueta}`, r[campo] == null ? '' : r[campo] ]);
-      });
-    });
-
-    return rows;
-  }
-
   exportCsv() {
     try {
-      const rows = this._csvForActiveTab();
-      const name = { tasks: 'tareas', flows: 'flujos', resources: 'recursos', global: 'global' }[this._activeTab];
-      download(`simulacion-${name}.csv`, toCsv(rows));
+      // La ida y vuelta del CSV vive en `CsvTareas.js`. Aqui solo se le pasan las funciones que
+      // saben de bpmn-js, para que ese modulo no tenga que conocerlo.
+      const rows = (0,_CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__.filasDePestana)(this._activeTab, this._contextoCsv());
+      (0,_CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__.download)(`simulacion-${_CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__.NOMBRE_DE_PESTANA[this._activeTab] || this._activeTab}.csv`, (0,_CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__.toCsv)(rows));
       this._setStatus(`CSV exportado (${rows.length - 1} fila(s)).`, 'ok');
     } catch (err) {
       this._setStatus(err.message, 'error');
@@ -6027,535 +6628,26 @@ class DataTablePanel {
   }
 
   /**
-   * Aplica un CSV a la pestaña activa. Valida TODO antes de escribir: si hay un
-   * solo error no se modifica el diagrama.
+   * Las funciones que necesita `CsvTareas.js` para leer y escribir sin conocer bpmn-js.
+   *
+   * Se pasa un objeto explícito y no `this`: asi el módulo no puede llamar a nada del panel que no
+   * esté declarado aquí, y se ve de un vistazo qué depende del diagrama y qué no.
    */
-  _applyCsv(text) {
-    const rows = parseCsv(text);
-    if (!rows.length) throw new Error('El archivo está vacío');
-
-    const header = rows[0].map((h) => String(h).trim().toLowerCase());
-    const body = rows.slice(1);
-    const idx = (name) => {
-      const i = header.indexOf(name);
-      if (i === -1) throw new Error(`Falta la columna «${name}» en el CSV`);
-      return i;
+  _contextoCsv() {
+    return {
+      getTasks: () => this._getTasks(),
+      getFlows: () => this._getFlows(),
+      getPools: () => this._getPools(),
+      getElement: (id) => this._elementRegistry.get(id),
+      label: (el) => this._label(el),
+      taskData: (el) => this._taskData(el),
+      flowData: (el) => this._flowData(el),
+      globalData: () => this._globalData(),
+      salidaUnica: (gw) => this._salidaUnica(gw),
+      num: (raw, label, row) => this._num(raw, label, row),
+      globalFields: GLOBAL_FIELDS,
+      laborRuleFields: CAMPOS_DE_REGLA
     };
-
-    const updates = [];
-
-    if (this._activeTab === 'tasks') {
-      const iId = idx('id');
-      const iU = idx('unidad_proceso');
-      const iR = idx('retrabajo');
-      const iRU = idx('unidad_retrabajo');
-
-      // Formato nuevo: `tasa_fallo_pct` en % (0-100). Formato heredado:
-      // `tasa_fallo` en fraccion (0-1). Se aceptan los dos para no romper un CSV
-      // exportado antes del cambio. El formato se detecta por el NOMBRE de la
-      // columna, no por el valor: adivinar por magnitud convertiria un 1 %
-      // legitimo (o un 0,5 %) en otra cosa sin avisar.
-      const iFPct = header.indexOf('tasa_fallo_pct');
-      const iFHeredado = header.indexOf('tasa_fallo');
-      if (iFPct === -1 && iFHeredado === -1) {
-        throw new Error('Falta la columna «tasa_fallo_pct» en el CSV');
-      }
-
-      // Columnas OPCIONALES: un CSV exportado por una version anterior (sin
-      // distribucion, sin triangular y sin recurso) sigue importandose, y en ese
-      // caso se conserva lo que tuviera el elemento en vez de destruirlo.
-      const iDist = header.indexOf('distribucion');
-      const iT = header.indexOf('tiempo_proceso');
-      const iMin = header.indexOf('min');
-      const iModa = header.indexOf('moda');
-      const iMax = header.indexOf('max');
-      const iRec = header.indexOf('recurso');
-      const iCant = header.indexOf('cant_recurso');
-
-      body.forEach((r, n) => {
-        const line = n + 2;
-        const el = this._elementRegistry.get(String(r[iId]).trim());
-        if (!el) throw new Error(`Línea ${line}: no existe el elemento «${r[iId]}»`);
-
-        const unit = String(r[iU]).trim();
-        const unitR = String(r[iRU]).trim();
-        if (!TASK_UNITS.includes(unit)) throw new Error(`Línea ${line}: unidad «${unit}» inválida (usa ${TASK_UNITS.join('/')}, en plural)`);
-        if (!TASK_UNITS.includes(unitR)) throw new Error(`Línea ${line}: unidad «${unitR}» inválida (usa ${TASK_UNITS.join('/')}, en plural)`);
-
-        const bruto = this._num(r[iFPct !== -1 ? iFPct : iFHeredado], `Línea ${line}: tasa de fallo`);
-        let failure;
-        if (iFPct === -1) {
-          if (bruto < 0 || bruto > 1) {
-            throw new Error(`Línea ${line}: «tasa_fallo» va en fracción (0-1) pero vale ${bruto}`);
-          }
-          failure = bruto;
-        } else {
-          if (bruto < 0 || bruto > 100) {
-            throw new Error(`Línea ${line}: la tasa de fallo debe estar entre 0 y 100 % (vale ${bruto})`);
-          }
-          failure = bruto / 100;
-        }
-
-        const cur = this._taskData(el);
-
-        const dist = (iDist !== -1 && String(r[iDist]).trim())
-          ? String(r[iDist]).trim()
-          : (cur.processingTime.distribution || 'fixed');
-        if (dist !== 'fixed' && dist !== 'triangular') {
-          throw new Error(`Línea ${line}: distribución «${dist}» inválida (usa fixed o triangular)`);
-        }
-
-        let processingTime;
-        if (dist === 'triangular') {
-          const min = this._num(r[iMin], `Línea ${line}: mínimo`);
-          const mode = this._num(r[iModa], `Línea ${line}: moda`);
-          const max = this._num(r[iMax], `Línea ${line}: máximo`);
-          if (!(min <= mode && mode <= max)) {
-            throw new Error(`Línea ${line}: en la triangular debe cumplirse mínimo ≤ moda ≤ máximo`);
-          }
-          processingTime = { distribution: 'triangular', min, mode, max, unit };
-        } else {
-          const value = iT !== -1
-            ? this._num(r[iT], `Línea ${line}: tiempo de proceso`)
-            : (cur.processingTime.value || 0);
-          processingTime = { distribution: 'fixed', value, unit };
-        }
-
-        const data = {
-          ...cur,
-          processingTime,
-          reworkTime: { ...cur.reworkTime, value: this._num(r[iR], `Línea ${line}: retrabajo`), unit: unitR },
-          failureRate: failure
-        };
-
-        const recurso = iRec !== -1 ? String(r[iRec]).trim() : ((cur.resources && cur.resources.pool) || '');
-        if (recurso) {
-          const cantRaw = iCant !== -1 ? String(r[iCant]).trim() : '';
-          const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `Línea ${line}: cantidad de recurso`);
-          if (!(cantidad >= 1)) throw new Error(`Línea ${line}: la cantidad de recurso debe ser ≥ 1`);
-          if (!this._getPools().some((p) => p.name === recurso)) {
-            throw new Error(`Línea ${line}: la piscina «${recurso}» no está dada de alta (créala en la pestaña Recursos)`);
-          }
-          data.resources = { pool: recurso, quantityRequired: cantidad };
-        } else {
-          delete data.resources;
-        }
-
-        // Frecuencia y barrera, tambien opcionales: un CSV antiguo no las trae y
-        // la tarea se queda como estaba (por token, sin barrera). `cur` trae los
-        // valores por defecto para poder pintarlos, asi que hay que borrarlos.
-        const iFreq = header.indexOf('frecuencia');
-        const freqRaw = iFreq !== -1 ? String(r[iFreq]).trim().toLowerCase() : '';
-        if (!freqRaw || freqRaw === 'token') {
-          delete data.frequency;
-          delete data.barrier;
-        } else if (freqRaw === 'lot' || freqRaw === 'lote') {
-          // Se lee por nombre y no por posicion: el usuario puede reordenar las
-          // columnas en Excel, y una fila recortada (columnas de barrera
-          // borradas a mano) merece un aviso claro y no un «no numérico».
-          const leer = (name) => {
-            const i = header.indexOf(name);
-            if (i === -1) {
-              throw new Error(
-                `Falta la columna «${name}» en el CSV: es necesaria para las tareas «por lote»`
-              );
-            }
-            if (r[i] === undefined) {
-              throw new Error(`Línea ${line}: la fila está incompleta, falta el valor de «${name}»`);
-            }
-            return r[i];
-          };
-          const disp = this._num(leer('barrera_disp'), `Línea ${line}: disponibilidad de la barrera`);
-          if (disp < 0 || disp > 1) {
-            throw new Error(`Línea ${line}: la disponibilidad de la barrera debe estar entre 0 y 1`);
-          }
-          const eMin = this._num(leer('barrera_min'), `Línea ${line}: espera mínima`);
-          const eModa = this._num(leer('barrera_moda'), `Línea ${line}: espera modal`);
-          const eMax = this._num(leer('barrera_max'), `Línea ${line}: espera máxima`);
-          if (!(eMin <= eModa && eModa <= eMax)) {
-            throw new Error(`Línea ${line}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo`);
-          }
-          const tol = this._num(leer('barrera_tol'), `Línea ${line}: tolerancia`);
-          if (tol < 0) throw new Error(`Línea ${line}: la tolerancia no puede ser negativa`);
-
-          data.frequency = 'lot';
-          data.barrier = {
-            availableProbability: disp,
-            waitMin: eMin,
-            waitMode: eModa,
-            waitMax: eMax,
-            toleranceMinutes: tol
-          };
-        } else {
-          throw new Error(`Línea ${line}: frecuencia «${freqRaw}» inválida (usa token o lot)`);
-        }
-
-        // Carga fisica y habilidad: columnas OPCIONALES, como la frecuencia. Una
-        // celda vacia se guarda como AUSENTE (no como 0): «no lo sabemos» y «no
-        // mueve peso» son cosas distintas, y el diagnostico las separa.
-        const opcional = (nombre) => {
-          const i = header.indexOf(nombre);
-          if (i === -1 || r[i] === undefined) return null;
-          const bruto = String(r[i]).trim();
-          if (bruto === '') return null;
-          const v = this._num(bruto, `Línea ${line}: ${nombre}`);
-          if (v < 0) throw new Error(`Línea ${line}: «${nombre}» no puede ser negativo`);
-          return v;
-        };
-        const cargaImp = {
-          masaCargadaKg: opcional('carga_kg'),
-          masaArrastradaKg: opcional('arrastre_kg'),
-          distanciaM: opcional('distancia_m')
-        };
-        delete data.carga;
-        if (Object.values(cargaImp).some((v) => v != null)) data.carga = cargaImp;
-
-        const iHab = header.indexOf('habilidad');
-        delete data.habilidad;
-        delete data.habilidades;
-        if (iHab !== -1 && r[iHab] !== undefined) {
-          const lista = String(r[iHab]).split(/[,\s]+/).map((h) => h.trim()).filter(Boolean);
-          if (lista.length === 1) data.habilidad = lista[0];
-          else if (lista.length > 1) data.habilidades = lista;
-        }
-
-        updates.push({ element: el, data });
-      });
-      return updates;
-    }
-
-    if (this._activeTab === 'resources') {
-      const root = this._getProcessRoot();
-      if (!root) throw new Error('El diagrama no tiene ningún proceso donde guardar los recursos');
-
-      const iN = idx('nombre');
-      const iC = idx('cantidad');
-      // Columna OPCIONAL: un CSV exportado antes de A5 no la trae, y en ese caso
-      // la piscina se queda sin miembros en vez de reventar.
-      const iM = header.indexOf('miembros');
-
-      // Columnas OPCIONALES del cobro: un CSV exportado antes de que existieran
-      // sigue entrando, y en ese caso las piscinas quedan como propias, que es lo
-      // que eran.
-      const iOrigen = header.indexOf('origen');
-      const iCobro = header.indexOf('cobro');
-      const iTarifa = header.indexOf('tarifa_hora');
-      const iPrecio = header.indexOf('precio_pieza');
-      const celda = (r, i) => (i === -1 || r[i] == null ? '' : String(r[i]).trim());
-
-      const pools = [];
-      const vistos = new Set();
-
-      body.forEach((r, n) => {
-        const line = n + 2;
-        const nombre = String(r[iN]).trim();
-        if (!nombre) throw new Error(`Línea ${line}: falta el nombre de la piscina`);
-        if (vistos.has(nombre)) throw new Error(`Línea ${line}: la piscina «${nombre}» está repetida`);
-        vistos.add(nombre);
-
-        const cantidad = this._num(r[iC], `Línea ${line}: cantidad`);
-        if (!Number.isInteger(cantidad) || cantidad < 1) {
-          throw new Error(`Línea ${line}: la cantidad debe ser un entero mayor o igual que 1`);
-        }
-
-        const pool = { name: nombre, quantity: cantidad };
-
-        // El cobro del proveedor, si el CSV lo trae. Se normaliza igual que la
-        // tabla: solo 'externa' activa el cobro, y solo 'pieza' lo cambia de base.
-        if (celda(r, iOrigen).toLowerCase() === 'externa') {
-          const cobro = celda(r, iCobro).toLowerCase();
-          pool.origen = 'externa';
-          pool.cobro = cobro === 'pieza' ? 'pieza' : 'hora';
-
-          if (pool.cobro === 'pieza') {
-            const precio = celda(r, iPrecio);
-            if (precio === '') {
-              throw new Error(`Línea ${line}: la piscina «${nombre}» cobra por pieza y no trae ` +
-                '«precio_pieza». Sin él el coste saldría 0 y el informe mentiría.');
-            }
-            const valor = this._num(precio, `Línea ${line}: precio por pieza de «${nombre}»`);
-            if (!(valor > 0)) throw new Error(`Línea ${line}: el precio por pieza de «${nombre}» debe ser mayor que 0`);
-            pool.precioPieza = valor;
-          } else {
-            const tarifa = celda(r, iTarifa);
-            if (tarifa !== '') {
-              const valor = this._num(tarifa, `Línea ${line}: tarifa por hora de «${nombre}»`);
-              if (valor < 0) throw new Error(`Línea ${line}: la tarifa por hora de «${nombre}» no puede ser negativa`);
-              pool.tarifaHora = valor;
-            }
-          }
-        }
-
-        const crudoMiembros = iM !== -1 ? String(r[iM] == null ? '' : r[iM]).trim() : '';
-        if (crudoMiembros) {
-          const members = [];
-          const nombresVistos = new Set();
-          // Formato: `nombre|tarifa|cargaMax|habilidad1 habilidad2` y los miembros
-          // separados por `;`. Los campos posicionales vacios se omiten.
-          crudoMiembros.split(';').forEach((trozo, j) => {
-            const partes = trozo.split('|').map((x) => x.trim());
-            const nombreM = partes[0] || '';
-            if (!nombreM) throw new Error(`Línea ${line}: el miembro ${j + 1} de «${nombre}» no tiene nombre`);
-            if (nombresVistos.has(nombreM)) {
-              throw new Error(`Línea ${line}: el miembro «${nombreM}» está repetido en «${nombre}»`);
-            }
-            nombresVistos.add(nombreM);
-
-            const miembro = { nombre: nombreM };
-            if (partes[1]) {
-              miembro.tarifaHora = this._num(partes[1], `Línea ${line}: tarifa de ${nombreM}`);
-            }
-            if (partes[2]) {
-              miembro.cargaMaximaKg = this._num(partes[2], `Línea ${line}: carga máxima de ${nombreM}`);
-            }
-            if (partes[3]) miembro.habilidades = partes[3].split(/\s+/).filter(Boolean);
-            members.push(miembro);
-          });
-          if (members.length) pool.members = members;
-        }
-
-        pools.push(pool);
-      });
-
-      updates.push({ element: root, data: { ...((0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(root) || {}), resourcePools: pools } });
-      return updates;
-    }
-
-    if (this._activeTab === 'flows') {
-      const iId = idx('id');
-
-      // Formato nuevo: `probabilidad_pct` en % (0-100). Formato heredado:
-      // `probabilidad` en fraccion (0-1). Se aceptan los dos para no romper un
-      // CSV exportado antes del cambio.
-      const iPct = header.indexOf('probabilidad_pct');
-      const iHeredado = header.indexOf('probabilidad');
-      if (iPct === -1 && iHeredado === -1) {
-        throw new Error('Falta la columna «probabilidad_pct» en el CSV');
-      }
-      const iValor = iPct !== -1 ? iPct : iHeredado;
-
-      // Igual que al guardar: se agrupa por compuerta para validar que cada una
-      // sume 100 %.
-      const porCompuerta = new Map();
-
-      body.forEach((r, n) => {
-        const line = n + 2;
-        const el = this._elementRegistry.get(String(r[iId]).trim());
-        if (!el) throw new Error(`Línea ${line}: no existe el elemento «${r[iId]}»`);
-        if (!el.source) throw new Error(`Línea ${line}: el flujo no tiene compuerta de origen`);
-
-        if (this._salidaUnica(el.source)) return; // su reparto no se lee
-
-        const bruto = this._num(r[iValor], `Línea ${line}: reparto`);
-
-        // El formato heredado se detecta por el NOMBRE de la columna, no por el
-        // valor: adivinar por magnitud convertiria un 1 % legitimo en 100 %.
-        let pct;
-        if (iPct === -1) {
-          if (bruto < 0 || bruto > 1) {
-            throw new Error(`Línea ${line}: «probabilidad» va en fracción (0-1) pero vale ${bruto}`);
-          }
-          pct = redondear2(bruto * 100);
-        } else {
-          if (bruto < 0 || bruto > 100) {
-            throw new Error(`Línea ${line}: el reparto debe estar entre 0 y 100 % (vale ${bruto})`);
-          }
-          pct = redondear2(bruto);
-        }
-
-        const grupo = porCompuerta.get(el.source.id) || { gateway: el.source, filas: [] };
-        grupo.filas.push({ el, pct });
-        porCompuerta.set(el.source.id, grupo);
-      });
-
-      porCompuerta.forEach(({ gateway, filas }) => {
-        const total = redondear2(filas.reduce((acc, f) => acc + f.pct, 0));
-        if (Math.abs(total - 100) > TOLERANCIA_REPARTO_PCT) {
-          throw new Error(
-            `El reparto de las salidas de «${this._label(gateway)}» suma ${total} % y debe sumar 100 %`
-          );
-        }
-        filas.forEach(({ el, pct }) => {
-          updates.push({
-            element: el,
-            data: { ...this._flowData(el), branchingProbability: Math.round(pct * 100) / 10000 }
-          });
-        });
-      });
-
-      return updates;
-    }
-
-    const info = this._globalData();
-    if (!info) throw new Error('No hay evento raíz configurado');
-
-    const iKey = idx('campo');
-    const iVal = header.indexOf('valor') !== -1 ? header.indexOf('valor') : null;
-    if (iVal === null) throw new Error('Falta la columna «valor» en el CSV');
-
-    const data = JSON.parse(JSON.stringify(info.data));
-
-    // Los descansos y la tabla de lotes se leen primero y se QUITAN de la lista
-    // de campos: si no, caerian en el bucle de abajo y saltaria «campo
-    // desconocido».
-    const filasDescanso = new Map();
-    const filasLote = new Map();
-    const filasRegla = new Map();
-    const filasCampos = [];
-
-    body.forEach((r) => {
-      const clave = String(r[iKey]).trim();
-
-      const m = clave.match(/^descanso\.(\d+)\.(inicio|fin|cuentaComoJornada|existeEnExtra)$/);
-      if (m) {
-        const i = Number(m[1]);
-        if (!filasDescanso.has(i)) filasDescanso.set(i, {});
-        filasDescanso.get(i)[m[2]] = String(r[iVal]).trim();
-        return;
-      }
-
-      const ml = clave.match(/^lote\.(\d+)\.(tamano|peso)$/);
-      if (ml) {
-        const i = Number(ml[1]);
-        if (!filasLote.has(i)) filasLote.set(i, {});
-        filasLote.get(i)[ml[2]] = String(r[iVal]).trim();
-        return;
-      }
-
-      const mr = clave.match(/^regla\.(\d+)\.(desde|limitHours|payMultiplier|excessPayMultiplier|dailyOvertimeLimitHours|maxOvertimeDaysPerWeek|sundayPremiumPercent|holidayPremiumPercent)$/);
-      if (mr) {
-        const i = Number(mr[1]);
-        if (!filasRegla.has(i)) filasRegla.set(i, {});
-        filasRegla.get(i)[mr[2]] = String(r[iVal]).trim();
-        return;
-      }
-
-      filasCampos.push(r);
-    });
-
-    filasCampos.forEach((r, n) => {
-      const line = n + 2;
-      const field = GLOBAL_FIELDS.find((f) => f.key === String(r[iKey]).trim());
-      if (!field) throw new Error(`Línea ${line}: campo desconocido «${r[iKey]}»`);
-      const raw = r[iVal];
-
-      if (field.kind === 'number') {
-        // Campo opcional (la semilla): vacio es «no declarado». Sin esta rama,
-        // exportar e importar la pestaña Global fallaba en la semilla vacia: la
-        // ida y vuelta del CSV se rompia sola con los valores por defecto.
-        if (field.optional && String(raw).trim() === '') {
-          setByPath(data, field.path, '');
-        } else {
-          const num = this._num(raw, `Línea ${line}: ${field.label}`);
-          if (field.min != null && num < field.min) throw new Error(`Línea ${line}: ${field.label} debe ser ≥ ${field.min}`);
-          if (field.max != null && num > field.max) throw new Error(`Línea ${line}: ${field.label} debe ser ≤ ${field.max}`);
-          setByPath(data, field.path, num);
-        }
-      } else if (field.kind === 'select') {
-        const v = String(raw).trim();
-        if (!field.options.includes(v)) throw new Error(`Línea ${line}: valor «${v}» inválido (usa ${field.options.join('/')})`);
-        setByPath(data, field.path, v);
-      } else if (field.kind === 'days') {
-        const days = String(raw).split(',').map((s) => s.trim()).filter((s) => s !== '').map((s) => {
-          const num = Number(s);
-          if (!Number.isInteger(num) || num < 0 || num > 6) throw new Error(`Línea ${line}: día «${s}» inválido (0-6)`);
-          return num;
-        });
-        setByPath(data, field.path, days);
-      } else if (field.kind === 'time') {
-        const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})$/);
-        if (!m) throw new Error(`Línea ${line}: ${field.label} debe ser HH:MM («${raw}»)`);
-        setByPath(data, field.path, { hour: Number(m[1]), minute: Number(m[2]) });
-      } else if (field.kind === 'checkbox') {
-        // Se acepta «si/sí/s/true/1» y cualquier otra cosa es «no», para no
-        // pelearse con la hoja de calculo.
-        const texto = String(raw).trim().toLowerCase();
-        setByPath(data, field.path, /^(s|sí|si|true|1|x)/.test(texto));
-      } else {
-        setByPath(data, field.path, String(raw));
-      }
-    });
-
-    // Descansos: si el CSV trae alguno, se reconstruye la lista ENTERA con ellos.
-    // Si no trae ninguno, se dejan los que ya tuviera el modelo.
-    if (filasDescanso.size) {
-      const descansos = [];
-
-      Array.from(filasDescanso.keys()).sort((a, b) => a - b).forEach((idx) => {
-        const f = filasDescanso.get(idx);
-        const hora = (texto, cual) => {
-          const m = String(texto || '').trim().match(/^(\d{1,2}):(\d{2})$/);
-          if (!m) throw new Error(`Descanso ${idx}: ${cual} «${texto}» no es HH:MM`);
-          return { hour: Number(m[1]), minute: Number(m[2]) };
-        };
-        const esSi = (v) => /^(s|sí|si|true|1|x)/.test(String(v || '').trim().toLowerCase());
-
-        const start = hora(f.inicio, 'desde');
-        const end = hora(f.fin, 'hasta');
-        if (end.hour * 60 + end.minute <= start.hour * 60 + start.minute) {
-          throw new Error(`Descanso ${idx}: el fin debe ser posterior al inicio`);
-        }
-
-        descansos.push({
-          start,
-          end,
-          cuentaComoJornada: esSi(f.cuentaComoJornada),
-          // Ausente = se toma tambien en horas extra, que es lo normal.
-          existeEnExtra: f.existeEnExtra === undefined ? true : esSi(f.existeEnExtra)
-        });
-      });
-
-      setByPath(data, [ 'calendar', 'breaks' ], descansos);
-    }
-
-    // Tabla de tamaños de lote: mismo criterio que los descansos, se reconstruye
-    // ENTERA solo si el CSV trae alguna fila.
-    if (filasLote.size) {
-      const tabla = [];
-      Array.from(filasLote.keys()).sort((a, b) => a - b).forEach((idx) => {
-        const f = filasLote.get(idx);
-        const size = this._num(f.tamano, `Línea del lote ${idx}: tamaño`);
-        if (!Number.isInteger(size) || size < 1) {
-          throw new Error(`Línea del lote ${idx}: el tamaño debe ser un entero mayor o igual que 1`);
-        }
-        const weight = this._num(f.peso, `Línea del lote ${idx}: peso`);
-        if (!(weight > 0)) throw new Error(`Línea del lote ${idx}: el peso debe ser mayor que 0`);
-        tabla.push({ size, weight });
-      });
-      setByPath(data, [ 'lots', 'table' ], tabla);
-    }
-
-    // Vigencias de las reglas laborales: mismo criterio, se reconstruye ENTERA
-    // solo si el CSV trae alguna. Una celda vacía es «lo de arriba».
-    if (filasRegla.size) {
-      const reglas = [];
-      const vistos = new Set();
-      Array.from(filasRegla.keys()).sort((a, b) => a - b).forEach((idx) => {
-        const f = filasRegla.get(idx);
-        const desde = String(f.desde || '').trim();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) {
-          throw new Error(`Línea de la vigencia ${idx}: «${desde}» no es una fecha AAAA-MM-DD`);
-        }
-        if (vistos.has(desde)) throw new Error(`Línea de la vigencia ${idx}: la fecha ${desde} está repetida`);
-        vistos.add(desde);
-
-        const regla = { desde };
-        [ 'limitHours', 'payMultiplier', 'excessPayMultiplier',
-          'dailyOvertimeLimitHours', 'maxOvertimeDaysPerWeek',
-          'sundayPremiumPercent', 'holidayPremiumPercent' ].forEach((c) => {
-          const bruto = String(f[c] == null ? '' : f[c]).trim();
-          if (bruto === '') return;
-          const n = this._num(bruto, `Línea de la vigencia ${desde}: ${c}`);
-          if (n < 0) throw new Error(`Línea de la vigencia ${desde}: ${c} no puede ser negativo`);
-          regla[c] = n;
-        });
-        reglas.push(regla);
-      });
-      setByPath(data, [ 'labor', 'rules' ], reglas);
-    }
-
-    updates.push({ element: info.element, data });
-    return updates;
   }
 
   importCsv(event) {
@@ -6568,7 +6660,7 @@ class DataTablePanel {
       const text = String(reader.result || '');
       let updates;
       try {
-        updates = this._applyCsv(text);
+        updates = (0,_CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__.importar)(this._activeTab, text, this._contextoCsv());
       } catch (err) {
         this._setStatus(err.message, 'error');
         this._notifications.showNotification({ text: `Importación cancelada. ${err.message}`, type: 'error', duration: 8000 });

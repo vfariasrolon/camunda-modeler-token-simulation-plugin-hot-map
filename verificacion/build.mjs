@@ -64,6 +64,12 @@ writeFileSync(join(AQUI, 'CapacityGuard.mjs'), leer('CapacityGuard.js'));
 // probarlos sin navegador.
 writeFileSync(join(AQUI, 'MemberAssignment.mjs'), leer('MemberAssignment.js'));
 
+// CsvTareas es puro: la ida y vuelta del CSV de la tabla de datos. Recibe las funciones de lectura
+// en un `ctx`, asi que no toca bpmn-js ni el DOM -lo unico de navegador es `download`, que se prueba
+// en el arnes del panel-. El parseo se prueba aqui justamente porque un CSV mal partido no da error:
+// da datos desplazados.
+writeFileSync(join(AQUI, 'CsvTareas.mjs'), leer('CsvTareas.js'));
+
 // HeatmapZones es puro: reparte masa en celdas y no toca el DOM ni bpmn-js.
 writeFileSync(join(AQUI, 'HeatmapZones.mjs'), leer('HeatmapZones.js'));
 

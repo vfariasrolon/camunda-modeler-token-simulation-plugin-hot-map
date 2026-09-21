@@ -21,6 +21,7 @@ verificacion/LegalOvertime.mjs
 verificacion/DominantRoute.mjs
 verificacion/CapacityGuard.mjs
 verificacion/MemberAssignment.mjs
+verificacion/CsvTareas.mjs
 verificacion/ModelUtil.mjs
 verificacion/util.mjs
 
