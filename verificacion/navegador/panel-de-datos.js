@@ -568,10 +568,29 @@ check('CSV tareas: exportar → importar → exportar es idempotente',
   check('Cupo: un cupo de cero se rechaza', Boolean(errorCupo) && /entero/.test(errorCupo),
     errorCupo);
 
+  // EL AVISO DE CAPACIDAD, que es lo que evita el error del usuario. Con el cupo escrito, el
+  // select de arranque tiene que HABILITARSE ya, sin re-renderizar: antes habia que reabrir la
+  // pestana para poder elegir la politica, y parecia que el cupo no funcionaba.
+  escribir('Task_1', 'cupo.size', 24);
+  check('Cupo: escribir el cupo HABILITA su arranque sin re-renderizar',
+    fila('Task_1').querySelector('[data-field="cupo.arranque"]').disabled === false);
+
+  // Y el aviso de capacidad aparece y es legible.
+  const avisoCupo = fila('Task_1').querySelector('.aviso-cupo');
+  check('Cupo: se avisa de su capacidad contra las llegadas del diagrama',
+    avisoCupo && avisoCupo.textContent.trim() !== '',
+    avisoCupo ? avisoCupo.textContent.trim() : 'sin aviso');
+  // Con la raiz del fixture (1 por hora), un cupo de 24 a 5 min SOBRA: el aviso va en verde.
+  check('Cupo: cuando la capacidad sobra, el aviso lo dice y va en verde',
+    avisoCupo && avisoCupo.classList.contains('bien'),
+    avisoCupo ? avisoCupo.className : 'sin aviso');
+
   // Se deja limpio para no arrastrar el cupo a los casos siguientes.
   escribir('Task_1', 'cupo.size', '');
   guardar(recoger('tasks'));
   panel._renderTasks();
+  check('Cupo: al quitar el cupo, el arranque se deshabilita otra vez',
+    fila('Task_1').querySelector('[data-field="cupo.arranque"]').disabled === true);
 }
 
 // --- 6b. La tasa de fallo, en % de punta a punta ---------------------------

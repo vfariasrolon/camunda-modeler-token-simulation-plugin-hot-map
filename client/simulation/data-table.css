@@ -193,6 +193,46 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* LA COLUMNA DE LA TAREA SE QUEDA FIJA AL HACER SCROLL.
+     Con 25 columnas hay que desplazarse mucho a la derecha, y al llegar al final ya no se sabe QUE
+     fila se esta editando: se acaba cambiando el cupo de la tarea equivocada. Fijarla es lo que
+     mantiene el nombre a la vista mientras se recorren las demas.
+     El `sticky` necesita fondo propio, o el texto de debajo se transparenta al pasar por encima. */
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+}
+
+/* En la cabecera va por encima de las celdas fijas, o se solaparian al desplazar. */
+.sim-data-table-panel .data-table th.col-name {
+  z-index: 3;
+  background: #f7f7f7;
+}
+
+/* El borde derecho marca donde acaba lo fijo: sin el, el texto que pasa por debajo parece
+   pertenecer a la columna de la tarea. */
+.sim-data-table-panel .data-table td.col-name,
+.sim-data-table-panel .data-table th.col-name {
+  border-right: 1px solid #ddd;
+}
+
+/* El aviso de capacidad del cupo: dice si el cupo da abasto a las llegadas del diagrama. */
+.sim-data-table-panel .data-table .aviso-cupo {
+  font-size: 10px;
+  line-height: 1.25;
+  margin-top: 2px;
+  white-space: normal;
+  max-width: 150px;
+}
+
+.sim-data-table-panel .data-table .aviso-cupo.bien {
+  color: #2e7d32;
+}
+
+.sim-data-table-panel .data-table .aviso-cupo.mal {
+  color: #c62828;
+  font-weight: 600;
 }
 
 /* --- pestaña Flujos: reparto de compuertas --- */

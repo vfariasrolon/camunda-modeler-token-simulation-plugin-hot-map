@@ -1035,7 +1035,8 @@ export default class DataTablePanel {
                 <td>${selectHabilidad}</td>
                 <td><input type="number" step="1" min="1" class="cell mini" data-field="cupo.size"
                   value="${cupo ? cupo.size : ''}" placeholder="—"
-                  title="N piezas procesadas A LA VEZ y liberadas juntas. Vacío o 1 = una pieza a la vez. El «Tiempo» es el del cupo completo, no el de una pieza."></td>
+                  title="N piezas procesadas A LA VEZ y liberadas juntas. Vacío o 1 = una pieza a la vez. El «Tiempo» es el del cupo completo, no el de una pieza.">
+                  <div class="aviso-cupo"></div></td>
                 <td><select class="cell" data-field="cupo.arranque" ${cupo ? '' : 'disabled title="Pon primero un cupo mayor que 1"'}>
                   <option value="lleno" ${cupo && cupo.arranque === 'lleno' ? 'selected' : ''}>esperar a llenar</option>
                   <option value="inmediato" ${cupo && cupo.arranque === 'inmediato' ? 'selected' : ''}>arrancar con lo que haya</option>
@@ -1119,6 +1120,123 @@ export default class DataTablePanel {
       domEvent.bind(select, 'change', sincronizar);
       sincronizar();
     });
+
+    this._bindCupo();
+  }
+
+  /**
+   * El CUPO: habilita su arranque al escribirlo y avisa si no da abasto.
+   *
+   * TRES COSAS, y las tres salen de un caso real que costo tiempo entender:
+   *
+   *   1. EL ARRANQUE SE HABILITA AL ESCRIBIR EL CUPO. Antes solo se miraba al pintar la tabla, asi
+   *      que recien escrito el cupo el desplegable seguia muerto y parecia que no funcionaba: habia
+   *      que re-renderizar para poder elegir la politica. Ahora se escucha el campo y se sincroniza.
+   *
+   *   2. SE AVISA DE LA CAPACIDAD CONTRA LAS LLEGADAS. Un cupo de 24 con 10 minutos da 2,4
+   *      piezas/minuto; si la raiz declara MAS llegadas que eso, la cola crece sin limite y el
+   *      tiempo total del informe deja de significar nada. Es el error mas facil de cometer -se
+   *      declara el cupo y las llegadas por separado- y no lo avisaba nadie: se veian «142 dias»
+   *      sin saber por que.
+   *
+   *   3. Se dice EN UNIDADES COMPARABLES: piezas por minuto de un lado y del otro. Comparar «24 por
+   *      tanda» con «3 por minuto» a ojo es justo lo que se hace mal.
+   */
+  _bindCupo() {
+    // Las llegadas de la raiz, en piezas por minuto, una vez para toda la tabla.
+    const llegadasPorMinuto = this._llegadasPorMinuto();
+
+    this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
+      const campoCupo = tr.querySelector('[data-field="cupo.size"]');
+      const selectArranque = tr.querySelector('[data-field="cupo.arranque"]');
+      if (!campoCupo || !selectArranque) return;
+
+      const sincronizar = () => {
+        const tamano = Number(campoCupo.value);
+        const hayCupo = Number.isFinite(tamano) && tamano > 1;
+        selectArranque.disabled = !hayCupo;
+        selectArranque.title = hayCupo ? '' : 'Pon primero un cupo mayor que 1';
+        this._avisarCapacidadDeCupo(tr, tamano, llegadasPorMinuto);
+      };
+
+      domEvent.bind(campoCupo, 'input', sincronizar);
+      domEvent.bind(campoCupo, 'change', sincronizar);
+      sincronizar();
+    });
+  }
+
+  /** Las llegadas declaradas en la raiz, en piezas por minuto. `null` si no hay. */
+  _llegadasPorMinuto() {
+    const raiz = this._getRootStartEvent();
+    if (!raiz) return null;
+    const info = this._globalData();
+    const tasa = info && info.data && info.data.arrivalRate;
+    if (!tasa || !(Number(tasa.value) > 0)) return null;
+    const porHora = tasa.unit === 'hour' ? Number(tasa.value)
+      : tasa.unit === 'second' ? Number(tasa.value) * 3600 : Number(tasa.value) * 60;
+    return porHora / 60;
+  }
+
+  /**
+   * Avisa si el cupo no da abasto a las llegadas declaradas.
+   *
+   * La comparacion es CAPACIDAD contra LLEGADAS, las dos en piezas por minuto:
+   *
+   *     capacidad = cupo / minutos de la tarea
+   *     llegadas  = lo que declara la raiz
+   *
+   * Con capacidad >= llegadas, la cola se vacia y los tiempos del informe valen. Con capacidad <
+   * llegadas, la cola CRECE: el tiempo total pasa a medir cuanto dura la corrida y no el proceso,
+   * asi que un «142 dias» no significa que la pieza tarde eso.
+   */
+  _avisarCapacidadDeCupo(tr, tamano, llegadasPorMinuto) {
+    const aviso = tr.querySelector('.aviso-cupo');
+    if (!aviso) return;
+
+    aviso.textContent = '';
+    aviso.removeAttribute('title');
+    domClasses(aviso).remove('mal', 'bien');
+
+    const esCupo = Number.isFinite(tamano) && tamano > 1;
+    if (!esCupo || llegadasPorMinuto == null) return;
+
+    // Los minutos de la tarea: con distribucion triangular se usa la moda, que es su valor tipico.
+    const unidad = tr.querySelector('[data-field="processingTime.unit"]');
+    const minutos = this._minutosDeLaTarea(tr, unidad ? unidad.value : 'minutes');
+    if (!(minutos > 0)) return;
+
+    const capacidad = tamano / minutos;
+    const razon = capacidad / llegadasPorMinuto;
+
+    const fmt = (n) => (n < 1 ? n.toFixed(2) : n.toFixed(1));
+    if (razon >= 1) {
+      domClasses(aviso).add('bien');
+      aviso.textContent = `capacidad ${fmt(capacidad)}/min ≥ ${fmt(llegadasPorMinuto)} que llegan`;
+      return;
+    }
+
+    // No da abasto. Se dice la consecuencia, no solo el numero: es la diferencia entre «falta
+    // capacidad» y «tu informe de 142 dias no significa lo que crees».
+    domClasses(aviso).add('mal');
+    aviso.textContent = `capacidad ${fmt(capacidad)}/min < ${fmt(llegadasPorMinuto)} que llegan — la cola crece`;
+    aviso.title = `El cupo procesa ${fmt(capacidad)} piezas por minuto y llegan ${fmt(llegadasPorMinuto)}. `
+      + `Faltan ${fmt(llegadasPorMinuto - capacidad)} por minuto, asi que la cola crece sin limite y el `
+      + 'tiempo total de la simulacion mide cuanto dura la corrida, no lo que tarda una pieza. '
+      + `Sube el cupo a ${Math.ceil(llegadasPorMinuto * minutos)} o baja las llegadas para que cuadre.`;
+  }
+
+  /** Los minutos que declara una tarea, leyendo su casilla segun la distribucion. */
+  _minutosDeLaTarea(tr, unidad) {
+    const leer = (campo) => {
+      const el = tr.querySelector(`[data-field="${campo}"]`);
+      return el ? Number(String(el.value).replace(',', '.')) : NaN;
+    };
+    const distribucion = tr.querySelector('[data-field="processingTime.distribution"]');
+    const esTri = distribucion && distribucion.value === 'triangular';
+    const valor = esTri ? leer('processingTime.mode') : leer('processingTime.value');
+    if (!Number.isFinite(valor) || valor <= 0) return null;
+    const factor = unidad === 'hours' ? 60 : unidad === 'seconds' ? 1 / 60 : 1;
+    return valor * factor;
   }
 
   /**
