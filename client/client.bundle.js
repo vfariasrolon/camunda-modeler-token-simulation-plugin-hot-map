@@ -5083,6 +5083,130 @@ class DataTablePanel {
     });
 
     this._bindCupo();
+    this._bindNavegacionConFlechas();
+  }
+
+  /**
+   * Navegar la tabla con las FLECHAS, como en una hoja de calculo.
+   *
+   * POR QUE: la tabla tiene 25 columnas y hay que meter decenas de datos seguidos. Con el raton cada
+   * celda son dos movimientos -pinchar, escribir, pinchar-; con las flechas se teclea en rafaga, que
+   * es como se rellena una tabla de verdad.
+   *
+   * LAS CUATRO DIRECCIONES, y cada una salta a la misma columna de la fila de al lado:
+   *
+   *   - Arriba / Abajo: misma columna, tarea anterior o siguiente.
+   *   - Izquierda / Derecha: misma fila, columna anterior o siguiente.
+   *
+   * SE SALTAN LAS CELDAS QUE NO SE PUEDEN EDITAR -deshabilitadas, ocultas o de solo lectura-, en vez
+   * de pararse en ellas: el usuario quiere llegar al campo siguiente que SI puede rellenar, y
+   * tener que pulsar dos veces para cruzar una columna muerta seria peor que no tener flechas.
+   *
+   * Y NO SE NAVEGA DESDE UN DESPLEGABLE CON LAS FLECHAS: ahi las flechas cambian la opcion elegida,
+   * que es lo que el usuario espera. Solo se navega desde las casillas de texto y numero, y hacia
+   * ellas.
+   */
+  _bindNavegacionConFlechas() {
+    const filas = Array.from(this._body.querySelectorAll('tbody tr[data-el-id]'));
+    if (!filas.length) return;
+
+    // La posicion de cada campo dentro de su fila, para poder saltar de columna en columna. Se
+    // calcula sobre los campos REALES del DOM -no sobre una lista fija-, asi no hay que tocar esto
+    // cada vez que se anade una columna.
+    //
+    // ¿SE PUEDE NAVEGAR A UN CAMPO? Deshabilitado o de solo lectura, no. Y oculto, tampoco.
+    //
+    // OJO CON `offsetParent`: se uso al principio y es un MAL indicador de visibilidad -vale `null`
+    // tanto para un elemento oculto como para uno de `position: fixed`, que si se ve-. Con el, el
+    // panel entero se quedaba sin destinos cuando la tabla estaba dentro de un contenedor fijo, y
+    // ademas hacia la navegacion IMPOSIBLE DE PROBAR: en un arnes el panel no esta desplegado, asi
+    // que todos los campos daban `offsetParent: null` y el arnes no podia comprobar nada.
+    //
+    // Se mira el estilo calculado, que responde a la pregunta de verdad: ¿este campo se ve?
+    const esVisible = (el) => {
+      if (!el || typeof getComputedStyle !== 'function') return true;
+      const st = getComputedStyle(el);
+      return st.display !== 'none' && st.visibility !== 'hidden';
+    };
+
+    const navegable = (el) => Boolean(el) && !el.disabled && el.readOnly !== true && esVisible(el);
+
+    const camposDeFila = (tr) =>
+      Array.from(tr.querySelectorAll('input[data-field], select[data-field]')).filter(navegable);
+
+    const esCasillaDeTexto = (el) => el && el.tagName === 'INPUT'
+      && [ 'text', 'number', 'date', 'time' ].includes(el.type);
+
+    /**
+     * La celda de al lado, en horizontal, dentro de la MISMA fila.
+     *
+     * SE AVANZA SOBRE LA LISTA REAL DE CAMPOS, no sobre una lista de columnas: la tabla tiene 25
+     * columnas y algunas -min, moda, máx- solo existen para la distribución triangular, asi que la
+     * «columna siguiente» del DOM no es la de la cabecera. Se toma el vecino que se pueda editar.
+     *
+     * NO SE BUSCA «LA MISMA COLUMNA» como en vertical: aqui la misma columna es la celda de partida.
+     * Hacerlo asi devolvia el propio campo y el salto no ocurria nunca.
+     */
+    const celdaDeAlLado = (tr, campo, direccion) => {
+      const todos = Array.from(tr.querySelectorAll('input[data-field], select[data-field]'));
+      const i = todos.findIndex((el) => el.dataset.field === campo);
+      if (i === -1) return null;
+      const paso = direccion === 'izquierda' ? -1 : 1;
+      for (let j = i + paso; j >= 0 && j < todos.length; j += paso) {
+        return todos[j];
+      }
+      return null;
+    };
+
+    /**
+     * La celda equivalente -misma columna- en otra fila.
+     *
+     * SI ESA COLUMNA NO EXISTE EN LA OTRA TAREA, se cae en su primera casilla editable. No todas las
+     * columnas estan en todas las filas: «mín», «moda» y «máx» solo aparecen con distribucion
+     * triangular, y la barrera solo con «por lote». Devolver `null` dejaba al usuario sin destino y
+     * la flecha no hacia NADA -medido: bajar desde la barrera de una tarea «por lote» a una «por
+     * token» no movia el foco-.
+     */
+    const mismaColumnaEn = (tr, campo) => {
+      const campos = camposDeFila(tr);
+      return campos.find((el) => el.dataset.field === campo) || campos[0] || null;
+    };
+
+    filas.forEach((tr) => {
+      tr.querySelectorAll('input[data-field], select[data-field]').forEach((el) => {
+        min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(el, 'keydown', (e) => {
+          const teclas = [ 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight' ];
+          if (!teclas.includes(e.key)) return;
+
+          // En un desplegable, las flechas cambian la opcion: no se navega. En una casilla de
+          // texto, se navega SIEMPRE -incluso con contenido-, porque para moverse dentro del texto
+          // ya estan Inicio, Fin y el raton.
+          if (el.tagName === 'SELECT') return;
+          if (!esCasillaDeTexto(el)) return;
+
+          const campo = el.dataset.field;
+          let destino = null;
+
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            const i = filas.indexOf(tr);
+            const paso = e.key === 'ArrowUp' ? -1 : 1;
+            for (let j = i + paso; j >= 0 && j < filas.length; j += paso) {
+              const d = mismaColumnaEn(filas[j], campo);
+              if (navegable(d)) { destino = d; break; }
+            }
+          } else {
+            destino = celdaDeAlLado(tr, campo, e.key === 'ArrowLeft' ? 'izquierda' : 'derecha');
+          }
+
+          if (!destino || destino === el) return;
+          // Se evita que la flecha mueva tambien el cursor dentro de la casilla: sin esto, al
+          // llegar a la celda de al lado el cursor quedaria en una posicion rara.
+          e.preventDefault();
+          destino.focus();
+          if (destino.select) destino.select();
+        });
+      });
+    });
   }
 
   /**

@@ -593,6 +593,108 @@ check('CSV tareas: exportar → importar → exportar es idempotente',
     fila('Task_1').querySelector('[data-field="cupo.arranque"]').disabled === true);
 }
 
+// --- 6a-ter. Navegar la tabla con las FLECHAS ------------------------------
+//
+// La tabla tiene 25 columnas y hay que meter decenas de datos seguidos. Con el raton cada celda son
+// dos movimientos; con las flechas se teclea en rafaga. Se prueba con eventos de teclado DE VERDAD,
+// porque lo que puede fallar es el foco -a que casilla se llega-, no la aritmetica del salto.
+{
+  panel._activeTab = 'tasks';
+  panel._renderTasks();
+
+  // EL ARNES ESPIA `focus()`, no lo mira con `document.activeElement`.
+  //
+  // En un navegador headless, `.focus()` NO cambia `document.activeElement` -se queda en BODY-, asi
+  // que comprobar el foco por ahi no probaria nada. Lo que importa es A QUE CAMPO el codigo manda
+  // el foco, y eso si se puede ver interceptando la llamada.
+  let ultimoFoco = null;
+  const espiar = (el) => {
+    if (el.__espiado) return el;
+    el.__espiado = true;
+    const orig = el.focus.bind(el);
+    el.focus = () => { ultimoFoco = el; return orig(); };
+    return el;
+  };
+  panel._body.querySelectorAll('input[data-field], select[data-field]').forEach(espiar);
+
+  /** Pulsa una tecla en un campo y devuelve el campo al que el codigo mando el foco. */
+  const pulsar = (id, campo, tecla) => {
+    const el = fila(id).querySelector(`[data-field="${campo}"]`);
+    ultimoFoco = null;
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: tecla, bubbles: true, cancelable: true }));
+    return ultimoFoco;
+  };
+  const campoDe = (el) => (el && el.dataset ? el.dataset.field : null);
+  const tareaDe = (el) => {
+    const tr = el && el.closest ? el.closest('tr[data-el-id]') : null;
+    return tr ? tr.dataset.elId : null;
+  };
+  // «Navegable de verdad» se comprueba IGUAL que en el producto -deshabilitado o invisible, no
+  // vale-, porque si el arnes usara un criterio mas flojo daria por bueno un destino inutil.
+  const navegableDeVerdad = (el) => {
+    if (!el || el.disabled) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden';
+  };
+
+  // DERECHA: misma fila, columna siguiente.
+  const d1 = pulsar('Task_1', 'processingTime.value', 'ArrowRight');
+  check('Flechas: → salta a la columna siguiente de la misma tarea',
+    tareaDe(d1) === 'Task_1' && campoDe(d1) !== 'processingTime.value',
+    `${tareaDe(d1)} · ${campoDe(d1)}`);
+
+  // IZQUIERDA: vuelve.
+  const i1 = pulsar('Task_1', 'reworkTime.value', 'ArrowLeft');
+  check('Flechas: ← vuelve a la columna anterior',
+    tareaDe(i1) === 'Task_1' && campoDe(i1) !== 'reworkTime.value',
+    `${tareaDe(i1)} · ${campoDe(i1)}`);
+
+  // ABAJO: misma columna, tarea siguiente. Es la que mas se usa al rellenar en columna.
+  const a1 = pulsar('Task_1', 'processingTime.value', 'ArrowDown');
+  check('Flechas: ↓ baja a la MISMA columna de la tarea siguiente',
+    tareaDe(a1) === 'Task_2' && campoDe(a1) === 'processingTime.value',
+    `${tareaDe(a1)} · ${campoDe(a1)}`);
+
+  // ARRIBA: vuelve a la de arriba.
+  const arriba = pulsar('Task_2', 'processingTime.value', 'ArrowUp');
+  check('Flechas: ↑ sube a la misma columna de la tarea anterior',
+    tareaDe(arriba) === 'Task_1' && campoDe(arriba) === 'processingTime.value',
+    `${tareaDe(arriba)} · ${campoDe(arriba)}`);
+
+  // EN LOS BORDES NO SE SALE NI SE ROMPE: en la primera tarea, ↑ no lleva a ningun sitio y el foco
+  // se queda donde estaba.
+  const borde = pulsar('Task_1', 'processingTime.value', 'ArrowUp');
+  check('Flechas: en la primera tarea, ↑ NO manda el foco a ningun sitio',
+    borde === null, borde ? `${tareaDe(borde)} · ${campoDe(borde)}` : 'sin destino, correcto');
+
+  // SE SALTA LAS CELDAS MUERTAS. En `Task_1` no hay piscina, asi que «Miembro» y «Cant.» estan
+  // deshabilitados: al avanzar desde la casilla anterior hay que caer en un campo que SI se pueda
+  // rellenar, no en una casilla muerta donde el usuario no podria escribir.
+  //
+  // SE PRUEBA DESDE UNA CASILLA DE TEXTO, no desde el desplegable de recurso: los desplegables no
+  // navegan a proposito -sus flechas cambian la opcion-, y comprobarlo desde ahi no probaria nada.
+  // Se avanza desde una casilla de TEXTO y se cruza una columna DESHABILITADA: «Miembro» y «Cant.»
+  // estan muertas en este fixture -ninguna tarea tiene piscina-, asi que el salto tiene que caer en
+  // la primera que si se pueda rellenar.
+  const trasCarga = pulsar('Task_1', 'carga.distanciaM', 'ArrowRight');
+  check('Flechas: → se salta las casillas deshabilitadas en vez de pararse en ellas',
+    Boolean(trasCarga) && navegableDeVerdad(trasCarga),
+    trasCarga ? `${campoDe(trasCarga)} disabled=${trasCarga.disabled}` : 'sin destino');
+
+  // Y EN VERTICAL, que es donde una columna existe en una tarea y NO en la siguiente: la barrera
+  // solo la declara `Task_1`. Al bajar desde su columna hay que caer en la misma columna si existe,
+  // y si no, en la primera editable de esa fila -nunca en un hueco vacio.
+  const abajoBarrera = pulsar('Task_1', 'barrier.waitMin', 'ArrowDown');
+  check('Flechas: ↓ desde una columna que la tarea siguiente no tiene cae en un campo editable',
+    Boolean(abajoBarrera) && navegableDeVerdad(abajoBarrera),
+    abajoBarrera ? `${tareaDe(abajoBarrera)} · ${campoDe(abajoBarrera)}` : 'sin destino');
+
+  // Y EN UN DESPLEGABLE LAS FLECHAS NO NAVEGAN: cambian la opcion, que es lo que el usuario espera.
+  const selMove = pulsar('Task_1', 'frequency', 'ArrowDown');
+  check('Flechas: en un desplegable NO se navega (la flecha cambia la opción)',
+    selMove === null, selMove ? `${tareaDe(selMove)} · ${campoDe(selMove)}` : 'no navega, correcto');
+}
+
 // --- 6b. La tasa de fallo, en % de punta a punta ---------------------------
 //
 // La casilla y el CSV van en % (0-100) mientras el motor sigue guardando la
