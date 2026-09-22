@@ -51,7 +51,11 @@ const casos = [
   // llama a `validacion.js` con filas construidas a mano, que es la unica forma de probar los casos
   // que la tabla no deja escribir (una cantidad de 1,5, un proveedor por pieza sin precio, dos
   // piscinas con el mismo nombre) sin pelearse con los deshabilitados del formulario.
-  { nombre: 'validacion (que se rechaza y por que)', entry: 'validacion.js' }
+  { nombre: 'validacion (que se rechaza y por que)', entry: 'validacion.js' },
+  // Los datos de prueba. Sus dos trampas -un reparto que no suma 100 y una distribucion triangular
+  // que el motor ignora- no dan error: dan un escenario plausible y equivocado. Hay que poder
+  // correr el generador 200 veces y comprobar la suma, que es lo que no se puede hacer a mano.
+  { nombre: 'datos de prueba (que rellena y con que reglas)', entry: 'datos-de-prueba.js' }
   // PENDIENTE: 'informe-pdf.js' esta escrito y NO se ha podido poner en verde. El bundle
   // compila y el modulo carga -comprobado a mano-, pero al ejecutarlo en el runner de Chrome
   // falla con «Script error» sin linea, y no he conseguido ver la causa. Se deja el archivo

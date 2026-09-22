@@ -3600,15 +3600,17 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ DataTablePanel)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./WarmupCurve */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./LaborRules */ "./client/simulation/LaborRules.js");
 /* harmony import */ var _MemberAssignment_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./MemberAssignment.js */ "./client/simulation/MemberAssignment.js");
 /* harmony import */ var _CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./CsvTareas.js */ "./client/simulation/CsvTareas.js");
 /* harmony import */ var _validacion_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./validacion.js */ "./client/simulation/validacion.js");
-/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+/* harmony import */ var _DatosDePrueba_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./DatosDePrueba.js */ "./client/simulation/DatosDePrueba.js");
+/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+
 
 
 
@@ -4134,19 +4136,19 @@ class DataTablePanel {
    */
   _esEditable(element) {
     if (!element || (0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(element)) return false;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Task')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:StartEvent')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Participant')) return true;
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:SequenceFlow')
-      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element.source, 'bpmn:ExclusiveGateway'));
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Task')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:StartEvent')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Participant')) return true;
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:SequenceFlow')
+      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element.source, 'bpmn:ExclusiveGateway'));
   }
 
   _ponerLapiz(element) {
-    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(
+    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(
       `<div class="sim-data-table-overlay" title="Editar los datos de simulación de este elemento"`
       + ` data-tip="Editar en la tabla de datos">${svg(EditIcon)}</div>`
     );
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(nodo, 'click', () => this.openFor(element));
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(nodo, 'click', () => this.openFor(element));
     this._overlayId = this._overlays.add(element, 'sim-data-table', {
       position: { top: -12, left: -12 },
       html: nodo
@@ -4165,7 +4167,7 @@ class DataTablePanel {
   _init() {
     if (this._panel) return;
 
-    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(`
+    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(`
       <div class="${PANEL_CLS}">
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
@@ -4200,23 +4202,23 @@ class DataTablePanel {
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
 
     panel.querySelectorAll('.panel-tabs button').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(btn, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
-        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
         // Si la ayuda esta abierta, se RECARGA con la pestana nueva: si no, al
         // cambiar de pestana seguiria explicando la anterior, que es peor que no
         // tener ayuda porque el usuario lee la respuesta equivocada.
-        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(this._ayuda).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(this._ayuda).add('hidden');
+        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._ayuda).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._ayuda).add('hidden');
           this._toggleAyuda();
         }
         this._render();
@@ -4224,11 +4226,11 @@ class DataTablePanel {
     });
   }
 
-  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(this._panel).has(OPEN_CLS); }
+  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._panel).has(OPEN_CLS); }
   toggle() { this.isOpen() ? this.close() : this.open(); }
   open() {
     if (!this._panel) this._init();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(this._panel).add(OPEN_CLS);
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._panel).add(OPEN_CLS);
     this._render();
   }
 
@@ -4244,10 +4246,10 @@ class DataTablePanel {
   openFor(element) {
     if (!element) return this.open();
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
     else this._activeTab = 'tasks';
 
     this._focusId = element.id;
@@ -4256,11 +4258,11 @@ class DataTablePanel {
     // _render() reconstruye las pestañas sin conservar cual estaba activa, asi
     // que se marca aqui.
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     const fila = this._panel.querySelector(`tbody tr[data-el-id="${element.id}"]`);
     if (fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(fila).add('fila-foco');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).add('fila-foco');
       if (fila.scrollIntoView) fila.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
   }
@@ -4313,7 +4315,7 @@ class DataTablePanel {
     this._activeTab = objetivo.tab || 'tasks';
     this.open();
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     // Despues de abrir y RENDERIZAR: el resaltado trabaja sobre nodos que hasta
     // ahora no existian.
@@ -4353,7 +4355,7 @@ class DataTablePanel {
     this._limpiarDestino();
 
     this._destinoResaltado = objetivos;
-    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(nodo).add('destino-resaltado'));
+    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(nodo).add('destino-resaltado'));
     if (objetivos[0].scrollIntoView) objetivos[0].scrollIntoView({ block: 'center', inline: 'nearest' });
     if (objetivos[0].focus && objetivos[0].focus.call) objetivos[0].focus();
 
@@ -4375,12 +4377,12 @@ class DataTablePanel {
    */
   _limpiarDestino() {
     clearTimeout(this._temporizadorDestino);
-    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(nodo).remove('destino-resaltado'));
+    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(nodo).remove('destino-resaltado'));
     this._destinoResaltado = null;
   }
 
   close() {
-    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(this._panel).remove(OPEN_CLS);
+    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._panel).remove(OPEN_CLS);
     this._focusId = null;
     // El resaltado del atajo no sobrevive al cierre: al volver a abrir, la tabla tiene
     // que verse limpia y no con la marca de un viaje de hace media hora.
@@ -4422,11 +4424,11 @@ class DataTablePanel {
     this._quitarOferta();
     if (!this._panel) return;
 
-    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(
+    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(
       '<button class="btn-desactivar" type="button">Desactivar modo y reintentar</button>'
     );
 
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(boton, 'click', () => {
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(boton, 'click', () => {
       this._quitarOferta();
       try {
         this._editorActions.trigger('toggleTokenSimulation');
@@ -4452,17 +4454,17 @@ class DataTablePanel {
   // -- acceso a datos -------------------------------------------------------
 
   _getTasks() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Task'));
   }
 
   _getFlows() {
     return this._elementRegistry.filter(
-      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el.source, 'bpmn:ExclusiveGateway')
+      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el.source, 'bpmn:ExclusiveGateway')
     );
   }
 
   _getRootStartEvent() {
-    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:StartEvent'));
+    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:StartEvent'));
     return starts.find((el) => {
       const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el);
       return d && d.isRoot;
@@ -4478,7 +4480,7 @@ class DataTablePanel {
    * algun dia, tiene que cambiar en los dos sitios a la vez.
    */
   _getProcessRoot() {
-    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Participant')) || null;
+    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Participant')) || null;
   }
 
   /** Piscinas de recursos declaradas en el proceso. */
@@ -4589,7 +4591,7 @@ class DataTablePanel {
       ${listas(a.ojo, 'ojo')}
     `;
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(this._ayuda).toggle('hidden');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._ayuda).toggle('hidden');
   }
 
   /**
@@ -4604,7 +4606,7 @@ class DataTablePanel {
     if (this._getRootStartEvent()) return;
     if (!this._body) return;
 
-    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.domify)(
+    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(
       '<p class="aviso-raiz">Sin evento raíz configurado la simulación no se ejecutará. '
       + 'Ve a la pestaña <strong>Global</strong> para crearlo.</p>'
     );
@@ -4815,7 +4817,7 @@ class DataTablePanel {
   /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
   _bindAyudaDeColumnas() {
     this._body.querySelectorAll('.btn-ayuda-col').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(btn, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', (e) => {
         if (e && e.preventDefault) e.preventDefault();
         this._mostrarAyudaColumna(btn.dataset.ayudaCol);
       });
@@ -4834,24 +4836,24 @@ class DataTablePanel {
 
     const celda = fila.querySelector('td');
     const texto = AYUDA_COLUMNAS[clave] || '';
-    const yaVisible = !(0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(fila).has('hidden');
+    const yaVisible = !(0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).has('hidden');
 
     if (yaVisible && celda.textContent === texto) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(fila).add('hidden');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).add('hidden');
       this._marcarAyudaColumna(null);
       return;
     }
 
     celda.textContent = texto;
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(fila).remove('hidden');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).remove('hidden');
     this._marcarAyudaColumna(clave);
   }
 
   /** Deja marcado el «?» de la columna cuya ayuda esta a la vista. */
   _marcarAyudaColumna(clave) {
     this._body.querySelectorAll('.btn-ayuda-col').forEach((b) => {
-      if (b.dataset.ayudaCol === clave) (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(b).add('activo');
-      else (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(b).remove('activo');
+      if (b.dataset.ayudaCol === clave) (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).add('activo');
+      else (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).remove('activo');
     });
   }
 
@@ -4876,7 +4878,7 @@ class DataTablePanel {
         });
       };
 
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(select, 'change', sincronizar);
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(select, 'change', sincronizar);
       sincronizar();
     });
   }
@@ -4904,7 +4906,7 @@ class DataTablePanel {
       // muerta para siempre.
       const selPool = tr.querySelector('[data-field="resources.pool"]');
       if (selPool) {
-        min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(selPool, 'change', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(selPool, 'change', () => {
           const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
           if (!cant) return;
           cant.disabled = selPool.value === '';
@@ -4913,7 +4915,7 @@ class DataTablePanel {
       }
 
       tr.querySelectorAll('[data-field]').forEach((campo) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
+        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
       });
     });
   }
@@ -4934,9 +4936,9 @@ class DataTablePanel {
    * aqui es lo que hay guardado». Vuelve a amarillo en cuanto se edita otra vez.
    */
   _autoguardarFila(tr, campo) {
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).remove('invalido');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).remove('guardado');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).add('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('invalido');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('guardando');
 
     let fila;
     try {
@@ -4944,14 +4946,14 @@ class DataTablePanel {
     } catch (err) {
       // Se queda en rojo y SIN guardar, y el texto del usuario no se toca para que
       // pueda corregirlo. Una fila invalida no bloquea a las demas.
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('invalido');
       this._setStatus(err.message, 'error');
       return;
     }
 
     if (!fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
       return;
     }
 
@@ -4975,14 +4977,14 @@ class DataTablePanel {
         return;
       }
 
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('invalido');
       this._setStatus(`No se pudo guardar: ${err.message || err}`, 'error');
       return;
     }
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).remove('guardando');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(campo).add('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('guardado');
     this._setStatus(`Guardado: ${this._label(fila.element)}.`, 'ok');
   }
 
@@ -5041,7 +5043,7 @@ class DataTablePanel {
 
     const boton = this._body.querySelector('.btn-anadir-fila');
     if (boton) {
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(boton, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(boton, 'click', () => {
         const tbody = this._body.querySelector('.filas-pool');
         // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
         // parseo de un contenedor que no sea <table>/<tbody>.
@@ -5062,7 +5064,7 @@ class DataTablePanel {
       // seria guardar y reabrir, que es justo lo que el usuario no hace.
       this._bindCobro(tbody);
 
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(tbody, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(tbody, 'click', (e) => {
         const objetivo = e.target;
         if (!objetivo || !objetivo.closest) return;
 
@@ -5141,8 +5143,8 @@ class DataTablePanel {
       if (pieza) pieza.hidden = !porPieza;
     };
 
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(origen, 'change', sincronizar);
-    min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(cobro, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(origen, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(cobro, 'change', sincronizar);
     sincronizar();
   }
 
@@ -5297,7 +5299,7 @@ class DataTablePanel {
     this._body.querySelectorAll('[data-field="branchingProbability"]').forEach((input) => {
       if (input.disabled) return;
 
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(input, 'input', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(input, 'input', () => {
         this._equilibrar(input);
         this._refrescarSumas();
       });
@@ -5306,7 +5308,7 @@ class DataTablePanel {
       // rango -> al limite. Sin esto el campo podia quedarse en -10 y el
       // indicador decia "100 %" (la suma los recortaba) mientras el guardado lo
       // bloqueaba: indicador y validacion se contradecian.
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(input, 'change', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(input, 'change', () => {
         const crudo = String(input.value).replace(',', '.');
         const n = Number(crudo);
         if (crudo.trim() === '' || Number.isNaN(n)) input.value = '0';
@@ -5413,7 +5415,7 @@ class DataTablePanel {
       // que ya existiera, pero no habia forma de crearlo desde aqui. El usuario
       // rellenaba las tareas, guardaba, y al simular recibia "No root start
       // event found" sin saber que le faltaba. Ahora se puede crear desde aqui.
-      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:StartEvent'));
+      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:StartEvent'));
 
       if (!inicios.length) {
         this._body.innerHTML = `
@@ -5443,7 +5445,7 @@ class DataTablePanel {
       `;
 
       this._body.querySelectorAll('.btn-raiz').forEach((btn) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
+        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
       });
       return;
     }
@@ -5734,7 +5736,7 @@ class DataTablePanel {
     listas.forEach(({ accion, tbody, fila }) => {
       const boton = this._body.querySelector(`[data-accion="${accion}"]`);
       if (boton) {
-        min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(boton, 'click', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(boton, 'click', () => {
           const cuerpo = this._body.querySelector(tbody);
           // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
           // parseo de un contenedor que no sea <table>/<tbody>.
@@ -5744,7 +5746,7 @@ class DataTablePanel {
 
       const cuerpo = this._body.querySelector(tbody);
       if (cuerpo) {
-        min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(cuerpo, 'click', (e) => {
+        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(cuerpo, 'click', (e) => {
           const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
           if (!btn) return;
           const tr = btn.closest('tr');
@@ -5757,8 +5759,8 @@ class DataTablePanel {
       if (!f.key.startsWith('warmup.')) return;
       const campo = this._body.querySelector(`[data-field="${f.key}"]`);
       if (!campo) return;
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
     });
 
     this._bindAyudaPorCampo(this._body);
@@ -5778,17 +5780,17 @@ class DataTablePanel {
    */
   _bindAyudaPorCampo(alcance) {
     alcance.querySelectorAll('.btn-ayuda-campo').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_8__.event.bind(btn, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', (e) => {
         if (e && e.preventDefault) e.preventDefault();
         const caja = alcance.querySelector(`[data-ayuda-de="${btn.dataset.ayuda}"]`);
         if (!caja) return;
 
-        if ((0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(caja).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(caja).remove('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(btn).add('activo');
+        if ((0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(caja).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(caja).remove('hidden');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(btn).add('activo');
         } else {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(caja).add('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_8__.classes)(btn).remove('activo');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(caja).add('hidden');
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(btn).remove('activo');
         }
       });
     });
@@ -5859,143 +5861,43 @@ class DataTablePanel {
   /**
    * Rellena la pestaña activa con datos de prueba.
    *
-   * IMPORTANTE: escribe en las CELDAS de la tabla, no en el diagrama. El boton
-   * del menu de la aplicacion escribia directamente en el BPMN, sobrescribiendo
-   * lo que hubiera sin posibilidad de revisarlo. Aqui los valores quedan a la
-   * vista, se pueden corregir a mano y solo se aplican al pulsar "Guardar todo".
-   * Ademas, como no se guarda nada, un clic accidental solo cuesta los cambios
-   * que hubiera sin guardar en la tabla.
+   * Escribe en las CELDAS, no en el diagrama: los valores quedan a la vista, se corrigen a mano y
+   * solo entran al pulsar «Guardar todo». Un clic accidental no cuesta nada.
    *
-   * Los rangos son deliberadamente amplios y siguen la convencion habitual en
-   * simulacion de procesos: tiempo de proceso 5-45 min, fallo 1-30%, retrabajo
-   * 5-30 min. Lo que importa es que se VEAN en la tabla y se puedan corregir.
+   * La logica vive en `DatosDePrueba.js` porque tiene dos trampas que no dan error sino un escenario
+   * equivocado: el reparto de una compuerta tiene que sumar 100 % exacto -el motor acumula y manda el
+   * sobrante a la ultima rama-, y la distribucion se fuerza a «fixed» -con «triangular» el motor
+   * ignoraria el tiempo generado-. Aqui solo se compone el aviso.
    */
   generarDatosDePrueba() {
-    if (this._activeTab === 'global' || this._activeTab === 'resources') {
-      this._setStatus(
-        'Los datos de prueba aplican a Tareas y Flujos. En Global y Recursos define tu propio escenario.',
-        'info'
-      );
-      return;
-    }
+    const r = (0,_DatosDePrueba_js__WEBPACK_IMPORTED_MODULE_6__.generarDatosDePrueba)(this._body, {
+      tab: this._activeTab,
+      pools: () => this._getPools(),
+      getElement: (id) => this._elementRegistry.get(id),
+      refrescarSumas: () => this._refrescarSumas()
+    });
 
-    // Solo las filas de la tabla principal: en Recursos hay subfilas de miembros
-    // que no tienen `data-field`.
-    const filas = Array.from(this._body.querySelectorAll('tbody tr[data-el-id]'));
-    if (!filas.length) {
-      this._setStatus('No hay filas que rellenar en esta pestaña.', 'info');
+    if (!r.aplica) {
+      this._setStatus(r.motivo, 'info');
       return;
     }
 
     if (this._activeTab === 'tasks') {
-      // Si hay piscinas dadas de alta, se asigna la primera a cada tarea con
-      // cantidad 1. Es lo que hace que la simulacion EJERCITE el codigo de
-      // recursos (cola, espera, costo de espera), que de otro modo nunca se
-      // ejecuta porque nada escribia el campo `resources`.
-      const pools = this._getPools();
-      const primeraPool = pools.length ? pools[0].name : null;
-
-      filas.forEach((tr) => {
-        const poner = (campo, valor) => {
-          const el = tr.querySelector(`[data-field="${campo}"]`);
-          if (el) el.value = valor;
-        };
-
-        // La distribucion se fija a "fixed" para que el valor generado sea el
-        // que se use: si quedara "triangular", el motor ignoraria el tiempo y
-        // tomaria min/moda/max, y el usuario veria resultados que no cuadran con
-        // lo que relleno el boton.
-        poner('processingTime.distribution', 'fixed');
-        poner('processingTime.value', this._azar(5, 45));
-        poner('processingTime.unit', 'minutes');
-        poner('failureRate', this._azar(1, 30));
-        poner('reworkTime.value', this._azar(5, 30));
-        poner('reworkTime.unit', 'minutes');
-
-        // Carga de prueba: una tarea pesada y otra de arrastre, para que el
-        // informe tenga algo que separar. Es lo que hace visible que las dos
-        // series NO se suman.
-        const tirando = Math.random() < 0.5;
-        poner('carga.masaCargadaKg', tirando ? this._azar(5, 25) : '');
-        poner('carga.masaArrastradaKg', tirando ? '' : this._azar(40, 200));
-        poner('carga.distanciaM', this._azar(2, 20));
-
-        const selPool = tr.querySelector('[data-field="resources.pool"]');
-        if (selPool && primeraPool) {
-          selPool.value = primeraPool;
-          const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
-          if (cant) {
-            cant.disabled = false;
-            cant.value = 1;
-          }
-        }
-      });
-
-      const extra = primeraPool
-        ? ` Asignadas a la piscina «${primeraPool}» (x1) para que se simule la espera por recursos.`
+      const extra = r.pool
+        ? ` Asignadas a la piscina «${r.pool}» (x1) para que se simule la espera por recursos.`
         : '';
       this._setStatus(
-        `${filas.length} tarea(s) rellenadas con datos de prueba.${extra} Revisa y pulsa «Guardar todo».`,
+        `${r.filas} tarea(s) rellenadas con datos de prueba.${extra} Revisa y pulsa «Guardar todo».`,
         'ok'
       );
       return;
     }
 
-    // Flujos: el reparto se reparte por COMPUERTA en porcentajes ENTEROS que
-    // suman 100 exactos. Generarlos sueltos seria peor que no generarlos: el
-    // motor acumula las probabilidades, asi que una suma distinta de 100 manda
-    // todo el sobrante a la ultima rama, y una salida configurada al 30 % puede
-    // acabar recibiendo el 70 %.
-    const porCompuerta = new Map();
-    filas.forEach((tr) => {
-      const el = this._elementRegistry.get(tr.dataset.elId);
-      if (!el || !el.source) return;
-      const lista = porCompuerta.get(el.source.id) || [];
-      lista.push(tr);
-      porCompuerta.set(el.source.id, lista);
-    });
-
-    let compuertas = 0;
-
-    porCompuerta.forEach((lista) => {
-      // Solo las filas editables: una compuerta de una sola salida esta fija al
-      // 100 % y no participa en el reparto.
-      const campos = lista
-        .map((tr) => tr.querySelector('[data-field="branchingProbability"]'))
-        .filter((campo) => campo && !campo.disabled);
-      if (!campos.length) return;
-      compuertas++;
-
-      let resto = 100;
-      campos.forEach((campo, i) => {
-        const restantes = campos.length - 1 - i;
-        let p;
-
-        if (restantes === 0) {
-          p = resto; // el ultimo absorbe el resto: suma exacta
-        } else {
-          // Se reserva al menos 1 % para cada salida que queda, para no crear
-          // ramas muertas (al 0 % nunca se toman).
-          const tope = Math.max(1, resto - restantes);
-          p = Math.min(tope, Math.max(1, Math.round(Math.random() * tope * 0.7)));
-        }
-
-        resto -= p;
-        campo.value = String(p);
-      });
-    });
-
-    this._refrescarSumas();
-
     this._setStatus(
-      `${filas.length} flujo(s) rellenados en ${compuertas} compuerta(s); cada una suma 100 %. `
+      `${r.filas} flujo(s) rellenados en ${r.compuertas} compuerta(s); cada una suma 100 %. `
       + 'Revisa y pulsa «Guardar todo».',
       'ok'
     );
-  }
-
-  _azar(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
   /**
@@ -6195,6 +6097,173 @@ DataTablePanel.$inject = [
   'overlays',
   'selection'
 ];
+
+
+/***/ }),
+
+/***/ "./client/simulation/DatosDePrueba.js":
+/*!********************************************!*\
+  !*** ./client/simulation/DatosDePrueba.js ***!
+  \********************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   azar: () => (/* binding */ azar),
+/* harmony export */   generarDatosDePrueba: () => (/* binding */ generarDatosDePrueba)
+/* harmony export */ });
+/**
+ * DATOS DE PRUEBA: rellenar la tabla con un escenario plausible para poder ver algo.
+ *
+ * QUE ES ESTE MODULO: el boton «generar datos de prueba». Escribe en las CELDAS de la tabla -no en el
+ * diagrama- un escenario con las convenciones habituales de simulacion de procesos: tiempo de proceso
+ * entre 5 y 45 min, fallo entre 1 y 30 %, retrabajo entre 5 y 30 min.
+ *
+ * POR QUE ESCRIBE EN LAS CELDAS Y NO EN EL BPMN: es la diferencia entre «proponer» y «sobrescribir».
+ * Si escribiera en el diagrama, un clic accidental destruiria lo que el usuario tuviera sin
+ * posibilidad de revisarlo antes. Escribiendo en las celdas, los valores quedan a la vista, se
+ * corrigen a mano y solo entran al pulsar «Guardar todo»; y mientras tanto no se ha guardado nada.
+ *
+ * POR QUE ES UN MODULO Y NO UN METODO DEL PANEL: es la pieza con MAS trampas silenciosas de todo el
+ * panel, y las dos son de las que no se ven mirando la pantalla:
+ *
+ *   - En FLUJOS, el reparto tiene que sumar 100 % EXACTO. El motor acumula las probabilidades, asi
+ *     que una suma de 110 % manda el sobrante a la ultima rama: una salida configurada al 30 % acaba
+ *     recibiendo el 70 %, y el usuario ve un resultado que no cuadra con lo que relleno el boton.
+ *   - En TAREAS, la distribucion se fuerza a «fixed». Si quedara «triangular», el motor ignoraria el
+ *     tiempo y tomaria min/moda/max, con lo que el valor generado no seria el que se usa.
+ *
+ * Ninguna de las dos cosas da error: dan una corrida plausible con el escenario equivocado. Por eso
+ * el modulo devuelve un RESUMEN de lo que hizo -cuantas tareas, cuantas compuertas, que piscina- y no
+ * un booleano: el mensaje que lee el usuario sale de aqui, y asi se prueba junto con la logica.
+ */
+
+/** Aleatorio entero en [min, max], ambos incluidos. */
+const azar = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+/**
+ * Rellena la pestaña activa con un escenario de prueba.
+ *
+ * Devuelve un resumen para que el panel componga su aviso:
+ * `{ aplica, motivo, filas, compuertas, pool }`. Con `aplica: false`, `motivo` explica por que no.
+ *
+ * `ctx` necesita: `tab`, `pools()`, `getElement(id)`, `refrescarSumas()`.
+ */
+const generarDatosDePrueba = (contenedor, ctx) => {
+  // Global y Recursos no tienen generador: en Global se declara la jornada y la tarifa -inventarlas
+  // seria inventar el turno del cliente- y en Recursos la capacidad real de la planta.
+  if (ctx.tab === 'global' || ctx.tab === 'resources') {
+    return {
+      aplica: false,
+      motivo: 'Los datos de prueba aplican a Tareas y Flujos. '
+        + 'En Global y Recursos define tu propio escenario.'
+    };
+  }
+
+  // Solo las filas de la tabla principal: en Recursos hay subfilas de miembros que no tienen
+  // `data-field`.
+  const filas = Array.from(contenedor.querySelectorAll('tbody tr[data-el-id]'));
+  if (!filas.length) {
+    return { aplica: false, motivo: 'No hay filas que rellenar en esta pestaña.' };
+  }
+
+  if (ctx.tab === 'tasks') return rellenarTareas(filas, ctx);
+  return rellenarFlujos(filas, contenedor, ctx);
+};
+
+function rellenarTareas(filas, ctx) {
+  // Si hay piscinas dadas de alta, se asigna la primera a cada tarea con cantidad 1. Es lo que hace
+  // que la simulacion EJERCITE el codigo de recursos -cola, espera, costo de espera-, que de otro
+  // modo nunca se ejecuta porque nada escribia el campo `resources`.
+  const pools = ctx.pools() || [];
+  const pool = pools.length ? pools[0].name : null;
+
+  filas.forEach((tr) => {
+    const poner = (campo, valor) => {
+      const el = tr.querySelector(`[data-field="${campo}"]`);
+      if (el) el.value = valor;
+    };
+
+    // La distribucion se fija a «fixed» para que el valor generado sea el que se use: si quedara
+    // «triangular», el motor ignoraria el tiempo y tomaria min/moda/max, y el usuario veria
+    // resultados que no cuadran con lo que relleno el boton.
+    poner('processingTime.distribution', 'fixed');
+    poner('processingTime.value', azar(5, 45));
+    poner('processingTime.unit', 'minutes');
+    poner('failureRate', azar(1, 30));
+    poner('reworkTime.value', azar(5, 30));
+    poner('reworkTime.unit', 'minutes');
+
+    // Carga de prueba: una tarea pesada y otra de arrastre, para que el informe tenga algo que
+    // separar. Es lo que hace visible que las dos series NO se suman.
+    const tirando = Math.random() < 0.5;
+    poner('carga.masaCargadaKg', tirando ? azar(5, 25) : '');
+    poner('carga.masaArrastradaKg', tirando ? '' : azar(40, 200));
+    poner('carga.distanciaM', azar(2, 20));
+
+    const selPool = tr.querySelector('[data-field="resources.pool"]');
+    if (selPool && pool) {
+      selPool.value = pool;
+      const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
+      if (cant) {
+        cant.disabled = false;
+        cant.value = 1;
+      }
+    }
+  });
+
+  return { aplica: true, filas: filas.length, pool };
+}
+
+function rellenarFlujos(filas, contenedor, ctx) {
+  // El reparto se reparte por COMPUERTA en porcentajes ENTEROS que suman 100 exactos. Generarlos
+  // sueltos seria peor que no generarlos, por lo dicho arriba: el motor acumula y el sobrante va a
+  // la ultima rama.
+  const porCompuerta = new Map();
+  filas.forEach((tr) => {
+    const el = ctx.getElement(tr.dataset.elId);
+    if (!el || !el.source) return;
+    const lista = porCompuerta.get(el.source.id) || [];
+    lista.push(tr);
+    porCompuerta.set(el.source.id, lista);
+  });
+
+  let compuertas = 0;
+
+  porCompuerta.forEach((lista) => {
+    // Solo las filas editables: una compuerta de una sola salida esta fija al 100 % y no participa.
+    const campos = lista
+      .map((tr) => tr.querySelector('[data-field="branchingProbability"]'))
+      .filter((campo) => campo && !campo.disabled);
+    if (!campos.length) return;
+    compuertas++;
+
+    let resto = 100;
+    campos.forEach((campo, i) => {
+      const restantes = campos.length - 1 - i;
+      let p;
+
+      if (restantes === 0) {
+        // El ultimo absorbe el resto: asi la suma es exacta SIEMPRE, que es la razon de repartir en
+        // orden en vez de sortear cada valor por su cuenta.
+        p = resto;
+      } else {
+        // Se reserva al menos 1 % para cada salida que queda, para no crear ramas muertas (al 0 %
+        // nunca se toman).
+        const tope = Math.max(1, resto - restantes);
+        p = Math.min(tope, Math.max(1, Math.round(Math.random() * tope * 0.7)));
+      }
+
+      resto -= p;
+      campo.value = String(p);
+    });
+  });
+
+  ctx.refrescarSumas();
+
+  return { aplica: true, filas: filas.length, compuertas };
+}
 
 
 /***/ }),
