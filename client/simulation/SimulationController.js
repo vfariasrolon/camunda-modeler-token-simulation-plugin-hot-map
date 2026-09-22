@@ -2243,10 +2243,24 @@ export default class SimulationController {
           data: {
             labels: nombres,
             datasets: [
+              // La pila usa la ociosidad IMPUTABLE: las tres series suman el tiempo en que la
+              // piscina tuvo trabajo pendiente, que es el denominador honesto. Antes se apilaban
+              // contra la ventana entera y la barra mostraba ociosidad donde no la había.
               serie('activoMin', 'Activo (trabajando)', 'rgba(46, 125, 50, 0.75)'),
-              serie('sinTrabajoMin', 'Sin trabajo', 'rgba(158, 158, 158, 0.75)'),
+              serie('sinTrabajoMin', 'Sin trabajo (con cola pendiente)', 'rgba(158, 158, 158, 0.75)'),
               serie('esperandoFirmaMin', 'Esperando firma', 'rgba(255, 159, 64, 0.85)'),
-              serie('bloqueadoPorHabilidadMin', 'Bloqueado por habilidad', 'rgba(198, 40, 40, 0.8)')
+              serie('bloqueadoPorHabilidadMin', 'Bloqueado por habilidad', 'rgba(198, 40, 40, 0.8)'),
+              // Y aparte, SIN apilar, la lectura de planta: cuánto del turno abierto no se dedicó
+              // a esto. No entra en la pila porque NO es ociosidad de la persona -sumarla diría
+              // que trabajó menos de lo que trabajó- y porque su referencia es la ventana, no la
+              // demanda.
+              {
+                label: 'Jornada sin carga (turno abierto)',
+                data: personas.map((p) => Number((p.jornadaSinCargaMin / 60).toFixed(2))),
+                backgroundColor: 'rgba(120, 144, 156, 0.35)',
+                borderColor: 'rgba(84, 110, 122, 0.9)',
+                borderWidth: 1
+              }
             ]
           },
           options: {
@@ -2263,7 +2277,9 @@ export default class SimulationController {
                 callbacks: {
                   afterBody: (items) => {
                     const p = personas[items[0].dataIndex];
-                    return `Ocupación: ${(p.ocupacion * 100).toFixed(1)} %\nTareas: ${p.tareas}`;
+                    return `Ocupación: ${(p.ocupacion * 100).toFixed(1)} %`
+                      + `\nOcupación de jornada: ${(p.ocupacionDeJornada * 100).toFixed(1)} %`
+                      + `\nTareas: ${p.tareas}`;
                   }
                 }
               }

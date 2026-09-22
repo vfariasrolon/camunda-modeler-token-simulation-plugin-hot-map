@@ -170,6 +170,15 @@ class ResourcePool {
     // el trabajo y la otra saldria ociosa en el informe, cuando en la planta se
     // reparten.
     this._ultimoMiembro = -1;
+    // Minutos en que esta piscina tuvo TRABAJO PENDIENTE (cola no vacia). Es el denominador honesto
+    // de la ociosidad por persona: la jornada en que hubo algo que hacer, no la ventana entera.
+    // Se acumula en tramos -ver `release`- y lo cierra `cerrarDemanda` al acabar la corrida.
+    this.demandaMinutes = 0;
+    this._demandaDesde = null;
+    // Reloj compartido con el motor: lo fija cada evento antes de tocar la piscina. Se copia en vez
+    // de recibirlo por parametro en cada llamada para no cambiar la firma de `request`/`release`,
+    // que usan los arneses.
+    this.relojAhora = 0;
     // Ocupacion por persona (nombres), para el informe de operatividad.
     this.porMiembro = new Map(this.members.map((m) => [ m.nombre, {
       nombre: m.nombre,
@@ -208,7 +217,11 @@ class ResourcePool {
       this.available -= quantity;
       return { tomada: true, miembro: this._elegir(requeridas, designado) };
     }
-    this.queue.push({ quantity, task, requeridas, designado });
+    // Se guarda DESDE CUANDO hay alguien esperando: es lo que permite medir cuanto tiempo tuvo
+    // esta piscina trabajo pendiente, que es el denominador honesto de la ociosidad. Sin esto, la
+    // ociosidad se medía contra toda la ventana simulada y salía un «95 % sin trabajo» falso.
+    this.queue.push({ quantity, task, requeridas, designado, desde: this.relojAhora || 0 });
+    if (this._demandaDesde == null) this._demandaDesde = this.relojAhora || 0;
     return { tomada: false, miembro: null };
   }
 
@@ -254,7 +267,27 @@ class ResourcePool {
       }
       return true; // keep in queue
     });
+
+    // La demanda se acumula al SALIR de la cola -y tambien al cerrar la corrida, para el tramo que
+    // quede abierto-, igual que `busyMinutes` se acumula al completar: solo cuando termina el
+    // tramo se sabe cuanto duro.
+    if (this._demandaDesde != null) {
+      this.demandaMinutes += Math.max(0, (this.relojAhora || 0) - this._demandaDesde) / 60000;
+      this._demandaDesde = this.queue.length ? (this.relojAhora || 0) : null;
+    }
     return newTasks;
+  }
+
+  /**
+   * Cierra el tramo de demanda que siga abierto al terminar la corrida.
+   *
+   * Sin esto, una piscina que se queda con cola al acabar la simulacion perderia ese ultimo tramo y
+   * su demanda saldria corta, que es justo el caso del cuello de botella -el que mas interesa medir-.
+   */
+  cerrarDemanda() {
+    if (this._demandaDesde == null) return;
+    this.demandaMinutes += Math.max(0, (this.relojAhora || 0) - this._demandaDesde) / 60000;
+    this._demandaDesde = null;
   }
 
   /** Anota que un miembro trabajo: minutos y carga. */
@@ -1286,6 +1319,9 @@ export default class SimulationEngine {
 
       const event = this.eventQueue.next();
       this.clock = event.time;
+      // El reloj se COPIA a cada piscina antes de procesar el evento: es lo que permite anotar los
+      // tramos de demanda sin cambiar la firma de `request`/`release`. Ver `ResourcePool.demandaMinutes`.
+      this._sincronizarRelojDePiscinas();
 
       if (event.type === 'LOT_TASK_START') {
         // Una tarea por lote que estaba esperando la barrera arranca ahora.
@@ -1448,6 +1484,10 @@ export default class SimulationEngine {
 
     console.log("--- Simulation Finished ---");
 
+    // Se cierra la demanda que quedara abierta ANTES de calcular: una piscina que termina con cola
+    // -el cuello de botella, justo el caso que mas interesa- perderia su ultimo tramo.
+    this._cerrarDemandaDePiscinas();
+
     this._calcularUtilizacion();
 
     // Cumplimiento legal: se calcula al cerrar la corrida, cuando ya se sabe
@@ -1459,6 +1499,30 @@ export default class SimulationEngine {
     this.calendar = originalCalendar;
 
     return this.results;
+  }
+
+  /**
+   * Copia el reloj de la corrida a cada piscina, antes de procesar cada evento.
+   *
+   * POR QUE SE COPIA Y NO SE PASA POR PARAMETRO: `request` y `release` ya reciben sus argumentos y
+   * los usan los arneses; anadir un `ahora` a la firma obligaria a tocarlos todos para una medicion
+   * accesoria. La piscina no decide el tiempo, solo lo lee.
+   */
+  _sincronizarRelojDePiscinas() {
+    this.resourcePools.forEach((pool) => { pool.relojAhora = this.clock; });
+  }
+
+  /**
+   * Cierra los tramos de demanda que sigan abiertos al acabar la corrida.
+   *
+   * Sin esto, una piscina que termina con cola -el cuello de botella, justo el caso que mas
+   * interesa- perderia su ultimo tramo y su demanda saldria corta.
+   */
+  _cerrarDemandaDePiscinas() {
+    this.resourcePools.forEach((pool) => {
+      pool.relojAhora = this.clock;
+      pool.cerrarDemanda();
+    });
   }
 
   /**
@@ -1511,11 +1575,27 @@ export default class SimulationEngine {
    *     habilidad no tenía nadie. Se imputa a quien PODRÍA haberla hecho si
    *     hubiera sabido, que es la lectura útil: «esta persona está ociosa porque
    *     le falta una etiqueta».
-   *   - SIN TRABAJO: el resto de la jornada disponible de la persona.
+   *   - SIN TRABAJO: la jornada en que la piscina TUVO trabajo pendiente menos lo
+   *     que se trabajó. Ver la nota del denominador, abajo.
    *
-   * «Con trabajo asignable» NO se calcula: haría falta reconstruir qué cola había
-   * en cada instante, y sin ese dato cualquier número sería una invención. Se deja
-   * fuera a propósito y el informe lo dice.
+   * EL DENOMINADOR ERA UN ERROR, y conviene dejarlo escrito porque el numero que daba
+   * parecia plausible: se usaba la VENTANA SIMULADA COMPLETA. Con un proceso de tareas
+   * cortas y llegadas espaciadas, cada persona trabaja unos minutos y el resto de la
+   * ventana salia como «sin trabajo»: medido con 3 piezas de 10 min, el motor daba
+   * 100 min de ociosidad sobre 130 de ventana, un 76.9 %, y con llegadas mas
+   * espaciadas llega al 95 %. El trabajo activo estaba bien -30 min, exacto-; lo que
+   * estaba mal era contra que se comparaba.
+   *
+   * En planta, la persona no esta ociosa por no trabajar en una jornada en la que no
+   * habia nada que darle. Por eso hay DOS lecturas, y las dos se informan:
+   *
+   *   - SIN TRABAJO (denominador honesto): solo el tiempo en que la piscina tuvo cola.
+   *     Responde a «de los ratos en que habia trabajo, cuanto no lo hice yo», que es lo
+   *     que dice si esta persona es el cuello de botella.
+   *   - JORNADA SIN CARGA: la jornada abierta entera menos lo trabajado. Responde a
+   *     «cuanto de la jornada no se dedico a esta tarea», que sigue siendo util para
+   *     saber si el proceso da de comer a la plantilla -y es lo que hace comparable un
+   *     escenario con otro-, aunque NO sea ociosidad imputable a la persona.
    */
   _calcularOperatividad(ventanaMin) {
     if (!this.operatividad) {
@@ -1529,8 +1609,10 @@ export default class SimulationEngine {
     const filas = [];
     this.resourcePools.forEach((pool) => {
       if (!pool.conNombres) return;
+      // Minutos en que ESTA piscina tuvo trabajo pendiente. Es el tramo en que sus
+      // personas estaban, de verdad, en disposicion de trabajar en algo.
+      const demandaMs = Math.max(0, (pool.demandaMinutes || 0) * 60000);
       pool.porMiembro.forEach((f) => {
-        const disponibleMs = ventanaMs;
         const activoMs = f.busyMinutes * 60000;
         // La espera y el bloqueo se reparten entre las personas de la piscina:
         // es una imputación declarada, no una medida, y por eso se imprime así.
@@ -1538,7 +1620,15 @@ export default class SimulationEngine {
         const esperaMs = esperaFirmaMs / reparto;
         const bloqueoDeEsta = bloqueoMs / reparto;
 
-        const muertoMs = Math.max(0, disponibleMs - activoMs - esperaMs - bloqueoDeEsta);
+        // El denominador honesto: el trabajo propio no puede exceder la demanda -la
+        // piscina no puede trabajar mas de lo que se le pidio-, asi que se toma el
+        // mayor de los dos. Sin ese `max`, una piscina cuyo trabajo venga de antes de
+        // que empezara la cola daria una ociosidad negativa.
+        const disponibleRealMs = Math.max(demandaMs, activoMs);
+        const muertoMs = Math.max(0, disponibleRealMs - activoMs - esperaMs - bloqueoDeEsta);
+        // La jornada abierta completa, para la segunda lectura.
+        const jornadaMuertaMs = Math.max(0, ventanaMs - activoMs - esperaMs - bloqueoDeEsta);
+
         filas.push({
           nombre: f.nombre,
           piscina: pool.name,
@@ -1550,11 +1640,15 @@ export default class SimulationEngine {
           esperandoFirmaMin: esperaMs / 60000,
           bloqueadoPorHabilidadMin: bloqueoDeEsta / 60000,
           sinTrabajoMin: muertoMs / 60000,
-          disponibleMin: disponibleMs / 60000,
-          // Ocupación = activo / disponible. Es el complemento exacto de la suma
-          // de las tres ociosidades, así que las cuatro cifras cuadran por
+          jornadaSinCargaMin: jornadaMuertaMs / 60000,
+          disponibleMin: disponibleRealMs / 60000,
+          ventanaMin: ventanaMs / 60000,
+          // Ocupación = activo / lo que hubo que hacer. Es el complemento exacto de la
+          // suma de las tres ociosidades, así que las cuatro cifras cuadran por
           // construcción (hay una comprobación que lo verifica).
-          ocupacion: disponibleMs > 0 ? activoMs / disponibleMs : 0,
+          ocupacion: disponibleRealMs > 0 ? activoMs / disponibleRealMs : 0,
+          // Y la lectura «de planta»: cuánto del turno abierto se dedico a esto.
+          ocupacionDeJornada: ventanaMs > 0 ? activoMs / ventanaMs : 0,
           carga: { ...f.carga }
         });
       });

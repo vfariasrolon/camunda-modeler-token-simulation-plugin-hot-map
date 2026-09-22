@@ -915,33 +915,51 @@ export default class ReportPanel {
           <td class="num">${ent(p.tareas)}</td>
           <td class="num">${horas(p.activoMin)}</td>
           <td class="num">${horas(p.sinTrabajoMin)}</td>
+          <td class="num">${horas(p.jornadaSinCargaMin)}</td>
           <td class="num">${horas(p.esperandoFirmaMin)}</td>
           <td class="num">${horas(p.bloqueadoPorHabilidadMin)}</td>
           <td class="num">${num(p.ocupacion * 100, 1)} %</td>
+          <td class="num">${num(p.ocupacionDeJornada * 100, 1)} %</td>
         </tr>`;
     }).join('');
 
-    // La comprobacion: activo + las tres ociosidades tiene que dar la jornada.
+    // Las DOS comprobaciones: cada lectura tiene que cuadrar con SU denominador. Si alguna no
+    // cuadra, el reparto que se enseña no es el que el motor calculó.
     const cuadra = personas.every((p) => Math.abs(
       (p.activoMin + p.sinTrabajoMin + p.esperandoFirmaMin + p.bloqueadoPorHabilidadMin) - p.disponibleMin
+    ) < 0.02);
+    const cuadraJornada = personas.every((p) => Math.abs(
+      (p.activoMin + p.jornadaSinCargaMin + p.esperandoFirmaMin + p.bloqueadoPorHabilidadMin) - p.ventanaMin
     ) < 0.02);
 
     const sinCalcular = (op.noCalculado || []);
 
     return `
       <h3>4.2 · Operatividad por persona</h3>
-      <p>Cómo se repartió la jornada de cada persona, en horas. Las cuatro columnas
-      <strong>suman la jornada disponible</strong>: no hay un resto sin explicar.</p>
+      <p>Dos lecturas de la misma jornada, y <strong>no significan lo mismo</strong>:</p>
+      <ul>
+        <li><strong>Sin trabajo</strong> es ociosidad <em>imputable</em>: de los ratos en que la
+        piscina tuvo trabajo pendiente, cuánto no se atendió. Es lo que dice si esta persona es el
+        cuello de botella. Con una sola persona y sin cola vale <strong>cero</strong>: hizo todo lo
+        que había que hacer.</li>
+        <li><strong>Jornada sin carga</strong> es el turno abierto menos lo trabajado. Responde a
+        «cuánto del turno no se dedicó a esto», que dice si el proceso da de comer a la plantilla,
+        y es lo comparable entre escenarios. <em>No</em> es ociosidad de la persona.</li>
+      </ul>
+      <p>Las tres ociosidades suman <strong>su columna de referencia</strong>, así que no hay un
+      resto sin explicar en ninguna de las dos lecturas.</p>
       <table>
         <thead><tr><th>Persona</th><th class="num">Tareas</th><th class="num">Activo</th>
-          <th class="num">Sin trabajo</th><th class="num">Esperando firma</th>
-          <th class="num">Bloqueado por habilidad</th><th class="num">Ocupación</th></tr></thead>
+          <th class="num">Sin trabajo</th><th class="num">Jornada sin carga</th>
+          <th class="num">Esperando firma</th>
+          <th class="num">Bloqueado por habilidad</th>
+          <th class="num">Ocupación</th><th class="num">Ocup. de jornada</th></tr></thead>
         <tbody>${filas}</tbody>
       </table>
-      <div class="aviso ${cuadra ? 'ok' : 'mal'}">
-        ${cuadra
-          ? 'Las cuatro categorías suman la jornada disponible de cada persona: el reparto cuadra.'
-          : 'Las cuatro categorías NO suman la jornada disponible. Revise antes de usar estas cifras.'}
+      <div class="aviso ${cuadra && cuadraJornada ? 'ok' : 'mal'}">
+        ${cuadra && cuadraJornada
+          ? 'Las tres ociosidades suman su columna de referencia en las dos lecturas: el reparto cuadra.'
+          : 'El reparto NO cuadra con ninguna de las dos referencias. Revise antes de usar estas cifras.'}
       </div>
       ${sinCalcular.length ? `
         <p class="sub"><strong>No calculado, y por qué:</strong> ${esc(sinCalcular.join('; '))}. Un hueco sin
@@ -950,6 +968,11 @@ export default class ReportPanel {
       <p class="sub">La <em>espera de firma</em> y el <em>bloqueo por habilidad</em> se reparten entre las
       personas de la piscina: es una <strong>imputación declarada</strong>, no una medida, porque el motor no
       sabe a ciencia cierta quién aguantó cada espera.</p>
+      <p class="sub"><strong>Sobre el denominador de «sin trabajo»:</strong> se mide contra el tiempo en que
+      la piscina <em>tuvo trabajo pendiente</em>, no contra la ventana simulada completa. Antes se usaba la
+      ventana entera y con procesos de tareas cortas daba cifras como «95 % sin trabajo» con la persona
+      habiendo hecho todo lo que había: el trabajo estaba bien medido, lo que estaba mal era contra qué se
+      comparaba. Si quiere el dato de planta, use <em>jornada sin carga</em>.</p>
     `;
   }
 

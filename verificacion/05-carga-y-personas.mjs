@@ -279,11 +279,17 @@ console.log('\n== 10. Operatividad: activo + tres ociosidades = jornada ==');
   filas.forEach((p) => {
     const suma = p.activoMin + p.sinTrabajoMin + p.esperandoFirmaMin + p.bloqueadoPorHabilidadMin;
     ok(Math.abs(suma - p.disponibleMin) < 0.02,
-      `${p.nombre}: activo + sin trabajo + firma + bloqueo = jornada`,
+      `${p.nombre}: activo + sin trabajo + firma + bloqueo = tiempo con trabajo pendiente`,
       `${tres(suma)} vs ${tres(p.disponibleMin)}`);
     ok(p.sinTrabajoMin >= 0, `${p.nombre}: «sin trabajo» no sale negativo`, tres(p.sinTrabajoMin));
     ok(Math.abs(p.ocupacion - p.activoMin / p.disponibleMin) < 1e-9,
       `${p.nombre}: la ocupación es activo / disponible`, tres(p.ocupacion));
+    // La SEGUNDA lectura: la jornada abierta. Es la que responde a «cuanto del turno
+    // se dedico a esto», y la unica que tiene sentido comparar entre escenarios.
+    const sumaJornada = p.jornadaSinCargaMin + p.activoMin + p.esperandoFirmaMin + p.bloqueadoPorHabilidadMin;
+    ok(Math.abs(sumaJornada - p.ventanaMin) < 0.02,
+      `${p.nombre}: jornada sin carga + activo + firma + bloqueo = ventana simulada`,
+      `${tres(sumaJornada)} vs ${tres(p.ventanaMin)}`);
   });
 
   // 4 tareas de 1 h repartidas entre 2 personas = 2 h cada una.
@@ -291,7 +297,20 @@ console.log('\n== 10. Operatividad: activo + tres ociosidades = jornada ==');
   const luis = filas.find((p) => p.nombre === 'Luis');
   ok(tres(ana.activoMin) === 120 && tres(luis.activoMin) === 120,
     'el trabajo se reparte: 2 h cada una', `${tres(ana.activoMin)} / ${tres(luis.activoMin)}`);
-  ok(ana.ocupacion <= 0.5, 'y quedan ociosas la otra mitad de la jornada', tres(ana.ocupacion));
+
+  // AQUI ESTABA EL BUG. Con trabajo de sobra, la piscina tuvo demanda todo el tiempo:
+  // las dos personas trabajan la mitad cada una porque son DOS, no porque estuvieran
+  // ociosas. La ocupacion honesta -activo / tiempo con trabajo pendiente- es 1: no
+  // sobro ni un minuto con cola sin atender.
+  ok(tres(ana.ocupacion) === 1,
+    'con trabajo de sobra la piscina NUNCA estuvo ociosa: ocupacion 1, no 0,5',
+    tres(ana.ocupacion));
+  // Y la lectura de planta, que es la que antes se confundia con la anterior: del turno
+  // abierto, la mitad. Ese 0,5 es real, pero significa «el proceso no da para dos
+  // personas a jornada completa», no «Ana estuvo ociosa».
+  ok(tres(ana.ocupacionDeJornada) === 0.5,
+    'y de la jornada abierta se dedica la mitad (que es otra pregunta)',
+    tres(ana.ocupacionDeJornada));
 
   ok(r.operatividad.noCalculado && r.operatividad.noCalculado.length,
     'se declara lo que NO se calcula, en vez de dejarlo a cero',
@@ -322,6 +341,91 @@ console.log('\n== 11. Operatividad: el bloqueo por habilidad tiene minutos ==');
   ok(ana.bloqueadoPorHabilidadMin > 0,
     'la persona que habria podido hacerla si supiera lo tiene en su jornada',
     tres(ana.bloqueadoPorHabilidadMin));
+}
+
+console.log('\n== 12. Ociosidad: el denominador es el tiempo CON TRABAJO PENDIENTE ==');
+{
+  // EL CASO QUE REPORTÓ EL USUARIO: tareas cortas y llegadas espaciadas. Salia «95 % sin
+  // trabajo» con la persona habiendo hecho TODO lo que habia que hacer. El trabajo activo
+  // estaba bien -30 min exactos-, lo que estaba mal era contra que se comparaba: la ventana
+  // simulada entera en vez del rato en que hubo cola.
+  const r = correr({
+    runValue: 3,
+    tareas: [ { id: 'T1', minutos: 10, pool: 'Operarios' } ],
+    pools: [ { name: 'Operarios', quantity: 1, members: [ { nombre: 'noel' } ] } ]
+  });
+
+  const p = r.operatividad.porMiembro[0];
+  ok(tres(p.activoMin) === 30, 'las 3 piezas de 10 min son 30 min de trabajo', tres(p.activoMin));
+
+  // La comprobacion que caza el bug: con UNA sola persona y sin cola, no puede haber
+  // ociosidad imputable. El trabajo y el tiempo con trabajo pendiente coinciden.
+  ok(tres(p.sinTrabajoMin) === 0,
+    'con una persona y sin cola, «sin trabajo» es CERO (no un 77 %)',
+    tres(p.sinTrabajoMin));
+  ok(tres(p.ocupacion) === 1,
+    'y la ocupación es 1: hizo todo lo que había que hacer', tres(p.ocupacion));
+
+  // La otra lectura sigue existiendo y sigue siendo grande, que es lo legitimo: de la
+  // jornada simulada, 30 de 130 min. Eso NO es ociosidad de noel, es que el proceso no
+  // llena el turno.
+  ok(p.jornadaSinCargaMin > 90,
+    'y «jornada sin carga» sí es alta: el proceso no llena el turno',
+    tres(p.jornadaSinCargaMin));
+  ok(tres(p.ocupacionDeJornada) < 0.3,
+    'ocupación de jornada por debajo del 30 %', tres(p.ocupacionDeJornada));
+  ok(tres(p.jornadaSinCargaMin + p.activoMin) === tres(p.ventanaMin),
+    'y las dos lecturas cuadran con la ventana',
+    `${tres(p.jornadaSinCargaMin)} + ${tres(p.activoMin)} vs ${tres(p.ventanaMin)}`);
+}
+
+console.log('\n== 13. Ociosidad: las propiedades que se cumplen SIEMPRE ==');
+{
+  // Escenarios distintos, para comprobar las invariantes en varios regimenes de carga en vez
+  // de en uno solo -que es como se coló el bug del denominador: el arnes viejo usaba un unico
+  // escenario saturado, y en ese caso la ventana entera y la demanda coincidian por
+  // casualidad, asi que el resultado parecia correcto-.
+  const casos = [
+    { nombre: 'carga baja (3 x 10 min)', runValue: 3, minutos: 10 },
+    { nombre: 'carga media (5 x 30 min)', runValue: 5, minutos: 30 },
+    { nombre: 'carga alta (8 x 30 min)', runValue: 8, minutos: 30 },
+    { nombre: 'carga extrema (20 x 45 min)', runValue: 20, minutos: 45 }
+  ];
+
+  casos.forEach((c) => {
+    const r = correr({
+      runValue: c.runValue,
+      tareas: [ { id: 'T1', minutos: c.minutos, pool: 'Operarios' } ],
+      pools: [ { name: 'Operarios', quantity: 1, members: [ { nombre: 'noel' } ] } ]
+    });
+    const p = r.operatividad.porMiembro[0];
+
+    // INVARIANTE 1: la demanda incluye todo el trabajo hecho. Es lo que impide que la
+    // ociosidad salga negativa y se recorte a cero escondiendo el problema.
+    ok(p.disponibleMin >= p.activoMin - 0.02,
+      `${c.nombre}: la demanda nunca es menor que el trabajo`,
+      `${tres(p.disponibleMin)} vs ${tres(p.activoMin)}`);
+
+    // INVARIANTE 2: la demanda nunca excede la ventana. La piscina no puede tener trabajo
+    // pendiente mas tiempo del que la simulacion dura.
+    ok(p.disponibleMin <= p.ventanaMin + 0.02,
+      `${c.nombre}: la demanda no excede la ventana simulada`,
+      `${tres(p.disponibleMin)} vs ${tres(p.ventanaMin)}`);
+
+    // INVARIANTE 3: las dos lecturas cuadran con su denominador.
+    ok(Math.abs(p.sinTrabajoMin + p.activoMin - p.disponibleMin) < 0.02,
+      `${c.nombre}: activo + sin trabajo = demanda`,
+      `${tres(p.activoMin)} + ${tres(p.sinTrabajoMin)} vs ${tres(p.disponibleMin)}`);
+    ok(Math.abs(p.jornadaSinCargaMin + p.activoMin - p.ventanaMin) < 0.02,
+      `${c.nombre}: activo + jornada sin carga = ventana`,
+      `${tres(p.activoMin)} + ${tres(p.jornadaSinCargaMin)} vs ${tres(p.ventanaMin)}`);
+
+    // INVARIANTE 4: la ociosidad de jornada NUNCA es menor que la imputable. Si no hubo
+    // trabajo pendiente, la jornada sin carga es todo lo no trabajado; la imputable es cero.
+    ok(p.jornadaSinCargaMin >= p.sinTrabajoMin - 0.02,
+      `${c.nombre}: la jornada sin carga es mayor o igual que la ociosidad imputable`,
+      `${tres(p.jornadaSinCargaMin)} vs ${tres(p.sinTrabajoMin)}`);
+  });
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
