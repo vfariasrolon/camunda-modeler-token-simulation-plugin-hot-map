@@ -46,7 +46,12 @@ const casos = [
   // El editor de datos es el archivo mas GRANDE del plugin (3000+ lineas) y hasta
   // ahora su unico arnes vivia en /tmp, asi que se perdia al reiniciar. Aqui queda
   // versionado: es la red que hace falta antes de reestructurar sus pestanas.
-  { nombre: 'panel de datos (tareas, global y CSV)', entry: 'panel-de-datos.js' }
+  { nombre: 'panel de datos (tareas, global y CSV)', entry: 'panel-de-datos.js' },
+  // La validacion, directa. El arnes del panel ya la ejercita, pero a traves de la interfaz: aqui se
+  // llama a `validacion.js` con filas construidas a mano, que es la unica forma de probar los casos
+  // que la tabla no deja escribir (una cantidad de 1,5, un proveedor por pieza sin precio, dos
+  // piscinas con el mismo nombre) sin pelearse con los deshabilitados del formulario.
+  { nombre: 'validacion (que se rechaza y por que)', entry: 'validacion.js' }
   // PENDIENTE: 'informe-pdf.js' esta escrito y NO se ha podido poner en verde. El bundle
   // compila y el modulo carga -comprobado a mano-, pero al ejecutarlo en el runner de Chrome
   // falla con «Script error» sin linea, y no he conseguido ver la causa. Se deja el archivo

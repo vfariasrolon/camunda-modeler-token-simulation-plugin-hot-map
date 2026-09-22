@@ -5,6 +5,9 @@ import { WARMUP_SHAPES, WARMUP_DEFAULTS, curvePoints, describeWarmup } from './W
 import { TURNOS, LABOR_DEFAULTS } from './LaborRules';
 import { miembrosDePiscina, habilidadesDisponibles, avisosDeDesignacion } from './MemberAssignment.js';
 import { filasDePestana, importar as importarCsv, toCsv, download, NOMBRE_DE_PESTANA } from './CsvTareas.js';
+import {
+  numero, datosDeFilaDeTarea, datosDeRecursos, datosDeFlujos, datosGlobales, setByPath, getByPath
+} from './validacion.js';
 import './data-table.css';
 
 const PANEL_CLS = 'sim-data-table-panel';
@@ -383,15 +386,9 @@ const DEFAULT_GLOBAL = () => ({
   labor: { ...LABOR_DEFAULTS(), rules: [] }
 });
 
-const getByPath = (obj, path) => path.reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
-const setByPath = (obj, path, value) => {
-  let cur = obj;
-  for (let i = 0; i < path.length - 1; i++) {
-    if (cur[path[i]] == null || typeof cur[path[i]] !== 'object') cur[path[i]] = {};
-    cur = cur[path[i]];
-  }
-  cur[path[path.length - 1]] = value;
-};
+// `getByPath`/`setByPath` viven en `validacion.js`: se importan en vez de copiarlos aqui, para que
+// «path es una lista de claves» sea una sola afirmacion en todo el plugin y no dos que puedan
+// divergir.
 
 // Los nombres de elementos vienen del archivo .bpmn del usuario y pueden
 // contener comillas o angulos. Sin escapar, romperian el markup de la tabla.
@@ -2190,577 +2187,64 @@ export default class DataTablePanel {
 
   // -- guardar --------------------------------------------------------------
 
-  _num(raw, label, row) {
-    const n = Number(String(raw).trim().replace(',', '.'));
-    if (String(raw).trim() === '' || Number.isNaN(n)) {
-      throw new Error(`${label}: valor no numérico («${raw}»)`);
-    }
-    return n;
+  /** Un numero de una casilla. Delega en `validacion.js`: la formula vive en un solo sitio. */
+  _num(raw, label) {
+    return numero(raw, label);
   }
 
-  /**
-   * Lee UNA fila de la tabla de Tareas y devuelve `{ element, data }`, o null si la
-   * fila no tiene elemento.
-   *
-   * Existe separado de `_collect` por el AUTOGUARDADO: `_collect` lee la pestaña
-   * ENTERA y lanza al primer problema, asi que una fila a medio escribir -una caja de
-   * texto vacia mientras se teclea- bloquearia el guardado de otra fila que si esta
-   * bien. Aqui cada fila se lee y se valida por su cuenta.
-   */
+  /** La lectura de una fila de tareas vive en `validacion.js`. Se deja el nombre por el autoguardado. */
   _datosDeFila(tr) {
-    const el = this._elementRegistry.get(tr.dataset.elId);
-    if (!el) return null;
-
-    const name = this._label(el);
-    const val = (f) => {
-      const input = tr.querySelector(`[data-field="${f}"]`);
-      return input ? input.value : '';
-    };
-    const num = (f, etiqueta) => this._num(val(f), `${name} · ${etiqueta}`);
-
-    const distribucion = val('processingTime.distribution') || 'fixed';
-    const unit = val('processingTime.unit');
-    const unitRetrabajo = val('reworkTime.unit');
-
-    // La casilla esta en % (0-100) pero el motor guarda la FRACCION (0-1). La
-    // conversion vive en el unico sitio que lee la casilla, para que no haya dos
-    // verdades sobre que significa el numero que hay escrito.
-    const failurePct = num('failureRate', 'tasa de fallo (%)');
-    if (failurePct < 0 || failurePct > 100) {
-      throw new Error(
-        `${name}: la tasa de fallo debe estar entre 0 y 100 % (has puesto ${failurePct})`
-      );
-    }
-    const failure = failurePct / 100;
-
-    // El tiempo de proceso se lee SEGUN la distribucion elegida: con
-    // triangular mandan min/moda/max y el campo "Tiempo" no se lee en
-    // absoluto. Leer los dos seria peor que no leer ninguno: se guardaria
-    // un valor que el motor va a ignorar.
-    let processingTime;
-    if (distribucion === 'triangular') {
-      const min = num('processingTime.min', 'mínimo');
-      const mode = num('processingTime.mode', 'moda');
-      const max = num('processingTime.max', 'máximo');
-
-      if (!(min <= mode && mode <= max)) {
-        throw new Error(
-          `${name}: en la distribución triangular debe cumplirse mínimo ≤ moda ≤ máximo `
-          + `(has puesto ${min}, ${mode}, ${max})`
-        );
-      }
-      processingTime = { distribution: 'triangular', min, mode, max, unit };
-    } else {
-      const value = num('processingTime.value', 'tiempo de proceso');
-      if (value < 0) throw new Error(`${name}: el tiempo de proceso no puede ser negativo`);
-      processingTime = { distribution: 'fixed', value, unit };
-    }
-
-    const reworkValue = num('reworkTime.value', 'retrabajo');
-    if (reworkValue < 0) throw new Error(`${name}: el retrabajo no puede ser negativo`);
-
-    // Recurso: '(ninguno)' deja el campo vacio, que es lo que el motor lee
-    // como "sin restriccion de recursos".
-    const pool = val('resources.pool');
-    const cantRaw = val('resources.quantityRequired');
-    let recurso = null;
-    if (pool) {
-      const cantidad = cantRaw === '' ? 1 : this._num(cantRaw, `${name} · cantidad de recurso`);
-      if (!(cantidad >= 1)) {
-        throw new Error(`${name}: la cantidad de recurso debe ser un número mayor o igual que 1`);
-      }
-      if (!this._getPools().some((p) => p.name === pool)) {
-        throw new Error(
-          `${name}: la piscina «${pool}» no está dada de alta. Créala en la pestaña Recursos antes de asignarla.`
-        );
-      }
-      recurso = { pool, quantityRequired: cantidad };
-
-      // EL MIEMBRO DESIGNADO, si lo hay. Se valida AQUI y no solo al simular, porque un nombre mal
-      // escrito atasca la tarea en cada caso y el sintoma -«la corrida se queda corta»- no dice
-      // cual es el problema. Es la misma validacion que usa el aviso previo al informe.
-      const miembro = val('resources.miembro');
-      if (miembro) {
-        const poolDatos = this._getPools().find((p) => p.name === pool);
-        const suyo = ((poolDatos && poolDatos.members) || []).find((m) => m && m.nombre === miembro);
-        if (!suyo) {
-          const disponibles = ((poolDatos && poolDatos.members) || []).map((m) => m && m.nombre).filter(Boolean);
-          throw new Error(
-            `${name}: «${miembro}» no está en la piscina «${pool}». `
-            + (disponibles.length ? `Los miembros son: ${disponibles.join(', ')}.` : 'Esa piscina no tiene miembros.')
-          );
-        }
-        recurso.miembro = miembro;
-      }
-    }
-
-    const current = this._taskData(el);
-    const datos = {
-      ...current,
-      processingTime,
-      // Se conserva la distribucion del retrabajo que hubiera: la tabla
-      // todavia no la edita, y forzarla a "fixed" destruiria un triangular
-      // configurado. Mismo error que tenia el modal del lapiz.
-      reworkTime: { ...current.reworkTime, value: reworkValue, unit: unitRetrabajo },
-      failureRate: failure
-    };
-    // delete y no null: el motor comprueba `data.resources && data.resources.pool`,
-    // asi que un objeto con pool vacio pasaria el primer filtro. Ademas el
-    // JSON no arrastra claves muertas.
-    if (recurso) datos.resources = recurso;
-    else delete datos.resources;
-
-    // Frecuencia y barrera. `_taskData` devuelve los valores por defecto para
-    // poder pintarlos, asi que hay que BORRARLOS del resultado: si no, cada
-    // tarea guardada arrastraria un `frequency: "token"` y una barrera que
-    // nunca se pidio, y el XML engordaria en cada guardado.
-    const frecuencia = val('frequency') === 'lot' ? 'lot' : 'token';
-
-    if (frecuencia === 'lot') {
-      const disp = num('barrier.availableProbability', 'disponibilidad de la barrera');
-      if (disp < 0 || disp > 1) {
-        throw new Error(`${name}: la disponibilidad de la barrera debe estar entre 0 y 1`);
-      }
-      const esperaMin = num('barrier.waitMin', 'espera mínima de la barrera');
-      const esperaModa = num('barrier.waitMode', 'espera modal de la barrera');
-      const esperaMax = num('barrier.waitMax', 'espera máxima de la barrera');
-      if (!(esperaMin <= esperaModa && esperaModa <= esperaMax)) {
-        throw new Error(
-          `${name}: en la espera de la barrera debe cumplirse mínimo ≤ moda ≤ máximo `
-          + `(has puesto ${esperaMin}, ${esperaModa}, ${esperaMax})`
-        );
-      }
-      const tolerancia = num('barrier.toleranceMinutes', 'tolerancia de la barrera');
-      if (tolerancia < 0) throw new Error(`${name}: la tolerancia no puede ser negativa`);
-
-      datos.frequency = 'lot';
-      datos.barrier = {
-        availableProbability: disp,
-        waitMin: esperaMin,
-        waitMode: esperaModa,
-        waitMax: esperaMax,
-        toleranceMinutes: tolerancia
-      };
-    } else {
-      // Una tarea por token no tiene barrera: el motor ni la lee.
-      delete datos.frequency;
-      delete datos.barrier;
-    }
-
-    // CARGA FISICA. Una casilla vacia se guarda como AUSENTE, no como 0: un 0
-    // dice «esta tarea no mueve peso» y el vacio dice «no lo sabemos», y el
-    // diagnostico de datos los distingue. Las claves vacias se OMITEN en vez de
-    // guardarse como `null` (un JSON con nulls es mas dificil de leer a mano y
-    // el motor los trataria igual, pero ensucia el XML).
-    const cargaOpcional = (campo, etiqueta) => {
-      const bruto = val(`carga.${campo}`);
-      if (String(bruto).trim() === '') return undefined;
-      const n = this._num(bruto, `${name} · ${etiqueta}`);
-      if (n < 0) throw new Error(`${name}: ${etiqueta} no puede ser negativo`);
-      return n;
-    };
-    const carga = {};
-    const masa = cargaOpcional('masaCargadaKg', 'masa cargada');
-    const arrastre = cargaOpcional('masaArrastradaKg', 'masa arrastrada');
-    const distancia = cargaOpcional('distanciaM', 'distancia');
-    if (masa !== undefined) carga.masaCargadaKg = masa;
-    if (arrastre !== undefined) carga.masaArrastradaKg = arrastre;
-    if (distancia !== undefined) carga.distanciaM = distancia;
-
-    delete datos.carga;
-    if (Object.keys(carga).length) datos.carga = carga;
-
-    // HABILIDAD exigida. Se admite una o varias separadas por comas, y se
-    // guarda `habilidad` (singular) cuando es una sola porque es el caso
-    // comun y asi el XML queda legible.
-    const habilidadBruta = String(val('habilidad') == null ? '' : val('habilidad')).trim();
-    delete datos.habilidad;
-    delete datos.habilidades;
-    if (habilidadBruta) {
-      const lista = habilidadBruta.split(',').map((h) => h.trim()).filter(Boolean);
-      if (lista.length === 1) datos.habilidad = lista[0];
-      else if (lista.length > 1) datos.habilidades = lista;
-    }
-
-    return { element: el, data: datos };
+    return datosDeFilaDeTarea(tr, {
+      getElement: (id) => this._elementRegistry.get(id),
+      label: (el) => this._label(el),
+      taskData: (el) => this._taskData(el),
+      getPools: () => this._getPools()
+    });
   }
 
   /**
    * Reune los cambios de la pestaña activa. Lanza Error con el primer problema
    * encontrado para no escribir datos a medias.
+   *
+   * La lectura y la validacion viven en `validacion.js`: aqui solo se le pasa el contenedor y las
+   * funciones que saben de bpmn-js. Se delega asi porque «que dice cada casilla» y «que hay que
+   * rechazar» es la parte que hay que poder probar sin montar el panel entero, y es la que produce
+   * los mensajes que el usuario lee al pulsar Guardar.
    */
   _collect() {
-    const writes = [];
+    const ctx = {
+      getElement: (id) => this._elementRegistry.get(id),
+      label: (el) => this._label(el),
+      taskData: (el) => this._taskData(el),
+      flowData: (el) => this._flowData(el),
+      getPools: () => this._getPools(),
+      processRoot: () => this._getProcessRoot(),
+      procesoData: () => getSimulationData(this._getProcessRoot()) || {},
+      globalData: () => this._globalData(),
+      salidaUnica: (gw) => this._salidaUnica(gw),
+      valorPct: (tr) => this._valorPct(tr),
+      toleranciaReparto: () => TOLERANCIA_REPARTO_PCT
+    };
+    const ayudas = {
+      globalFields: GLOBAL_FIELDS,
+      laborRuleFields: CAMPOS_DE_REGLA,
+      setByPath,
+      getByPath,
+      pad
+    };
 
     if (this._activeTab === 'tasks') {
+      const writes = [];
       this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
-        const fila = this._datosDeFila(tr);
+        const fila = datosDeFilaDeTarea(tr, ctx);
         if (fila) writes.push(fila);
       });
       return writes;
     }
 
-    if (this._activeTab === 'resources') {
-      const root = this._getProcessRoot();
-      if (!root) throw new Error('El diagrama no tiene ningún proceso donde guardar los recursos');
-
-      const pools = [];
-      const vistos = new Set();
-
-      // `.filas-pool > tr` y no `.filas-pool tr`: dentro de cada piscina hay una
-      // tabla de MIEMBROS, cuyas filas tambien son `tr`. Sin el hijo directo, cada
-      // miembro se leería como una piscina sin nombre.
-      this._body.querySelectorAll('.filas-pool > tr').forEach((tr, i) => {
-        const nombre = String(tr.querySelector('[data-field="pool.name"]').value || '').trim();
-        const cantRaw = String(tr.querySelector('[data-field="pool.quantity"]').value || '').trim();
-
-        // Fila totalmente vacia: se ignora en vez de dar error, para que la fila
-        // que se acaba de añadir y no se ha rellenado no bloquee el guardado.
-        if (nombre === '' && cantRaw === '') return;
-
-        if (!nombre) throw new Error(`Piscina ${i + 1}: falta el nombre`);
-        if (vistos.has(nombre)) throw new Error(`Piscina «${nombre}»: el nombre está repetido`);
-        vistos.add(nombre);
-
-        const cantidad = this._num(cantRaw, `Piscina «${nombre}» · cantidad`);
-        if (!Number.isInteger(cantidad) || cantidad < 1) {
-          throw new Error(`Piscina «${nombre}»: la cantidad debe ser un entero mayor o igual que 1`);
-        }
-
-        // Miembros con nombre: opcionales. Se leen del sublistado de ESTA fila.
-        const members = [];
-        const nombresVistos = new Set();
-        tr.querySelectorAll('.filas-miembro tr').forEach((filaM, j) => {
-          const valor = (campo) => {
-            const el = filaM.querySelector(`[data-miembro="${campo}"]`);
-            return el ? String(el.value).trim() : '';
-          };
-          const nombreM = valor('nombre');
-          const tarifa = valor('tarifaHora');
-          const cargaMax = valor('cargaMaximaKg');
-          const habs = valor('habilidades');
-
-          // Fila vacia: se ignora, para que la recien anadida no bloquee.
-          if (!nombreM && !tarifa && !cargaMax && !habs) return;
-          if (!nombreM) throw new Error(`Piscina «${nombre}» · miembro ${j + 1}: falta el nombre`);
-          if (nombresVistos.has(nombreM)) {
-            throw new Error(`Piscina «${nombre}»: el miembro «${nombreM}» está repetido`);
-          }
-          nombresVistos.add(nombreM);
-
-          const miembro = { nombre: nombreM };
-          if (tarifa !== '') {
-            const t = this._num(tarifa, `Piscina «${nombre}» · ${nombreM} · tarifa`);
-            if (t < 0) throw new Error(`Piscina «${nombre}» · ${nombreM}: la tarifa no puede ser negativa`);
-            miembro.tarifaHora = t;
-          }
-          if (cargaMax !== '') {
-            const c = this._num(cargaMax, `Piscina «${nombre}» · ${nombreM} · carga máxima`);
-            if (c < 0) throw new Error(`Piscina «${nombre}» · ${nombreM}: la carga máxima no puede ser negativa`);
-            miembro.cargaMaximaKg = c;
-          }
-          if (habs !== '') {
-            miembro.habilidades = habs.split(',').map((h) => h.trim()).filter(Boolean);
-          }
-          members.push(miembro);
-        });
-
-        const pool = { name: nombre, quantity: cantidad };
-
-        // ORIGEN Y COBRO. Una piscina PROPIA no escribe nada: el XML de los
-        // diagramas que ya existen no puede engordar por una funcion que no usan,
-        // y el motor trata la ausencia como «propia» (que es el defecto).
-        const origen = String((tr.querySelector('[data-field="pool.origen"]') || {}).value || 'propia');
-        if (origen === 'externa') {
-          const cobro = String((tr.querySelector('[data-field="pool.cobro"]') || {}).value || 'hora');
-          const leer = (campo) => String((tr.querySelector(`[data-field="${campo}"]`) || {}).value || '').trim();
-
-          pool.origen = 'externa';
-          pool.cobro = cobro === 'pieza' ? 'pieza' : 'hora';
-
-          if (pool.cobro === 'pieza') {
-            const precio = leer('pool.precioPieza');
-            // Se EXIGE el precio: un proveedor por pieza sin precio factura 0 y el
-            // informe ensenaria un coste mas barato que el real. Un cero silencioso
-            // es peor que no dejar guardar.
-            if (precio === '') {
-              throw new Error(
-                `Piscina «${nombre}»: es un proveedor que cobra POR PIEZA y le falta el precio. `
-                + 'Sin él, el coste saldría 0 y el informe mentiría.'
-              );
-            }
-            const valor = this._num(precio, `Piscina «${nombre}» · precio por pieza`);
-            if (!(valor > 0)) throw new Error(`Piscina «${nombre}»: el precio por pieza debe ser mayor que 0`);
-            pool.precioPieza = valor;
-          } else {
-            const tarifa = leer('pool.tarifaHora');
-            // La tarifa por hora sí puede faltar: el motor cae en la de planta, que
-            // es un numero visible y plausible. Se avisa en el hint, no se bloquea.
-            if (tarifa !== '') {
-              const valor = this._num(tarifa, `Piscina «${nombre}» · tarifa por hora`);
-              if (valor < 0) throw new Error(`Piscina «${nombre}»: la tarifa por hora no puede ser negativa`);
-              pool.tarifaHora = valor;
-            }
-          }
-        }
-
-        // `members` solo se guarda si hay alguno: una lista vacia en el XML es
-        // ruido, y el motor trata «sin miembros» y «lista vacia» igual.
-        if (members.length) pool.members = members;
-        pools.push(pool);
-      });
-
-      writes.push({
-        element: root,
-        data: { ...(getSimulationData(root) || {}), resourcePools: pools }
-      });
-      return writes;
-    }
-
-    if (this._activeTab === 'flows') {
-      // Se agrupa por compuerta: el reparto se valida POR COMPUERTA, no fila a
-      // fila, porque el motor elige exactamente una salida por caso. Validar
-      // solo el rango 0-100 permitia guardar un reparto que sumaba 150 % y el
-      // motor, que acumula, mandaba todo lo sobrante a la ultima rama.
-      const porCompuerta = new Map();
-
-      this._body.querySelectorAll('tbody tr[data-el-id]').forEach((tr) => {
-        const el = this._elementRegistry.get(tr.dataset.elId);
-        if (!el || !el.source) return;
-
-        // Compuerta de una sola salida: el motor siempre la toma y no lee su
-        // reparto, asi que ni se valida ni se escribe.
-        if (this._salidaUnica(el.source)) return;
-
-        const etiqueta = `${this._label(el.source)} → ${el.target ? this._label(el.target) : '?'}`;
-        const pct = this._num(this._valorPct(tr), `${etiqueta} · reparto (%)`);
-        if (pct < 0 || pct > 100) {
-          throw new Error(`${etiqueta}: el reparto debe estar entre 0 y 100 % (has puesto ${pct})`);
-        }
-
-        const grupo = porCompuerta.get(el.source.id) || { gateway: el.source, filas: [] };
-        grupo.filas.push({ el, pct });
-        porCompuerta.set(el.source.id, grupo);
-      });
-
-      porCompuerta.forEach(({ gateway, filas }) => {
-        const total = redondear2(filas.reduce((acc, f) => acc + f.pct, 0));
-        if (Math.abs(total - 100) > TOLERANCIA_REPARTO_PCT) {
-          throw new Error(
-            `«${this._label(gateway)}»: el reparto de sus ${filas.length} salidas suma ${total} % `
-            + 'y debe sumar 100 %'
-          );
-        }
-        filas.forEach(({ el, pct }) => {
-          writes.push({
-            element: el,
-            data: { ...this._flowData(el), branchingProbability: Math.round(pct * 100) / 10000 }
-          });
-        });
-      });
-
-      return writes;
-    }
-
-    const info = this._globalData();
-    if (!info) throw new Error('No hay evento raíz configurado');
-
-    const data = JSON.parse(JSON.stringify(info.data));
-
-    // Se recorre la lista de campos en vez de los inputs del DOM: los dias son
-    // VARIAS casillas por campo (una por dia), asi que no encajan en el patron
-    // "un input por campo" que usan las demas pestañas.
-    GLOBAL_FIELDS.forEach((field) => {
-      if (field.kind === 'days') {
-        const marcados = Array.from(this._body.querySelectorAll(`[data-days="${field.key}"]:checked`))
-          .map((c) => Number(c.value));
-        if (!marcados.length) {
-          throw new Error(`${field.label}: marca al menos un día`);
-        }
-        setByPath(data, field.path, marcados.sort((a, b) => a - b));
-        return;
-      }
-
-      const input = this._body.querySelector(`[data-field="${field.key}"]`);
-      if (!input) return;
-      const raw = input.value;
-
-      if (field.kind === 'number') {
-        // Campo opcional (la semilla): vacio es «no declarado», que el motor
-        // interpreta como «sacarla al azar» y luego guardarla.
-        if (field.optional && String(raw).trim() === '') {
-          setByPath(data, field.path, '');
-          return;
-        }
-        const n = this._num(raw, field.label);
-        if (field.min != null && n < field.min) throw new Error(`${field.label}: debe ser ≥ ${field.min}`);
-        if (field.max != null && n > field.max) throw new Error(`${field.label}: debe ser ≤ ${field.max}`);
-        setByPath(data, field.path, n);
-      } else if (field.kind === 'checkbox') {
-        setByPath(data, field.path, Boolean(input.checked));
-      } else if (field.kind === 'time') {
-        // <input type="time"> ya entrega HH:MM, pero puede quedar vacio si el
-        // usuario borra el campo, asi que se valida igualmente.
-        const m = String(raw).match(/^(\d{2}):(\d{2})$/);
-        if (!m) throw new Error(`${field.label}: hora no válida («${raw}»)`);
-        const hour = Number(m[1]);
-        const minute = Number(m[2]);
-        if (hour > 23 || minute > 59) throw new Error(`${field.label}: hora fuera de rango («${raw}»)`);
-        setByPath(data, field.path, { hour, minute });
-      } else {
-        setByPath(data, field.path, raw);
-      }
-    });
-
-    // Coherencia del horario: si la entrada es posterior a la salida, el motor
-    // no calcula nada util y el usuario no recibe ningun aviso.
-    const entrada = getByPath(data, [ 'calendar', 'workingHours', 'start' ]);
-    const salida = getByPath(data, [ 'calendar', 'workingHours', 'end' ]);
-    if (entrada && salida && (entrada.hour * 60 + entrada.minute) >= (salida.hour * 60 + salida.minute)) {
-      throw new Error('La hora de entrada debe ser anterior a la de salida');
-    }
-
-    // Descansos: es una LISTA, no un campo escalar, asi que se recoge aparte de
-    // GLOBAL_FIELDS (mismo motivo que las piscinas de recursos).
-    const descansos = [];
-    const minutosDe = (t) => t.hour * 60 + t.minute;
-
-    this._body.querySelectorAll('.filas-descanso tr').forEach((tr, i) => {
-      const valor = (campo) => {
-        const el = tr.querySelector(`[data-descanso="${campo}"]`);
-        return el ? String(el.value).trim() : '';
-      };
-      const marcado = (campo) => {
-        const el = tr.querySelector(`[data-descanso="${campo}"]`);
-        return Boolean(el && el.checked);
-      };
-
-      const desde = valor('start');
-      const hasta = valor('end');
-      // Fila sin horas: se ignora, para que una fila recien anadida no bloquee.
-      if (!desde && !hasta) return;
-
-      const mDesde = desde.match(/^(\d{1,2}):(\d{2})$/);
-      const mHasta = hasta.match(/^(\d{1,2}):(\d{2})$/);
-      if (!mDesde) throw new Error(`Descanso ${i + 1}: hora de inicio no válida («${desde}»)`);
-      if (!mHasta) throw new Error(`Descanso ${i + 1}: hora de fin no válida («${hasta}»)`);
-
-      const inicio = { hour: Number(mDesde[1]), minute: Number(mDesde[2]) };
-      const fin = { hour: Number(mHasta[1]), minute: Number(mHasta[2]) };
-
-      if (minutosDe(fin) <= minutosDe(inicio)) {
-        throw new Error(`Descanso ${i + 1}: el fin debe ser posterior al inicio (${desde} → ${hasta})`);
-      }
-      // Un descanso FUERA de la jornada es casi siempre una errata, y el motor lo
-      // ignoraria en silencio (no parte ningun tramo). Mejor decirlo.
-      if (entrada && salida) {
-        const dentroDeLaJornada = minutosDe(fin) > minutosDe(entrada) && minutosDe(inicio) < minutosDe(salida);
-        if (!dentroDeLaJornada) {
-          throw new Error(
-            `Descanso ${i + 1} (${desde} → ${hasta}): queda fuera de la jornada `
-            + `(${pad(entrada.hour)}:${pad(entrada.minute)} - ${pad(salida.hour)}:${pad(salida.minute)}), `
-            + 'así que no partiría ningún tramo'
-          );
-        }
-      }
-
-      descansos.push({
-        start: inicio,
-        end: fin,
-        cuentaComoJornada: marcado('cuentaComoJornada'),
-        existeEnExtra: marcado('existeEnExtra')
-      });
-    });
-
-    setByPath(data, [ 'calendar', 'breaks' ], descansos);
-
-    // Tabla de tamaños de lote empíricos.
-    const tablaLotes = [];
-    this._body.querySelectorAll('.filas-lote tr').forEach((tr, i) => {
-      const leer = (campo) => {
-        const el = tr.querySelector(`[data-lote="${campo}"]`);
-        return el ? String(el.value).trim() : '';
-      };
-      const tam = leer('size');
-      const peso = leer('weight');
-      if (!tam && !peso) return; // fila vacia: se ignora
-
-      const size = this._num(tam, `Tamaño de lote ${i + 1}: tamaño`);
-      if (!Number.isInteger(size) || size < 1) {
-        throw new Error(`Tamaño de lote ${i + 1}: debe ser un entero mayor o igual que 1`);
-      }
-      const weight = this._num(peso, `Tamaño de lote ${i + 1}: peso`);
-      if (!(weight > 0)) throw new Error(`Tamaño de lote ${i + 1}: el peso debe ser mayor que 0`);
-
-      tablaLotes.push({ size, weight });
-    });
-    setByPath(data, [ 'lots', 'table' ], tablaLotes);
-
-    // Coherencia de los lotes: sin esto, el motor caeria en silencio al tamaño
-    // fijo (empirical sin tabla) o recortaria la triangular sin avisar.
-    const modoLote = getByPath(data, [ 'lots', 'sizeMode' ]);
-    if (getByPath(data, [ 'lots', 'enabled' ])) {
-      if (modoLote === 'empirical' && !tablaLotes.length) {
-        throw new Error('El tamaño de lote es «empirical» pero la tabla está vacía: añade al menos un tamaño');
-      }
-      if (modoLote === 'triangular') {
-        const min = getByPath(data, [ 'lots', 'min' ]);
-        const moda = getByPath(data, [ 'lots', 'mode' ]);
-        const max = getByPath(data, [ 'lots', 'max' ]);
-        if (!(min <= moda && moda <= max)) {
-          throw new Error(`En el tamaño de lote triangular debe cumplirse mínimo ≤ moda ≤ máximo `
-            + `(has puesto ${min}, ${moda}, ${max})`);
-        }
-      }
-    }
-
-    // Vigencias de las reglas laborales: otra lista. Una celda vacia significa
-    // «lo que digan los valores de arriba», asi que solo se escribe lo declarado.
-    const reglas = [];
-    const vistosDesde = new Set();
-
-    this._body.querySelectorAll('.filas-regla tr').forEach((tr, i) => {
-      const leer = (campo) => {
-        const el = tr.querySelector(`[data-regla="${campo}"]`);
-        return el ? String(el.value).trim() : '';
-      };
-      const campos = [ 'limitHours', 'payMultiplier', 'excessPayMultiplier',
-        'dailyOvertimeLimitHours', 'maxOvertimeDaysPerWeek', 'sundayPremiumPercent', 'holidayPremiumPercent' ];
-      const desde = leer('desde');
-      const algunValor = campos.some((c) => leer(c) !== '');
-
-      // Fila totalmente vacia: se ignora, para que la recien anadida no bloquee.
-      if (!desde && !algunValor) return;
-      if (!desde) throw new Error(`Vigencia ${i + 1}: falta la fecha desde la que rige`);
-
-      const m = desde.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (!m) throw new Error(`Vigencia ${i + 1}: «${desde}» no es una fecha válida`);
-      if (vistosDesde.has(desde)) throw new Error(`Vigencia ${desde}: hay dos filas con la misma fecha`);
-      vistosDesde.add(desde);
-
-      const regla = { desde };
-      campos.forEach((c) => {
-        const bruto = leer(c);
-        if (bruto === '') return;
-        const n = this._num(bruto, `Vigencia ${desde} · ${c}`);
-        if (n < 0) throw new Error(`Vigencia ${desde}: ningún valor de la regla puede ser negativo`);
-        regla[c] = n;
-      });
-
-      // El reparto doble/triple tiene que ser coherente: si la prima de exceso
-      // fuera menor que la normal, el motor pagaria MENOS por trabajar mas.
-      const normal = regla.payMultiplier != null ? regla.payMultiplier : getByPath(data, [ 'overtime', 'payMultiplier' ]);
-      const exceso = regla.excessPayMultiplier != null ? regla.excessPayMultiplier : getByPath(data, [ 'overtime', 'excessPayMultiplier' ]);
-      if (normal != null && exceso != null && exceso < normal) {
-        throw new Error(`Vigencia ${desde}: la prima del exceso (${exceso}×) no puede ser menor que la normal (${normal}×)`);
-      }
-
-      reglas.push(regla);
-    });
-    setByPath(data, [ 'labor', 'rules' ], reglas);
-
-    writes.push({ element: info.element, data });
-    return writes;
+    if (this._activeTab === 'resources') return datosDeRecursos(this._body, ctx);
+    if (this._activeTab === 'flows') return datosDeFlujos(this._body, ctx);
+    return datosGlobales(this._body, ctx, ayudas);
   }
 
   /**
