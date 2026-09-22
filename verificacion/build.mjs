@@ -19,6 +19,11 @@ const SIM = join(AQUI, '..', 'client', 'simulation');
 
 const leer = (f) => readFileSync(join(SIM, f), 'utf8');
 
+// TiemposPorProceso es puro: aritmetica sobre la traza de cada token. Es la parte que decide si un
+// cuello de botella es «no da abasto» o «esta lejos», y eso hay que poder probarlo con trazas
+// escritas a mano -9 tokens directos y 1 que espera 40 min-, que una corrida real no da a pedir.
+writeFileSync(join(AQUI, 'TiemposPorProceso.mjs'), leer('TiemposPorProceso.js'));
+
 // El motor: solo se cambian las rutas de import a .mjs.
 const motor = leer('SimulationEngine.js')
   .replace("from './util'", "from './util.mjs'")
@@ -27,6 +32,7 @@ const motor = leer('SimulationEngine.js')
   .replace("from './LaborRules.js'", "from './LaborRules.mjs'")
   .replace("from './LegalOvertime.js'", "from './LegalOvertime.mjs'")
   .replace("from './Workload.js'", "from './Workload.mjs'")
+  .replace("from './TiemposPorProceso.js'", "from './TiemposPorProceso.mjs'")
   .replace("from 'bpmn-js/lib/util/ModelUtil'", "from './ModelUtil.mjs'");
 
 writeFileSync(join(AQUI, 'SimulationEngine.mjs'), motor);

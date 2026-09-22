@@ -9924,8 +9924,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationController)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../simpleheat-svg.js */ "./client/simpleheat-svg.js");
 /* harmony import */ var _simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var chart_js_auto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! chart.js/auto */ "./node_modules/.pnpm/chart.js@4.5.0/node_modules/chart.js/auto/auto.js");
@@ -9936,7 +9936,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _ComparativaPlanes_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./ComparativaPlanes.js */ "./client/simulation/ComparativaPlanes.js");
 /* harmony import */ var _HeatmapZones_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./HeatmapZones.js */ "./client/simulation/HeatmapZones.js");
 /* harmony import */ var _DominantRoute_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./DominantRoute.js */ "./client/simulation/DominantRoute.js");
-/* harmony import */ var _CapacityGuard_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./CapacityGuard.js */ "./client/simulation/CapacityGuard.js");
+/* harmony import */ var _TiemposPorProceso_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./TiemposPorProceso.js */ "./client/simulation/TiemposPorProceso.js");
+/* harmony import */ var _CapacityGuard_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./CapacityGuard.js */ "./client/simulation/CapacityGuard.js");
+
 
 
 
@@ -10062,7 +10064,10 @@ const NOMBRES_METRICA = {
   reworkTime: 'tiempo-de-reparacion',
   overtime: 'horas-extras',
   waitTimeCost: 'costo-tiempos-muertos',
-  resourceQuantity: 'cantidad-de-recursos'
+  resourceQuantity: 'cantidad-de-recursos',
+  // Tiempos por proceso: no pinta nada sobre el diagrama -es una tabla- pero comparte el
+  // mecanismo de metricas para aparecer en la paleta y en el informe.
+  tiemposPorProceso: 'tiempos-por-proceso'
 };
 
 // Los resultados del motor mezclan DOS unidades de tiempo y hay que
@@ -10100,7 +10105,7 @@ const limpiarNombre = (s) => String(s || '')
 // pasarian cualquier comprobacion de tipo.
 const isSimulatedElement = (element) => {
   if ((0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) return false;
-  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, type));
+  return HEATMAP_TYPES.some((type) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, type));
 };
 
 /**
@@ -10157,26 +10162,26 @@ class SimulationController {
     // data-tip alimenta el tooltip CSS (ver simulation.css). Se mantiene tambien
     // el atributo title por accesibilidad: los lectores de pantalla lo anuncian,
     // y sirve como respaldo si el CSS no carga.
-    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
-    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
-    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
-    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
-    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
-    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
-    const idsButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)(`<div class="bts-entry" title="Mostrar IDs" data-tip="Muestra u oculta el ID de cada tarea (círculo azul). El número sigue el orden del flujo y se reasigna al añadir o borrar tareas: la clave para medir es el id del XML, no el número">${IdsIcon}</div>`);
+    const runButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)(`<div class="bts-entry" title="Ejecutar Simulación" data-tip="Ejecuta la simulación y calcula los resultados del proceso">${RunIcon}</div>`);
+    const showButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)(`<div class="bts-entry" title="Mostrar Análisis" data-tip="Abre el mapa de calor para analizar el diagrama">${ShowIcon}</div>`);
+    const chartButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)(`<div class="bts-entry" title="Mostrar Gráficos" data-tip="Abre el panel de gráficos y tablas">${ChartIcon}</div>`);
+    const tableButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)(`<div class="bts-entry" title="Editar Datos por Tabla" data-tip="Edita los datos de simulación en una tabla, con exportar e importar CSV">${TableIcon}</div>`);
+    const reportButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)(`<div class="bts-entry" title="Informe PDF" data-tip="Genera el informe técnico de evaluación (con figuras y puntaje) y lo manda a guardar como PDF">${ReportIcon}</div>`);
+    const auditButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)(`<div class="bts-entry" title="Diagnóstico de datos" data-tip="Comprueba qué se puede medir con los datos que ya tienes y qué falta para lo demás, antes de simular">${AuditIcon}</div>`);
+    const idsButton = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)(`<div class="bts-entry" title="Mostrar IDs" data-tip="Muestra u oculta el ID de cada tarea (círculo azul). El número sigue el orden del flujo y se reasigna al añadir o borrar tareas: la clave para medir es el id del XML, no el número">${IdsIcon}</div>`);
 
-    min_dom__WEBPACK_IMPORTED_MODULE_11__.event.bind(runButton, 'click', () => this.runSimulation());
-    min_dom__WEBPACK_IMPORTED_MODULE_11__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_11__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
-    min_dom__WEBPACK_IMPORTED_MODULE_11__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_12__.event.bind(runButton, 'click', () => this.runSimulation());
+    min_dom__WEBPACK_IMPORTED_MODULE_12__.event.bind(showButton, 'click', () => this._simulationPalette.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_12__.event.bind(chartButton, 'click', () => this._chartPanel.toggle());
+    min_dom__WEBPACK_IMPORTED_MODULE_12__.event.bind(tableButton, 'click', () => this._dataTablePanel.toggle());
     // Por evento y no llamando al panel: el modulo del informe se registra
     // DESPUES que este, asi que inyectarlo aqui seria una dependencia circular.
-    min_dom__WEBPACK_IMPORTED_MODULE_11__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_12__.event.bind(reportButton, 'click', () => this._eventBus.fire('simulation.report.requested'));
     // Mismo motivo: el panel de diagnostico se registra despues.
-    min_dom__WEBPACK_IMPORTED_MODULE_11__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
-    min_dom__WEBPACK_IMPORTED_MODULE_11__.event.bind(idsButton, 'click', () => (this.idsVisibles ? this.ocultarIds() : this.mostrarIds()));
+    min_dom__WEBPACK_IMPORTED_MODULE_12__.event.bind(auditButton, 'click', () => this._eventBus.fire('simulation.audit.requested'));
+    min_dom__WEBPACK_IMPORTED_MODULE_12__.event.bind(idsButton, 'click', () => (this.idsVisibles ? this.ocultarIds() : this.mostrarIds()));
 
-    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)('<hr class="bts-entry-separator">'), 11);
+    this._tokenSimulationPalette.addEntry((0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)('<hr class="bts-entry-separator">'), 11);
     this._tokenSimulationPalette.addEntry(runButton, 12);
     this._tokenSimulationPalette.addEntry(showButton, 13);
     this._tokenSimulationPalette.addEntry(chartButton, 14);
@@ -10223,9 +10228,9 @@ class SimulationController {
       // El tercer escenario, para que el informe pueda comparar los tres. Puede ser null si la
       // corrida es de una version anterior; el informe lo trata como «no hay escenarios».
       legal: this.legalReport,
-      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:Task')),
+      tareas: this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:Task')),
       flujos: this._elementRegistry.filter(
-        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el.source, 'bpmn:ExclusiveGateway')
+        (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el.source, 'bpmn:ExclusiveGateway')
       )
     };
   }
@@ -10588,7 +10593,7 @@ class SimulationController {
 
     // Un flujo de secuencia es una linea: dimensionar un circulo por su caja
     // englobante daria manchas enormes. Se queda con el radio base.
-    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:FlowNode')) return Math.min(base, MAX_BLOB_RADIUS);
+    if (!(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:FlowNode')) return Math.min(base, MAX_BLOB_RADIUS);
 
     const half = Math.max(element.width || 0, element.height || 0) / 2;
     if (!half || half <= this._radius) return Math.min(base, MAX_BLOB_RADIUS);
@@ -10927,6 +10932,15 @@ class SimulationController {
     // eso no se sabe hasta haber visto todos los valores.
     const pares = [];
 
+    // TIEMPOS POR PROCESO: no pinta nada sobre el diagrama. Es una TABLA, porque lo que
+    // responde -«¿en qué paso se espera?»- es una lista ordenada, no una mancha. Va por el
+    // camino de `showMetric` igual que las demás para que el botón, el informe y la limpieza
+    // funcionen sin casos especiales.
+    if (metric === 'tiemposPorProceso') {
+      this._mostrarTiemposPorProceso();
+      return;
+    }
+
     // TRAFICO: una linea no tiene tiempo ni costo, tiene PASOS. Aqui las conexiones
     // entran en la MISMA lista que las figuras, asi que el rango -y por tanto la
     // escala- es uno solo: un trazo y una tarea con los mismos pasos salen del mismo
@@ -10955,11 +10969,11 @@ class SimulationController {
 
       const rangoTrafico = (0,_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.rangoDeValores)(pares.map((p) => p.value));
       const dibujo = this._pintarFlujos(
-        pares.filter((p) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(p.element, 'bpmn:SequenceFlow')), rangoTrafico);
+        pares.filter((p) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(p.element, 'bpmn:SequenceFlow')), rangoTrafico);
 
       // Los circulos van SOLO sobre las figuras: la lista de pares mezcla las dos
       // cosas a proposito (para el rango), pero una linea no lleva mancha.
-      const soloFiguras = pares.filter((p) => !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(p.element, 'bpmn:SequenceFlow'));
+      const soloFiguras = pares.filter((p) => !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(p.element, 'bpmn:SequenceFlow'));
       const dataPointsT = [];
       soloFiguras.forEach(({ element, value }) => {
         this._pushPoint(dataPointsT, element, value, this._opacidadEnRango(value, rangoTrafico));
@@ -10969,7 +10983,7 @@ class SimulationController {
       this._heatmap.gradient(_HeatmapScale_js__WEBPACK_IMPORTED_MODULE_4__.GRADIENTE_ESCALA);
       this._heatmap.data(dataPointsT).max(rangoTrafico.max || 1).radius(this._radius, this._blur).draw();
 
-      const sinTrafico = pares.filter((p) => p.value <= 0 && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(p.element, 'bpmn:SequenceFlow')).length;
+      const sinTrafico = pares.filter((p) => p.value <= 0 && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(p.element, 'bpmn:SequenceFlow')).length;
       if (rangoTrafico.n > 0) this._leyendaEstructura(metric, rangoTrafico, sinTrafico, dibujo);
       this.showOverlays(metric);
       return;
@@ -11002,7 +11016,7 @@ class SimulationController {
 
     if (metric === 'resourceQuantity') {
       this._elementRegistry.forEach(element => {
-        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
           const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
           const value = (data && data.resources && data.resources.quantityRequired) || 0;
           pares.push({ element, value });
@@ -11154,7 +11168,7 @@ class SimulationController {
       };
     });
 
-    const raiz = this._elementRegistry.find((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:StartEvent') && ((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(el) || {}).isRoot);
+    const raiz = this._elementRegistry.find((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:StartEvent') && ((0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(el) || {}).isRoot);
     const archivo = this._nombreDelArchivo();
 
     return {
@@ -11213,7 +11227,7 @@ class SimulationController {
 
   /** Tareas que reciben numero: solo tareas, igual que el mapa de calor. */
   _tareasNumerables() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:Task'));
   }
 
   /**
@@ -11247,7 +11261,7 @@ class SimulationController {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
-      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)('<div class="heatmap-legend"></div>');
+      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)('<div class="heatmap-legend"></div>');
       contenedor.appendChild(leyenda);
     }
 
@@ -11607,7 +11621,7 @@ class SimulationController {
    * para las conexiones.
    */
   _esTrafizable(element) {
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:SequenceFlow') || esPintable(element);
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:SequenceFlow') || esPintable(element);
   }
 
   /**
@@ -11616,7 +11630,7 @@ class SimulationController {
    * de mensaje haria parecer que el trabajo se mueve por donde no se mueve.
    */
   _getFlujosDelDiagrama() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:SequenceFlow'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:SequenceFlow'));
   }
 
   /**
@@ -11628,7 +11642,7 @@ class SimulationController {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
-      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)('<div class="heatmap-legend"></div>');
+      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)('<div class="heatmap-legend"></div>');
       contenedor.appendChild(leyenda);
     }
 
@@ -11743,7 +11757,7 @@ class SimulationController {
       // Con trafico la masa son los PASOS; sin el, los MINUTOS DE TRABAJO. Es la unica
       // diferencia entre las dos lecturas, y va aqui y no en el bucle de pintado para
       // que el rango y la escala salgan del dato correcto.
-      const esFlujo = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:SequenceFlow');
+      const esFlujo = (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:SequenceFlow');
       const masa = porTrafico
         ? ejecuciones
         : (esFlujo ? ejecuciones : ejecuciones * (result.totalProcessingTime || 0));
@@ -11784,7 +11798,7 @@ class SimulationController {
     // salga de la caja del SVG (`overflow: visible`). Se PONE aqui tambien -y no solo en
     // el mapa de tareas- porque `showMetric` limpia al empezar, y la limpieza la quita;
     // sin esto, la mancha se recortaria por los bordes.
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.classes)(this._canvas.getContainer()).add('heatmap-shown');
 
     const zonas = (0,_HeatmapZones_js__WEBPACK_IMPORTED_MODULE_7__.calcularZonas)(conMasa, {
       lado,
@@ -11925,7 +11939,7 @@ class SimulationController {
     const contenedor = this._canvas.getContainer();
     let leyenda = contenedor.querySelector('.heatmap-legend');
     if (!leyenda) {
-      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.domify)('<div class="heatmap-legend"></div>');
+      leyenda = (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.domify)('<div class="heatmap-legend"></div>');
       contenedor.appendChild(leyenda);
     }
 
@@ -11982,7 +11996,7 @@ class SimulationController {
 
   showOverlays(metric) {
     const elements = metric === 'resourceQuantity'
-      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:Task'))
+      ? this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:Task'))
       : Array.from(this.simulationResults.keys()).map(id => this._elementRegistry.get(id));
 
     elements.forEach(element => {
@@ -11995,7 +12009,7 @@ class SimulationController {
             const value = (data && data.resources && data.resources.quantityRequired) || 0;
             if (value > 0) overlayText = `Recursos: ${value}`;
         } else if (result) {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 if (metric === 'cost') overlayText = `Costo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalCost, 'MXN')}`;
                 else if (metric === 'waitTime') overlayText = `Espera Prom: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime / (result.executionCount || 1))}`;
                 else if (metric === 'totalWaitTime') overlayText = `Espera Total: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalWaitTime)}`;
@@ -12008,7 +12022,7 @@ class SimulationController {
                 else if (metric === 'overtime') overlayText = `H. Extras: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalOvertime)}`;
                 else if (metric === 'reworkTime') overlayText = `T. Reparación: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMilliseconds)(result.totalReworkTime)}`;
                 else if (metric === 'waitTimeCost') overlayText = `Costo Espera: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatCurrency)(result.totalWaitTimeCost, 'MXN')}`;
-            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
+            } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:EndEvent') && metric === 'cycleTime' && result.totalCycleTime > 0) {
                 overlayText = `Ciclo: ${(0,_util__WEBPACK_IMPORTED_MODULE_2__.formatMinutes)(result.totalCycleTime / (result.executionCount || 1))}`;
             }
         }
@@ -12018,7 +12032,7 @@ class SimulationController {
         // El guard !isLabel es imprescindible: una etiqueta de compuerta pasa
         // is(el, 'bpmn:ExclusiveGateway'), pero NO tiene `outgoing`, asi que
         // element.outgoing.forEach lanzaria TypeError.
-        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+        if (result && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:ExclusiveGateway') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
             element.outgoing.forEach(flow => {
                 const flowResult = this.simulationResults.get(flow.id);
                 if (flowResult && result.executionCount > 0 && flowResult.executionCount > 0) {
@@ -12657,7 +12671,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const allElements = this._elementRegistry.getAll();
     const elementsWithData = [];
     allElements.forEach(element => {
-      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
+      if (!(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element) && ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:Participant') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:Task') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:StartEvent') || ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:SequenceFlow') && element.source?.type === 'bpmn:ExclusiveGateway'))) {
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
         if (data && Object.keys(data).length > 0) {
           elementsWithData.push({
@@ -12963,7 +12977,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     // proceso de 15 y lo reporto como un fallo de la app, cuando era una corrida saturada.
     const util = [ ...(report.utilization || new Map()).values() ]
       .map((u) => ({ name: u.name, utilization: u.utilization, quantity: u.quantity }));
-    const diag = (0,_CapacityGuard_js__WEBPACK_IMPORTED_MODULE_9__.diagnosticarCapacidad)(util);
+    const diag = (0,_CapacityGuard_js__WEBPACK_IMPORTED_MODULE_10__.diagnosticarCapacidad)(util);
     const bloqueSaturacion = (diag.nivel === 'saturado' || diag.nivel === 'al-limite' || diag.nivel === 'justo')
       ? `<div class="sim-saturacion ${diag.nivel === 'saturado' ? 'mal' : (diag.nivel === 'al-limite' ? 'aviso' : 'ok')}">
           <strong>${diag.titulo}.</strong> ${diag.consecuencia}
@@ -13057,6 +13071,102 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     `;
   }
 
+  /**
+   * La pestaña «Tiempos por proceso»: cuando pasa cada token y cuanto se espera en cada paso.
+   *
+   * POR QUE ES UNA TABLA Y NO UN GRÁFICO: la pregunta es «¿en qué paso se pierde el tiempo?», y la
+   * respuesta es una LISTA ORDENADA. Un gráfico de barras por proceso se lee peor y no deja poner
+   * los cinco números que hacen falta juntos -espera media, p90, máximo, cuántos esperaron y
+   * cadencia-. Se ordena por espera ACUMULADA, que es lo que dice cuánto le cuesta al proceso
+   * entero, y no por media: un puesto con 500 tokens y 1 minuto cuesta más que uno con 3 y 40.
+   *
+   * LAS DOS LECTURAS DEL TIEMPO ENTRE PROCESOS van en columnas separadas porque significan cosas
+   * distintas: la ESPERA es la cola de ese puesto -se arregla con capacidad- y el TRANSITO es lo
+   * que tarda la pieza en llegar desde el anterior -se arregla con distancia o con lote-.
+   */
+  _mostrarTiemposPorProceso() {
+    const filas = (this.overtimeReport && this.overtimeReport.tiemposPorProceso)
+      || (this.normalReport && this.normalReport.tiemposPorProceso) || [];
+
+    if (!filas.length) {
+      this._chartPanel.showHtmlContent(`
+        <div style="padding:18px; line-height:1.6;">
+          <h4 style="margin:0 0 8px;">Sin traza de tokens</h4>
+          <p>No hay pasos registrados. Esta vista necesita que la corrida haya completado al menos un
+          token por una tarea. Ejecuta una simulación y vuelve a abrirla.</p>
+        </div>`);
+      return;
+    }
+
+    const min = (m) => (m == null ? '—' : `${Number(m).toLocaleString('es-MX', { maximumFractionDigits: 2 })} min`);
+    const cuello = (0,_TiemposPorProceso_js__WEBPACK_IMPORTED_MODULE_9__.cuelloPorEspera)(filas);
+    const lejos = (0,_TiemposPorProceso_js__WEBPACK_IMPORTED_MODULE_9__.peorTransito)(filas);
+
+    const cuerpo = filas.map((f) => {
+      const esCuello = cuello && f.procesoId === cuello.procesoId;
+      const esLejos = lejos && f.procesoId === lejos.procesoId;
+      return `
+        <tr>
+          <td>
+            <strong>${(0,_util__WEBPACK_IMPORTED_MODULE_2__.nombreElemento)({ businessObject: { name: f.nombre }, id: f.procesoId })}</strong>
+            <div class="sub">${f.procesoId}</div>
+          </td>
+          <td class="num">${f.tokens}</td>
+          <td class="num">${min(f.esperaMin)}</td>
+          <td class="num">${min(f.esperaP90)}</td>
+          <td class="num">${min(f.esperaMax)}</td>
+          <td class="num">${min(f.esperaTotalMin)}</td>
+          <td class="num">${f.porcentajeQueEspero} %</td>
+          <td class="num">${min(f.transitoMin)}</td>
+          <td class="num">${min(f.cadenciaMin)}</td>
+          <td>
+            ${esCuello ? '<span class="etiqueta aviso">más espera acumulada</span>' : ''}
+            ${esLejos ? '<span class="etiqueta aviso">más tránsito</span>' : ''}
+          </td>
+        </tr>`;
+    }).join('');
+
+    this._chartPanel.showHtmlContent(`
+      <div style="padding:14px; line-height:1.5;">
+        <h4 style="margin:0 0 6px;">Tiempos por proceso</h4>
+        <p class="sub" style="margin:0 0 10px;">
+          Ordenado por <strong>espera acumulada</strong>, que es lo que le cuesta al proceso entero.
+          Todas las filas son minutos de reloj simulado.
+        </p>
+        <table class="sim-results-table">
+          <thead>
+            <tr>
+              <th>Proceso</th>
+              <th class="num">Tokens</th>
+              <th class="num">Espera media</th>
+              <th class="num">Espera p90</th>
+              <th class="num">Espera máx</th>
+              <th class="num">Espera total</th>
+              <th class="num">% que esperó</th>
+              <th class="num">Tránsito</th>
+              <th class="num">Cadencia</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${cuerpo}</tbody>
+        </table>
+        <p class="sub" style="margin-top:10px;">
+          <strong>Espera</strong> es el rato en la cola de ese proceso: se arregla con capacidad
+          -otra persona o menos tiempo de ciclo-. El <strong>tránsito</strong> es desde que el token
+          terminó el paso anterior hasta que llegó aquí: se arregla con distancia o con lote, no con
+          gente. <strong>Cadencia</strong> es cada cuánto pasa un token (la mediana, para que una
+          llegada tardía no la mueva).
+        </p>
+        <p class="sub">
+          <strong>La media sola engaña:</strong> con 9 tokens que pasan directos y 1 que espera 40
+          minutos, la media sale 4 y el p90 también -la interpolación cae dentro de los ceros-. Por
+          eso van también el <em>máximo</em> y el <em>% que esperó</em>: son los que delatan el caso
+          aislado.
+        </p>
+      </div>
+    `);
+  }
+
   createResultsTable(results) {
     if (!results || results.size === 0) {
       return '<p style="text-align: center; margin-top: 20px;">No hay resultados de simulación disponibles. Por favor, ejecute una simulación primero.</p>';
@@ -13121,7 +13231,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const tareas = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:Task')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:Task')) return;
 
       const operacion = r.totalOperationCost || 0;
       const doble = r.totalDoubleOvertimeCost || 0;
@@ -13144,7 +13254,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const caminos = [];
     (report ? report.results : new Map()).forEach((r, id) => {
       const el = this._elementRegistry.get(id);
-      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(el, 'bpmn:SequenceFlow')) return;
+      if (!el || (0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(el) || !(0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(el, 'bpmn:SequenceFlow')) return;
       if (!r.executionCount) return;
 
       caminos.push({
@@ -13298,7 +13408,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
 
     if (metric === 'resourceQuantity') {
         this._elementRegistry.forEach(element => {
-            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 const data = (0,_util__WEBPACK_IMPORTED_MODULE_2__.getSimulationData)(element);
                 const value = (data && data.resources && data.resources.quantityRequired) || 0;
                 tasks.push({ name: element.businessObject.name || element.id, value: value });
@@ -13307,7 +13417,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     } else {
         this.simulationResults.forEach((result, elementId) => {
             const element = this._elementRegistry.get(elementId);
-            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_10__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
+            if (element && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_11__.is)(element, 'bpmn:Task') && !(0,_util__WEBPACK_IMPORTED_MODULE_2__.isLabel)(element)) {
                 tasks.push({ ...result, name: element.businessObject.name || element.id });
             }
         });
@@ -13644,7 +13754,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     // Y las celdas del mapa de zonas, por lo mismo.
     this._limpiarZonas();
     const contenedor = this._canvas.getContainer();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.classes)(contenedor).remove('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.classes)(contenedor).remove('heatmap-shown');
     const leyenda = contenedor.querySelector('.heatmap-legend');
     if (leyenda) leyenda.remove();
     this._overlays.remove({ type: 'simulation-overlay' });
@@ -13653,7 +13763,7 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
   createHeatmap() {
     if (this._heatmap) return;
     this._heatmap = new (_simpleheat_svg_js__WEBPACK_IMPORTED_MODULE_0___default())(this._canvas);
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_11__.classes)(this._canvas.getContainer()).add('heatmap-shown');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_12__.classes)(this._canvas.getContainer()).add('heatmap-shown');
   }
 
   showPlanBreakdown() {
@@ -13849,13 +13959,15 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationEngine)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./BusinessCalendar.js */ "./client/simulation/BusinessCalendar.js");
 /* harmony import */ var _WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./WarmupCurve.js */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
-/* harmony import */ var _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./LegalOvertime.js */ "./client/simulation/LegalOvertime.js");
-/* harmony import */ var _Workload_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./Workload.js */ "./client/simulation/Workload.js");
+/* harmony import */ var _TiemposPorProceso_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./TiemposPorProceso.js */ "./client/simulation/TiemposPorProceso.js");
+/* harmony import */ var _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./LegalOvertime.js */ "./client/simulation/LegalOvertime.js");
+/* harmony import */ var _Workload_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./Workload.js */ "./client/simulation/Workload.js");
+
 
 
 
@@ -14017,7 +14129,7 @@ class ResourcePool {
 
     // Miembros con nombre. SIN miembros la piscina se comporta exactamente como
     // antes de A5: esto es lo que hace que ningun diagrama existente cambie.
-    this.members = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.normalizeMembers)(config.members);
+    this.members = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.normalizeMembers)(config.members);
     // Turno de reparto en ronda. Con «siempre la primera» una persona acapararia
     // el trabajo y la otra saldria ociosa en el informe, cuando en la planta se
     // reparten.
@@ -14039,7 +14151,7 @@ class ResourcePool {
       tarifaHora: m.tarifaHora,
       tareas: 0,
       busyMinutes: 0,
-      carga: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)()
+      carga: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)()
     } ]));
   }
 
@@ -14053,7 +14165,7 @@ class ResourcePool {
    * las tiene, la tarea se BLOQUEA: es la decision conservadora.
    */
   puedeAtender(requeridas) {
-    return (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.poolPuedeHacerla)(this, requeridas);
+    return (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.poolPuedeHacerla)(this, requeridas);
   }
 
   /**
@@ -14098,10 +14210,10 @@ class ResourcePool {
     // DESIGNACION: solo esa persona, y solo si puede. Sin ronda y sin alternativas.
     if (designado) {
       const suyo = this.members.find((m) => m.nombre === designado);
-      return (suyo && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.puedeHacerla)(suyo, requeridas)) ? suyo : null;
+      return (suyo && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.puedeHacerla)(suyo, requeridas)) ? suyo : null;
     }
 
-    const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.puedeHacerla)(m, requeridas));
+    const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.puedeHacerla)(m, requeridas));
     if (!aptos.length) return null;
     // Ronda sobre los APTOS: se avanza el turno segun cuantos hayan.
     this._ultimoMiembro = (this._ultimoMiembro + 1) % aptos.length;
@@ -14149,7 +14261,7 @@ class ResourcePool {
     if (!fila) return;
     fila.tareas += 1;
     fila.busyMinutes += Math.max(0, Number(minutos) || 0);
-    if (carga) fila.carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(fila.carga, carga);
+    if (carga) fila.carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(fila.carga, carga);
   }
 }
 
@@ -14252,6 +14364,10 @@ class SimulationEngine {
     this.instanceStates = new Map();
     this.weeklyStats = new Map();
     this.dailyCompletions = new Map();
+    // TRAZA POR TOKEN: un paso por cada tarea que hizo, con cuando llego, cuando empezo y cuando
+    // termino. Es lo que permite decir en que paso se espera, en vez de solo cuanto se espera en
+    // total. Se llena en `TASK_COMPLETE` y se resume en `TiemposPorProceso.js`.
+    this.trazas = new Map();
 
     // Reglas laborales VERSIONADAS por fecha (§A2). Se resuelven con la fecha de
     // arranque de la corrida, no con la de hoy: un informe de enero debe seguir
@@ -14277,8 +14393,8 @@ class SimulationEngine {
     // por dia, y `overtimeMode` decide si se aplica. Se reinician en cada corrida porque cada
     // escenario es una corrida independiente: arrastrar el cupo de la anterior haria que el
     // segundo escenario no pudiera hacer ninguna extra, que es un fallo que se ve tarde.
-    this._estadoExtra = (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.crearEstadoSemana)();
-    this.overtimeMode = _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_TOPE;
+    this._estadoExtra = (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.crearEstadoSemana)();
+    this.overtimeMode = _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_TOPE;
 
     // POR QUE EL TRABAJO ESPERO, cuando el plan respeta el tope. Un plan que se alarga y no
     // dice por que parece un fallo del modelo; con el motivo, el informe puede explicar que
@@ -14300,7 +14416,7 @@ class SimulationEngine {
     // Y la operatividad: el tiempo muerto por categoria, que es lo que permite
     // decir quien tiene holgura y por que esta parado.
     this.carga = {
-      area: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)(),
+      area: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)(),
       porTarea: new Map(),
       porPersona: new Map(),
       porMiembro: new Map()
@@ -14429,7 +14545,7 @@ class SimulationEngine {
       return [];
     }
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:ParallelGateway')) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -14438,7 +14554,7 @@ class SimulationEngine {
     }
 
     let chosenFlow = null;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = this._random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
@@ -14494,7 +14610,7 @@ class SimulationEngine {
     if (!(extraPedida > 0)) return { concedidoMs: 0, motivo: null };
 
     const fecha = new Date(inicioMs);
-    return (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.concederExtraDe)({
+    return (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.concederExtraDe)({
       extraMs: extraPedida,
       modo: this.overtimeMode,
       topes: {
@@ -14569,7 +14685,7 @@ class SimulationEngine {
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(nextElement);
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
 
@@ -14578,7 +14694,7 @@ class SimulationEngine {
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(nextElement, 'bpmn:Task') && data) {
+      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(nextElement, 'bpmn:Task') && data) {
         // Tarea POR LOTE: la ejecuta una sola vez el primer token que llega, y
         // los demas esperan (barrera). Ver _atenderTareaPorLote.
         if (data.frequency === 'lot' && this.lotConfig.enabled) {
@@ -14613,7 +14729,7 @@ class SimulationEngine {
     // categoria de tiempo muerto. Es la decision conservadora (un dato que falta
     // bloquea, no acelera) y es lo unico que puede producir «bloqueado por
     // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
-    const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.habilidadesRequeridas)(data);
+    const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.habilidadesRequeridas)(data);
     // EL MIEMBRO DESIGNADO, leido aqui porque la guarda de habilidad lo necesita: si la tarea
     // nombra a alguien que NO tiene la habilidad exigida, el bloqueo es seguro y hay que detectarlo
     // igual que el caso de «ninguno de la piscina la tiene». Sin esto, la tarea pasaria la guarda
@@ -14621,7 +14737,7 @@ class SimulationEngine {
     // recurso.
     const designado = (data.resources && data.resources.miembro) || null;
     const designadoPuede = !designado || !pool
-      || (() => { const m = pool.members.find((x) => x.nombre === designado); return m && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.puedeHacerla)(m, requeridas); })();
+      || (() => { const m = pool.members.find((x) => x.nombre === designado); return m && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.puedeHacerla)(m, requeridas); })();
 
     if (pool && !designadoPuede) {
       const motivo = pool.members.some((m) => m.nombre === designado)
@@ -14681,6 +14797,11 @@ class SimulationEngine {
       const pedido = pool.request(quantityRequired, marcador, requeridas, designado);
       if (!pedido.tomada) return;
       miembro = pedido.miembro;
+      // LA ESPERA NO SE MIDE EN ESTE INTENTO. Si la unidad no estaba libre, `request` dejo un
+      // marcador en la cola y este intento muere aqui; `release()` reprograma un TASK_START con
+      // `recursoTomado: true`, y en ESE intento `time` ya es la hora de liberacion, asi que la
+      // espera se mide sola. Propagar `waitStart` desde el marcador contaba el mismo rato dos
+      // veces: medido, 2320 por caso frente a 3920 de total.
     }
 
     let processingTime = 0;
@@ -14733,7 +14854,7 @@ class SimulationEngine {
     // LFT: es su factura, no tu plantilla. Si se le aplicara el tope, subcontratar quedaria
     // artificialmente limitado y el escenario legal mentiria sobre su propia produccion.
     const esExternaAqui = Boolean(pool && pool.origen === 'externo');
-    const concesion = (this.overtimeMode === _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_TOPE_LEGAL && !esExternaAqui)
+    const concesion = (this.overtimeMode === _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_TOPE_LEGAL && !esExternaAqui)
       ? this._concederExtra(extraPedida, time)
       : { concedidoMs: extraPedida, motivo: null };
     const overtime = concesion.concedidoMs;
@@ -14870,6 +14991,10 @@ class SimulationEngine {
       time: finAjustado.getTime(),
       instanceId,
       startTime,
+      // DESDE CUANDO ESPERABA ESTA TAREA. Lo pone el TASK_START que la arranca de verdad: si hubo
+      // cola, ese es el instante en que se libero la unidad. Sin el, la traza por token no puede
+      // medir la espera y la deja en cero.
+      waitStart: taskEvent.waitStart != null ? taskEvent.waitStart : null,
       processingTime,
       reworkTime,
       overtime: taskOvertimeDuration,
@@ -14981,14 +15106,14 @@ class SimulationEngine {
    * 20 daria 240 kg cuando en planta fue un solo viaje.
    */
   _anotarCarga(event, data, pool) {
-    const carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.normalizeCarga)(data.carga);
-    const inc = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaDeUnaEjecucion)(carga, 1);
+    const carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.normalizeCarga)(data.carga);
+    const inc = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaDeUnaEjecucion)(carga, 1);
 
     const vacia = inc.cargadaKg === 0 && inc.arrastradaKg === 0;
     // El area se anota SIEMPRE, incluso con carga cero: asi el informe puede
     // decir «no hay carga declarada» en vez de tener que distinguir «no hay
     // tareas» de «las tareas no mueven peso».
-    this.carga.area = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(this.carga.area, inc);
+    this.carga.area = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(this.carga.area, inc);
 
     // Minutos del puesto y reparto por persona. Va ANTES del corte por carga
     // vacia y sin depender de ella: el TIEMPO trabajado y la masa movida son dos
@@ -15001,17 +15126,17 @@ class SimulationEngine {
 
     if (vacia) return inc;
 
-    const t = this.carga.porTarea.get(event.element.id) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)();
-    this.carga.porTarea.set(event.element.id, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(t, inc));
+    const t = this.carga.porTarea.get(event.element.id) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)();
+    this.carga.porTarea.set(event.element.id, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(t, inc));
 
     if (event.miembro) {
-      const p = this.carga.porMiembro.get(event.miembro.nombre) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)();
-      this.carga.porMiembro.set(event.miembro.nombre, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(p, inc));
+      const p = this.carga.porMiembro.get(event.miembro.nombre) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)();
+      this.carga.porMiembro.set(event.miembro.nombre, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(p, inc));
     } else if (pool) {
       // Sin nombres, la carga es de la PISCINA: se guarda por piscina para no
       // perderla, y el informe la muestra como «sin nombre asignado».
-      const p = this.carga.porPersona.get(pool.name) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.cargaVacia)();
-      this.carga.porPersona.set(pool.name, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_5__.acumularCarga)(p, inc));
+      const p = this.carga.porPersona.get(pool.name) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)();
+      this.carga.porPersona.set(pool.name, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(p, inc));
     }
 
     return inc;
@@ -15036,7 +15161,7 @@ class SimulationEngine {
   }
 
   _findRootConfig() {
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el)?.isRoot);
 
     if (rootEvents.length === 1) {
@@ -15068,15 +15193,15 @@ class SimulationEngine {
     // construir el calendario extendido, porque `sin-extra` no debe extender la jornada: su
     // plan es la jornada base y punto.
     const modoPedido = options.overtimeMode;
-    this.overtimeMode = [ _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_EXTRA, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_TOPE_LEGAL, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_TOPE ].includes(modoPedido)
+    this.overtimeMode = [ _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_EXTRA, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_TOPE_LEGAL, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_TOPE ].includes(modoPedido)
       ? modoPedido
-      : (options.useOvertime ? _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_TOPE : _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_EXTRA);
+      : (options.useOvertime ? _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_TOPE : _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_EXTRA);
 
     // La jornada se extiende cuando el plan contempla extra, sea con tope o sin el. Un plan
     // «con tope» que no extendiera la jornada no tendria donde poner la extra que si permite
     // la ley, y su produccion seria identica a la del plan sin extra: dos escenarios iguales
     // con nombres distintos.
-    const extiendeJornada = options.useOvertime && this.overtimeMode !== _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_4__.MODO_SIN_EXTRA;
+    const extiendeJornada = options.useOvertime && this.overtimeMode !== _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_EXTRA;
 
     if (extiendeJornada && this.rootConfig.overtime) {
       const overtimeCalendarConfig = JSON.parse(JSON.stringify(rootConfig.calendar));
@@ -15115,14 +15240,14 @@ class SimulationEngine {
 
     console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
 
-    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Participant'));
+    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Participant'));
     const processConfig = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(processRoot);
     const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
 
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:StartEvent'));
     if (!startEvents.length) {
       console.error("No start event found. Cannot run simulation.");
       return this.results;
@@ -15229,6 +15354,18 @@ class SimulationEngine {
         ).getTime();
         this._anotarEnMapaDelDia(inicioDeLaTareaMs, duracionReloj, event.quantityRequired);
 
+        // LA TRAZA DEL TOKEN. Se anota aqui porque es el unico sitio donde coinciden las tres
+        // cosas: la instancia, la tarea y los tres instantes.
+        //
+        //   llegoEn   -> cuando el token llego a esta tarea (el inicio de la espera).
+        //   empezoEn  -> cuando empezo de verdad, que puede ser mucho despues si hubo cola.
+        //   terminoEn -> ahora.
+        //
+        // El inicio se calcula RETROCEDIENDO tiempo laborable, igual que el mapa del dia, y no
+        // restando milisegundos: si en medio hubo un descanso, la tarea no estaba corriendo
+        // durante ese rato y restar el reloj daria un inicio anterior al real.
+        this._anotarPasoDeTraza(event, inicioDeLaTareaMs, duracionReloj);
+
         if (event.waitStart) {
           const standardCalendar = this.standardCalendar;
           const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(event.waitStart), new Date(this.clock));
@@ -15237,11 +15374,11 @@ class SimulationEngine {
           const currentWaitCost = (waitTime / 60) * waitCostPerHour;
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
-          // OJO: el costo del caso NO se acumula aqui. La espera de una tarea que tuvo que
-          // pedir recurso se cobra al LIBERARLO (ver `release()`), que es cuando consta
-          // cuanto espero de verdad; sumarla tambien aqui la contaria DOS veces, porque este
-          // evento lleva su propio `waitStart`. Se acumula en el otro camino, y por eso el
-          // total por caso sigue cuadrando con el del informe.
+
+          // El costo del caso se acumula en UN SOLO camino: aqui, cuando la espera la cobra el
+          // evento de fin. El otro camino -`release()`- reprograma un TASK_START que pasa por
+          // aqui despues, asi que sumarlo tambien alli lo contaba dos veces.
+          this._sumarCostoAlCaso(event.instanceId, currentWaitCost);
         }
 
         const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(event.element);
@@ -15303,7 +15440,10 @@ class SimulationEngine {
               recursoTomado: true,
               // Y la persona tambien: volver a elegirla cambiaria quien hizo el
               // trabajo y la carga iria a otro nombre.
-              miembro
+              miembro,
+              // Y DESDE CUANDO ESPERABA: es el unico dato que se perderia al salir de la cola, y
+              // sin el la traza por token no puede medir la espera de esta tarea.
+              waitStart: marcador.waitStart
             });
           });
         }
@@ -15321,7 +15461,7 @@ class SimulationEngine {
       // Llegada de la siguiente instancia. En modo LOTES no se usa: alli las
       // instancias de un lote entran juntas y el siguiente lote lo dispara el
       // cierre del anterior.
-      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
+      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
         this.instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
@@ -15346,6 +15486,12 @@ class SimulationEngine {
     // todo el tiempo extra por dia y por semana.
     this.compliance = this._calcularCumplimiento();
 
+    // Tiempos por proceso: en que paso se espera y cada cuanto pasa un token. Se resume aqui, al
+    // cerrar, porque necesita la traza COMPLETA de cada token para poder medir los transitos.
+    this.tiemposPorProceso = (0,_TiemposPorProceso_js__WEBPACK_IMPORTED_MODULE_4__.resumenPorProceso)(
+      Array.from(this.trazas.entries()).map(([ instanceId, pasos ]) => ({ instanceId, pasos }))
+    );
+
     this._logReport(options.useOvertime, runValue);
 
     this.calendar = originalCalendar;
@@ -15362,6 +15508,32 @@ class SimulationEngine {
    */
   _sincronizarRelojDePiscinas() {
     this.resourcePools.forEach((pool) => { pool.relojAhora = this.clock; });
+  }
+
+  /**
+   * Anota un paso en la traza del token: llego, empezo y termino.
+   *
+   * DE DONDE SALE EL INSTANTE DE LLEGADA: de `event.waitStart`, que el motor ya fija cuando la
+   * tarea tiene que pedir recurso y se queda en cola. Si no hay espera -la tarea arranco de
+   * inmediato-, la llegada y el inicio son el mismo instante y la espera sale cero, que es
+   * exactamente lo que hay que informar.
+   *
+   * NO se usa `event.startTime`: ese es cuando arranco la INSTANCIA, no esta tarea, y usarlo
+   * apilaria todas las tareas de un caso en el mismo momento -el mismo fallo que ya se corrigio en
+   * el mapa del dia-.
+   */
+  _anotarPasoDeTraza(event, inicioMs, duracionMs) {
+    const id = event.instanceId;
+    if (id == null) return;
+
+    if (!this.trazas.has(id)) this.trazas.set(id, []);
+    this.trazas.get(id).push({
+      procesoId: event.element.id,
+      nombre: (event.element.businessObject && event.element.businessObject.name) || event.element.id,
+      llegoEn: event.waitStart != null ? event.waitStart : inicioMs,
+      empezoEn: inicioMs,
+      terminoEn: inicioMs + duracionMs
+    });
   }
 
   /**
@@ -15889,7 +16061,7 @@ class SimulationEngine {
       minutosDelDiaQueYaSonExtra: this.legalDayRecortadoMin || 0
     });
 
-    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:Task'));
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Task'));
 
     if (!tareas.length) {
       console.log('No hay tareas en el diagrama.');
@@ -15946,7 +16118,7 @@ class SimulationEngine {
     // los de una tarea: `findNextElements` incrementa el de la salida elegida. Se listan
     // TODAS las del diagrama, incluso con 0, porque las que no se recorrieron son el
     // hallazgo de la vista: una rama muerta es capacidad que se paga y no se usa.
-    const flujos = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_6__.is)(el, 'bpmn:SequenceFlow'));
+    const flujos = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:SequenceFlow'));
     if (flujos.length) {
       const totalPasos = flujos.reduce((acc, el) => acc + ((this.results.get(el.id) || {}).executionCount || 0), 0);
       console.log('SALIDAS · por conexion (pasos por la linea)');
@@ -16753,6 +16925,173 @@ function etiquetaDe(tarea, numero) {
   if (n) return n;
   return nombre || (tarea && tarea.id) || '?';
 }
+
+
+/***/ }),
+
+/***/ "./client/simulation/TiemposPorProceso.js":
+/*!************************************************!*\
+  !*** ./client/simulation/TiemposPorProceso.js ***!
+  \************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   cuelloPorEspera: () => (/* binding */ cuelloPorEspera),
+/* harmony export */   peorTransito: () => (/* binding */ peorTransito),
+/* harmony export */   percentil: () => (/* binding */ percentil),
+/* harmony export */   resumenPorProceso: () => (/* binding */ resumenPorProceso)
+/* harmony export */ });
+/**
+ * TIEMPOS POR PROCESO: cuando pasa cada token y cuanto se espera en cada paso.
+ *
+ * QUE RESPONDE ESTE MODULO: «¿esta operacion tiene esperas escondidas?». El informe da el tiempo
+ * de ciclo y la espera total, pero no dice EN QUE PASO se pierde el tiempo. Aqui se abre: para cada
+ * proceso, cuanto espero el token antes de que le tocara, y cuando paso.
+ *
+ * DOS LECTURAS DEL TIEMPO ENTRE PROCESOS, y no significan lo mismo:
+ *
+ *   - ESPERA PROPIA: el rato que el token estuvo en la cola de ESE proceso. Dice si el puesto no
+ *     da abasto. Es lo que se puede arreglar poniendo otra persona o bajando el tiempo de ciclo.
+ *   - TRANSITO: los minutos de reloj desde que el token TERMINO el paso anterior hasta que llego a
+ *     este. Incluye el transporte y la espera de este paso. Dice cuanto tarda la pieza en moverse
+ *     por la planta, que es lo que se ve en el cronometro de campo.
+ *
+ * ESTE MODULO ES PURO: recibe la traza de cada token -ya extraida del motor- y la resume. No toca
+ * bpmn-js, ni el DOM, ni el reloj. Asi las dos lecturas se pueden comprobar con casos escritos a
+ * mano en vez de esperando a que una corrida produzca el caso que interesa.
+ */
+
+/**
+ * Redondeo a dos decimales, para que los minutos no lleven quince cifras.
+ */
+const r2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * Los percentiles de una lista de numeros, por interpolacion lineal.
+ *
+ * POR QUE NO SOLO LA MEDIA: la media de la espera esconde el problema. Con 9 tokens que pasan
+ * directos y 1 que espera 40 minutos, la media sale 4 y parece que no pasa nada; el p90 sale 40 y
+ * dice la verdad. Y en planta lo que se sufre es el p90, no la media.
+ */
+const percentil = (valores, p) => {
+  if (!valores.length) return null;
+  const orden = valores.slice().sort((a, b) => a - b);
+  if (orden.length === 1) return orden[0];
+  const pos = (orden.length - 1) * p;
+  const bajo = Math.floor(pos);
+  const alto = Math.ceil(pos);
+  if (bajo === alto) return orden[bajo];
+  return orden[bajo] + (orden[alto] - orden[bajo]) * (pos - bajo);
+};
+
+/**
+ * Resume la traza de todos los tokens, proceso a proceso.
+ *
+ * `trazas` es `[{ instanceId, pasos: [{ procesoId, nombre, llegoEn, empezoEn, terminoEn }] }]`, con
+ * los tiempos en milisegundos de RELOJ SIMULADO. Se recibe la traza entera -y no un acumulador del
+ * motor- porque asi el resumen se puede recalcular con otras reglas sin volver a simular.
+ *
+ * Devuelve `[{ procesoId, nombre, tokens, esperaMin, esperaP50, esperaP90, esperaMax, transitoMin,
+ * transitoP50, transitoMax, esperaron, primeraLlegadaMin, ultimaLlegadaMin, cadenciaMin }]`.
+ */
+const resumenPorProceso = (trazas) => {
+  const porProceso = new Map();
+
+  (trazas || []).forEach((traza) => {
+    const pasos = (traza.pasos || []).slice().sort((a, b) => a.llegoEn - b.llegoEn);
+    pasos.forEach((paso, i) => {
+      const fila = porProceso.get(paso.procesoId) || {
+        procesoId: paso.procesoId,
+        nombre: paso.nombre || paso.procesoId,
+        esperas: [],
+        transitosp: [],
+        llegadas: []
+      };
+
+      // ESPERA PROPIA: de que llego a que empezo de verdad. Es el rato en cola.
+      const espera = Math.max(0, (paso.empezoEn - paso.llegoEn) / 60000);
+      fila.esperas.push(espera);
+
+      // TRANSITO: desde que termino el paso ANTERIOR de este token. Solo cuando hay anterior: el
+      // primer paso no tiene de donde venir, y meterlo como 0 falsearia la media hacia abajo.
+      const anterior = pasos[i - 1];
+      if (anterior && anterior.terminoEn != null) {
+        fila.transitosp.push(Math.max(0, (paso.llegoEn - anterior.terminoEn) / 60000));
+      }
+
+      fila.llegadas.push(paso.llegoEn);
+      porProceso.set(paso.procesoId, fila);
+    });
+  });
+
+  const filas = [];
+  porProceso.forEach((f) => {
+    const n = f.esperas.length;
+    const huboEspera = f.esperas.filter((e) => e > 0.01).length;
+    // La CADENCIA es la mediana del tiempo entre llegadas consecutivas: dice cada cuanto pasa un
+    // token por aqui. Se usa la mediana y no la media porque una llegada tardia -un paron- mueve
+    // la media y no la cadencia real.
+    const intervalos = [];
+    const ordenadas = f.llegadas.slice().sort((a, b) => a - b);
+    for (let i = 1; i < ordenadas.length; i++) intervalos.push((ordenadas[i] - ordenadas[i - 1]) / 60000);
+
+    filas.push({
+      procesoId: f.procesoId,
+      nombre: f.nombre,
+      tokens: n,
+      // Espera propia.
+      esperaMin: r2(f.esperas.reduce((a, b) => a + b, 0) / (n || 1)),
+      esperaTotalMin: r2(f.esperas.reduce((a, b) => a + b, 0)),
+      esperaP50: r2(percentil(f.esperas, 0.5) || 0),
+      esperaP90: r2(percentil(f.esperas, 0.9) || 0),
+      esperaMax: r2(Math.max(...f.esperas, 0)),
+      esperaron: huboEspera,
+      porcentajeQueEspero: n ? r2((huboEspera / n) * 100) : 0,
+      // Transito desde el paso anterior.
+      transitoMin: f.transitosp.length
+        ? r2(f.transitosp.reduce((a, b) => a + b, 0) / f.transitosp.length) : null,
+      transitoP50: f.transitosp.length ? r2(percentil(f.transitosp, 0.5)) : null,
+      transitoMax: f.transitosp.length ? r2(Math.max(...f.transitosp)) : null,
+      // Cuando y cada cuanto.
+      primeraLlegadaMin: ordenadas.length ? r2(ordenadas[0] / 60000) : null,
+      ultimaLlegadaMin: ordenadas.length ? r2(ordenadas[ordenadas.length - 1] / 60000) : null,
+      cadenciaMin: intervalos.length ? r2(percentil(intervalos, 0.5)) : null
+    });
+  });
+
+  // Se ordena por ESPERA TOTAL, no por espera media: un proceso por el que pasan 500 tokens con 1
+  // minuto de espera cada uno cuesta 500 minutos, mas que uno con 3 tokens y 40 minutos. El orden
+  // tiene que poner arriba lo que mas tiempo roba al proceso entero.
+  filas.sort((a, b) => b.esperaTotalMin - a.esperaTotalMin);
+  return filas;
+};
+
+/**
+ * El cuello de botella segun las esperas: el proceso con mas tiempo de espera acumulado.
+ *
+ * Se devuelve el PROCESO y no un `rho`, porque ρ es una media por unidad y esto es el tiempo total
+ * que se lleva la cola: en una planta con tres puestos, el que mas espera acumula suele ser el que
+ * hay que atacar, aunque su utilizacion no llegue a 1.
+ */
+const cuelloPorEspera = (filas) => {
+  const conEspera = (filas || []).filter((f) => f.esperaTotalMin > 0);
+  if (!conEspera.length) return null;
+  return conEspera.reduce((peor, f) => (f.esperaTotalMin > peor.esperaTotalMin ? f : peor));
+};
+
+/**
+ * El proceso por el que se tarda mas en llegar, mirando el TRANSITO.
+ *
+ * Es una pregunta distinta de la anterior y por eso son dos funciones: un proceso puede no tener
+ * cola y estar lejisimos del anterior, en cuyo caso el problema es la distancia y no la capacidad.
+ */
+const peorTransito = (filas) => {
+  const conTransito = (filas || []).filter((f) => f.transitoMin != null && f.transitoMin > 0);
+  if (!conTransito.length) return null;
+  return conTransito.reduce((peor, f) => (f.transitoMin > peor.transitoMin ? f : peor));
+};
 
 
 /***/ }),

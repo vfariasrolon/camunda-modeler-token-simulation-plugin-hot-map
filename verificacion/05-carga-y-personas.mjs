@@ -428,5 +428,51 @@ console.log('\n== 13. Ociosidad: las propiedades que se cumplen SIEMPRE ==');
   });
 }
 
+console.log('\n== 14. La traza por token: la espera se mide y no se cobra dos veces ==');
+{
+  // DOS fallos que se tapaban uno a otro, y conviene dejar los dos fijados:
+  //
+  //   1. `waitStart` vivia solo en el marcador de la cola, y `TASK_COMPLETE` no lo llevaba. La
+  //      traza por token no podia medir la espera y la dejaba SIEMPRE en cero. Medido con una
+  //      piscina saturada antes de arreglarlo: espera 0 y 159 min de «transito», que era la espera
+  //      mal atribuida al transporte.
+  //   2. Al propagarlo, la guarda del coste por caso -que evitaba cobrar dos veces la espera
+  //      cuando `release()` ya la cobro- se activo y el caso dejo de acumularla. Medido: 2320 por
+  //      caso frente a 3920 de total.
+  //
+  // Se corre con llegadas cada 30 min y tareas de 90: la piscina satura y hay cola de verdad.
+  const r = correr({
+    runValue: 12,
+    tareas: [ { id: 'Cortar', minutos: 90, pool: 'Corte' } ],
+    pools: [ { name: 'Corte', quantity: 1, members: [ { nombre: 'ana' } ] } ],
+    cost: { waitCostPerHour: 60 }
+  });
+
+  const filas = r.motor.tiemposPorProceso;
+  ok(filas.length === 1, 'hay una fila por proceso', String(filas.length));
+
+  const corte = filas[0];
+  ok(corte.tokens > 0, 'y se cuentan los tokens que pasaron', String(corte.tokens));
+  // EL FALLO 1: con cola, la espera NO puede ser cero.
+  ok(corte.esperaMax > 0,
+    'con la piscina saturada la ESPERA se mide (antes daba 0 y todo se iba a «transito»)',
+    `max=${tres(corte.esperaMax)} total=${tres(corte.esperaTotalMin)}`);
+  ok(corte.esperaTotalMin > 0, 'y la espera acumulada tambien', tres(corte.esperaTotalMin));
+  // El primer paso del token no tiene de donde venir.
+  ok(corte.transitoMin === null, 'y el primer paso no tiene transito', String(corte.transitoMin));
+
+  // EL FALLO 2: el coste por caso tiene que cuadrar con el total de las tareas.
+  // `instanceCosts` es un ARRAY de muestras ya cerradas, no un Map: con `.values()` no existia
+  // y la suma daba NaN, que comparado contra el total pasaba por bueno. Y `_costoPorCaso` es el
+  // acumulador VIVO, que se borra al cerrar cada caso: leer ese daba siempre 0.
+  const porCaso = r.motor.instanceCosts.reduce((a, b) => a + b, 0);
+  const totalTareas = Array.from(r.resultados.values())
+    .reduce((a, res) => a + (res.totalCost || 0), 0);
+  ok(Math.abs(porCaso - totalTareas) < 0.02,
+    'y la suma de los costos por caso CUADRA con el total (no se cobra dos veces la espera)',
+    `${tres(porCaso)} vs ${tres(totalTareas)}`);
+  ok(porCaso > 0, 'con coste de espera declarado, el caso acumula algo', tres(porCaso));
+}
+
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
 process.exit(fallos === 0 ? 0 : 1);

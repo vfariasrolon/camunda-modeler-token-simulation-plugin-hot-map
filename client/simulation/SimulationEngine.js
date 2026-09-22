@@ -3,6 +3,7 @@ import { getSimulationData, isLabel, resumenMuestras } from './util';
 import BusinessCalendar from './BusinessCalendar.js';
 import { normalizeWarmup, effectiveDuration, describeWarmup } from './WarmupCurve.js';
 import { resolveLabor, describeLabor } from './LaborRules.js';
+import { resumenPorProceso } from './TiemposPorProceso.js';
 import {
   crearEstadoSemana, concederExtraDe, describeMotivo,
   MODO_SIN_EXTRA, MODO_TOPE_LEGAL, MODO_SIN_TOPE
@@ -400,6 +401,10 @@ export default class SimulationEngine {
     this.instanceStates = new Map();
     this.weeklyStats = new Map();
     this.dailyCompletions = new Map();
+    // TRAZA POR TOKEN: un paso por cada tarea que hizo, con cuando llego, cuando empezo y cuando
+    // termino. Es lo que permite decir en que paso se espera, en vez de solo cuanto se espera en
+    // total. Se llena en `TASK_COMPLETE` y se resume en `TiemposPorProceso.js`.
+    this.trazas = new Map();
 
     // Reglas laborales VERSIONADAS por fecha (§A2). Se resuelven con la fecha de
     // arranque de la corrida, no con la de hoy: un informe de enero debe seguir
@@ -829,6 +834,11 @@ export default class SimulationEngine {
       const pedido = pool.request(quantityRequired, marcador, requeridas, designado);
       if (!pedido.tomada) return;
       miembro = pedido.miembro;
+      // LA ESPERA NO SE MIDE EN ESTE INTENTO. Si la unidad no estaba libre, `request` dejo un
+      // marcador en la cola y este intento muere aqui; `release()` reprograma un TASK_START con
+      // `recursoTomado: true`, y en ESE intento `time` ya es la hora de liberacion, asi que la
+      // espera se mide sola. Propagar `waitStart` desde el marcador contaba el mismo rato dos
+      // veces: medido, 2320 por caso frente a 3920 de total.
     }
 
     let processingTime = 0;
@@ -1018,6 +1028,10 @@ export default class SimulationEngine {
       time: finAjustado.getTime(),
       instanceId,
       startTime,
+      // DESDE CUANDO ESPERABA ESTA TAREA. Lo pone el TASK_START que la arranca de verdad: si hubo
+      // cola, ese es el instante en que se libero la unidad. Sin el, la traza por token no puede
+      // medir la espera y la deja en cero.
+      waitStart: taskEvent.waitStart != null ? taskEvent.waitStart : null,
       processingTime,
       reworkTime,
       overtime: taskOvertimeDuration,
@@ -1377,6 +1391,18 @@ export default class SimulationEngine {
         ).getTime();
         this._anotarEnMapaDelDia(inicioDeLaTareaMs, duracionReloj, event.quantityRequired);
 
+        // LA TRAZA DEL TOKEN. Se anota aqui porque es el unico sitio donde coinciden las tres
+        // cosas: la instancia, la tarea y los tres instantes.
+        //
+        //   llegoEn   -> cuando el token llego a esta tarea (el inicio de la espera).
+        //   empezoEn  -> cuando empezo de verdad, que puede ser mucho despues si hubo cola.
+        //   terminoEn -> ahora.
+        //
+        // El inicio se calcula RETROCEDIENDO tiempo laborable, igual que el mapa del dia, y no
+        // restando milisegundos: si en medio hubo un descanso, la tarea no estaba corriendo
+        // durante ese rato y restar el reloj daria un inicio anterior al real.
+        this._anotarPasoDeTraza(event, inicioDeLaTareaMs, duracionReloj);
+
         if (event.waitStart) {
           const standardCalendar = this.standardCalendar;
           const waitTime = standardCalendar.calculateBusinessDurationInMinutes(new Date(event.waitStart), new Date(this.clock));
@@ -1385,11 +1411,11 @@ export default class SimulationEngine {
           const currentWaitCost = (waitTime / 60) * waitCostPerHour;
           results.totalWaitTimeCost += currentWaitCost;
           results.totalCost += currentWaitCost;
-          // OJO: el costo del caso NO se acumula aqui. La espera de una tarea que tuvo que
-          // pedir recurso se cobra al LIBERARLO (ver `release()`), que es cuando consta
-          // cuanto espero de verdad; sumarla tambien aqui la contaria DOS veces, porque este
-          // evento lleva su propio `waitStart`. Se acumula en el otro camino, y por eso el
-          // total por caso sigue cuadrando con el del informe.
+
+          // El costo del caso se acumula en UN SOLO camino: aqui, cuando la espera la cobra el
+          // evento de fin. El otro camino -`release()`- reprograma un TASK_START que pasa por
+          // aqui despues, asi que sumarlo tambien alli lo contaba dos veces.
+          this._sumarCostoAlCaso(event.instanceId, currentWaitCost);
         }
 
         const data = getSimulationData(event.element);
@@ -1451,7 +1477,10 @@ export default class SimulationEngine {
               recursoTomado: true,
               // Y la persona tambien: volver a elegirla cambiaria quien hizo el
               // trabajo y la carga iria a otro nombre.
-              miembro
+              miembro,
+              // Y DESDE CUANDO ESPERABA: es el unico dato que se perderia al salir de la cola, y
+              // sin el la traza por token no puede medir la espera de esta tarea.
+              waitStart: marcador.waitStart
             });
           });
         }
@@ -1494,6 +1523,12 @@ export default class SimulationEngine {
     // todo el tiempo extra por dia y por semana.
     this.compliance = this._calcularCumplimiento();
 
+    // Tiempos por proceso: en que paso se espera y cada cuanto pasa un token. Se resume aqui, al
+    // cerrar, porque necesita la traza COMPLETA de cada token para poder medir los transitos.
+    this.tiemposPorProceso = resumenPorProceso(
+      Array.from(this.trazas.entries()).map(([ instanceId, pasos ]) => ({ instanceId, pasos }))
+    );
+
     this._logReport(options.useOvertime, runValue);
 
     this.calendar = originalCalendar;
@@ -1510,6 +1545,32 @@ export default class SimulationEngine {
    */
   _sincronizarRelojDePiscinas() {
     this.resourcePools.forEach((pool) => { pool.relojAhora = this.clock; });
+  }
+
+  /**
+   * Anota un paso en la traza del token: llego, empezo y termino.
+   *
+   * DE DONDE SALE EL INSTANTE DE LLEGADA: de `event.waitStart`, que el motor ya fija cuando la
+   * tarea tiene que pedir recurso y se queda en cola. Si no hay espera -la tarea arranco de
+   * inmediato-, la llegada y el inicio son el mismo instante y la espera sale cero, que es
+   * exactamente lo que hay que informar.
+   *
+   * NO se usa `event.startTime`: ese es cuando arranco la INSTANCIA, no esta tarea, y usarlo
+   * apilaria todas las tareas de un caso en el mismo momento -el mismo fallo que ya se corrigio en
+   * el mapa del dia-.
+   */
+  _anotarPasoDeTraza(event, inicioMs, duracionMs) {
+    const id = event.instanceId;
+    if (id == null) return;
+
+    if (!this.trazas.has(id)) this.trazas.set(id, []);
+    this.trazas.get(id).push({
+      procesoId: event.element.id,
+      nombre: (event.element.businessObject && event.element.businessObject.name) || event.element.id,
+      llegoEn: event.waitStart != null ? event.waitStart : inicioMs,
+      empezoEn: inicioMs,
+      terminoEn: inicioMs + duracionMs
+    });
   }
 
   /**

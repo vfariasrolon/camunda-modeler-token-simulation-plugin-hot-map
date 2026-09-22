@@ -17,6 +17,7 @@ import {
 } from './ComparativaPlanes.js';
 import { LADO_CELDA, calcularZonas, ladoQueCabe } from './HeatmapZones.js';
 import { normalizarFlujos, cuotasDeRama, rutaDominante, formatearCuota } from './DominantRoute.js';
+import { cuelloPorEspera, peorTransito } from './TiemposPorProceso.js';
 import { diagnosticarCapacidad, avisosPorSaturacion } from './CapacityGuard.js';
 
 // Geometric icons to match the look and feel of the editor
@@ -131,7 +132,10 @@ const NOMBRES_METRICA = {
   reworkTime: 'tiempo-de-reparacion',
   overtime: 'horas-extras',
   waitTimeCost: 'costo-tiempos-muertos',
-  resourceQuantity: 'cantidad-de-recursos'
+  resourceQuantity: 'cantidad-de-recursos',
+  // Tiempos por proceso: no pinta nada sobre el diagrama -es una tabla- pero comparte el
+  // mecanismo de metricas para aparecer en la paleta y en el informe.
+  tiemposPorProceso: 'tiempos-por-proceso'
 };
 
 // Los resultados del motor mezclan DOS unidades de tiempo y hay que
@@ -995,6 +999,15 @@ export default class SimulationController {
     // el RANGO: la opacidad de cada mancha depende de si hay contraste o no, y
     // eso no se sabe hasta haber visto todos los valores.
     const pares = [];
+
+    // TIEMPOS POR PROCESO: no pinta nada sobre el diagrama. Es una TABLA, porque lo que
+    // responde -«¿en qué paso se espera?»- es una lista ordenada, no una mancha. Va por el
+    // camino de `showMetric` igual que las demás para que el botón, el informe y la limpieza
+    // funcionen sin casos especiales.
+    if (metric === 'tiemposPorProceso') {
+      this._mostrarTiemposPorProceso();
+      return;
+    }
 
     // TRAFICO: una linea no tiene tiempo ni costo, tiene PASOS. Aqui las conexiones
     // entran en la MISMA lista que las figuras, asi que el rango -y por tanto la
@@ -3124,6 +3137,102 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
         </p>
       </div>
     `;
+  }
+
+  /**
+   * La pestaña «Tiempos por proceso»: cuando pasa cada token y cuanto se espera en cada paso.
+   *
+   * POR QUE ES UNA TABLA Y NO UN GRÁFICO: la pregunta es «¿en qué paso se pierde el tiempo?», y la
+   * respuesta es una LISTA ORDENADA. Un gráfico de barras por proceso se lee peor y no deja poner
+   * los cinco números que hacen falta juntos -espera media, p90, máximo, cuántos esperaron y
+   * cadencia-. Se ordena por espera ACUMULADA, que es lo que dice cuánto le cuesta al proceso
+   * entero, y no por media: un puesto con 500 tokens y 1 minuto cuesta más que uno con 3 y 40.
+   *
+   * LAS DOS LECTURAS DEL TIEMPO ENTRE PROCESOS van en columnas separadas porque significan cosas
+   * distintas: la ESPERA es la cola de ese puesto -se arregla con capacidad- y el TRANSITO es lo
+   * que tarda la pieza en llegar desde el anterior -se arregla con distancia o con lote-.
+   */
+  _mostrarTiemposPorProceso() {
+    const filas = (this.overtimeReport && this.overtimeReport.tiemposPorProceso)
+      || (this.normalReport && this.normalReport.tiemposPorProceso) || [];
+
+    if (!filas.length) {
+      this._chartPanel.showHtmlContent(`
+        <div style="padding:18px; line-height:1.6;">
+          <h4 style="margin:0 0 8px;">Sin traza de tokens</h4>
+          <p>No hay pasos registrados. Esta vista necesita que la corrida haya completado al menos un
+          token por una tarea. Ejecuta una simulación y vuelve a abrirla.</p>
+        </div>`);
+      return;
+    }
+
+    const min = (m) => (m == null ? '—' : `${Number(m).toLocaleString('es-MX', { maximumFractionDigits: 2 })} min`);
+    const cuello = cuelloPorEspera(filas);
+    const lejos = peorTransito(filas);
+
+    const cuerpo = filas.map((f) => {
+      const esCuello = cuello && f.procesoId === cuello.procesoId;
+      const esLejos = lejos && f.procesoId === lejos.procesoId;
+      return `
+        <tr>
+          <td>
+            <strong>${nombreElemento({ businessObject: { name: f.nombre }, id: f.procesoId })}</strong>
+            <div class="sub">${f.procesoId}</div>
+          </td>
+          <td class="num">${f.tokens}</td>
+          <td class="num">${min(f.esperaMin)}</td>
+          <td class="num">${min(f.esperaP90)}</td>
+          <td class="num">${min(f.esperaMax)}</td>
+          <td class="num">${min(f.esperaTotalMin)}</td>
+          <td class="num">${f.porcentajeQueEspero} %</td>
+          <td class="num">${min(f.transitoMin)}</td>
+          <td class="num">${min(f.cadenciaMin)}</td>
+          <td>
+            ${esCuello ? '<span class="etiqueta aviso">más espera acumulada</span>' : ''}
+            ${esLejos ? '<span class="etiqueta aviso">más tránsito</span>' : ''}
+          </td>
+        </tr>`;
+    }).join('');
+
+    this._chartPanel.showHtmlContent(`
+      <div style="padding:14px; line-height:1.5;">
+        <h4 style="margin:0 0 6px;">Tiempos por proceso</h4>
+        <p class="sub" style="margin:0 0 10px;">
+          Ordenado por <strong>espera acumulada</strong>, que es lo que le cuesta al proceso entero.
+          Todas las filas son minutos de reloj simulado.
+        </p>
+        <table class="sim-results-table">
+          <thead>
+            <tr>
+              <th>Proceso</th>
+              <th class="num">Tokens</th>
+              <th class="num">Espera media</th>
+              <th class="num">Espera p90</th>
+              <th class="num">Espera máx</th>
+              <th class="num">Espera total</th>
+              <th class="num">% que esperó</th>
+              <th class="num">Tránsito</th>
+              <th class="num">Cadencia</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${cuerpo}</tbody>
+        </table>
+        <p class="sub" style="margin-top:10px;">
+          <strong>Espera</strong> es el rato en la cola de ese proceso: se arregla con capacidad
+          -otra persona o menos tiempo de ciclo-. El <strong>tránsito</strong> es desde que el token
+          terminó el paso anterior hasta que llegó aquí: se arregla con distancia o con lote, no con
+          gente. <strong>Cadencia</strong> es cada cuánto pasa un token (la mediana, para que una
+          llegada tardía no la mueva).
+        </p>
+        <p class="sub">
+          <strong>La media sola engaña:</strong> con 9 tokens que pasan directos y 1 que espera 40
+          minutos, la media sale 4 y el p90 también -la interpolación cae dentro de los ceros-. Por
+          eso van también el <em>máximo</em> y el <em>% que esperó</em>: son los que delatan el caso
+          aislado.
+        </p>
+      </div>
+    `);
   }
 
   createResultsTable(results) {
