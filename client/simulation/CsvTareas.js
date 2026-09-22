@@ -129,7 +129,10 @@ function filasDeTareas(ctx) {
     'tasa_fallo_pct', 'retrabajo', 'unidad_retrabajo',
     'recurso', 'cant_recurso',
     'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol',
-    'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad'
+    'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad',
+    // Cupo: N piezas a la vez, liberadas juntas. Va al final para no desplazar las columnas de un
+    // CSV ya guardado, y `arranque_cupo` solo tiene sentido con cupo > 1.
+    'cupo', 'arranque_cupo'
   ] ];
 
   ctx.getTasks().forEach((el) => {
@@ -165,7 +168,12 @@ function filasDeTareas(ctx) {
       c.masaCargadaKg == null ? '' : c.masaCargadaKg,
       c.masaArrastradaKg == null ? '' : c.masaArrastradaKg,
       c.distanciaM == null ? '' : c.distanciaM,
-      hab
+      hab,
+      // El cupo se exporta VACIO cuando no aplica o vale 1: un CSV con `1` en cada fila haria
+      // parecer que todas las tareas usan cupo, y al reimportar se guardaria igual. Vacio significa
+      // «una pieza a la vez», que es lo de siempre.
+      d.cupo && d.cupo.size > 1 ? d.cupo.size : '',
+      d.cupo && d.cupo.size > 1 ? (d.cupo.arranque || '') : ''
     ]);
   });
 
@@ -335,6 +343,10 @@ function importarTareas(header, body, idx, ctx) {
   const iMiembro = header.indexOf('miembro');
   const iFrec = header.indexOf('frecuencia');
   const iHab = header.indexOf('habilidad');
+  // El cupo es OPCIONAL, como la habilidad o la carga: un CSV exportado antes de que existiera no
+  // trae estas columnas y tiene que seguir entrando. Se leen por nombre y la ausencia vale vacio.
+  const iCupo = header.indexOf('cupo');
+  const iCupoArranque = header.indexOf('arranque_cupo');
 
   /**
    * Lee una columna de la barrera POR NOMBRE y exige que exista y que la fila la traiga.
@@ -484,6 +496,23 @@ function importarTareas(header, body, idx, ctx) {
       delete datos.carga;
       delete datos.habilidad;
       delete datos.habilidades;
+    }
+
+    // CUPO. Mismo criterio que la habilidad: si el CSV no trae la columna, el cupo se LIMPIA, para
+    // que un archivo exportado antes no herede el cupo que hubiera en el diagrama.
+    delete datos.cupo;
+    if (iCupo !== -1) {
+      const bruto = String(r[iCupo] || '').trim();
+      if (bruto !== '') {
+        const size = ctx.num(bruto, 'cupo');
+        if (size > 1) {
+          const politicaCruda = iCupoArranque !== -1 ? String(r[iCupoArranque] || '').trim() : '';
+          datos.cupo = {
+            size,
+            arranque: politicaCruda === 'lleno' ? 'lleno' : 'inmediato'
+          };
+        }
+      }
     }
 
     updates.push({ element: el, data: datos });

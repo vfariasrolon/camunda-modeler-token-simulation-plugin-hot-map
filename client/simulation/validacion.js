@@ -18,6 +18,9 @@
  * FORMATO DE LOS ERRORES: todos son `Error` con el nombre del elemento delante («Cortar: ...»),
  * porque en una tabla de veinte filas un mensaje sin nombre obliga a buscar a mano cual falla.
  */
+import {
+  problemasDeCupo, ARRANCA_AL_LLENAR, ARRANCA_CON_LO_QUE_HAYA
+} from './ProcesoPorCupo.js';
 
 /**
  * Un numero escrito por una persona.
@@ -209,6 +212,35 @@ export const datosDeFilaDeTarea = (tr, ctx) => {
 
   delete datos.carga;
   if (Object.keys(carga).length) datos.carga = carga;
+
+  // CUPO: N piezas a la vez, liberadas juntas. Es el horno que mete 20 tabletas y las saca todas
+  // de golpe, o el carro que se llena antes de moverse.
+  //
+  // NO CONFUNDIR con `resources.quantityRequired`, que es lo contrario: N unidades del recurso
+  // para UNA pieza -una maquina que necesita dos operarios-. Aqui es UNA plaza que retiene N
+  // piezas, y por eso el tiempo declarado es el del CUPO COMPLETO y no el de una pieza.
+  //
+  // Se guarda AUSENTE cuando el cupo es 1: asi ningun diagrama existente cambia de forma ni de
+  // numeros por abrir y guardar la tabla. Mismo trato que la frecuencia «por token».
+  const cupoBruto = String(val('cupo.size') == null ? '' : val('cupo.size')).trim();
+  const arranqueBruto = String(val('cupo.arranque') == null ? '' : val('cupo.arranque')).trim();
+  delete datos.cupo;
+  if (cupoBruto !== '') {
+    const size = numero(cupoBruto, `${name} · cupo`);
+    const politica = arranqueBruto === ARRANCA_AL_LLENAR ? ARRANCA_AL_LLENAR : ARRANCA_CON_LO_QUE_HAYA;
+
+    // SE VALIDA SIEMPRE, incluso con cupo 1 o 0. Antes la validacion vivia dentro del `if (size > 1)`
+    // y eso dejaba pasar un CERO sin decir nada: «procesa cero piezas a la vez» es imposible, y la
+    // tarea se habria guardado con un cupo que el motor no sabe leer. El propio arnes lo caza.
+    const problemas = problemasDeCupo({ cupo: size, politica, tiempoDelCupo: 1 })
+      // El tiempo no se valida aqui: lo declara la tarea en su columna «Tiempo», no el cupo.
+      .filter((p) => !/tiempo del cupo/.test(p));
+    if (problemas.length) throw new Error(`${name}: ${problemas.join('; ')}`);
+
+    // Un cupo de 1 es «una pieza a la vez», que es el comportamiento de siempre: se omite para no
+    // engordar el XML de los diagramas que no usan esto.
+    if (size > 1) datos.cupo = { size, arranque: politica };
+  }
 
   // HABILIDAD exigida. Se admite una o varias separadas por comas, y se guarda `habilidad`
   // (singular) cuando es una sola porque es el caso comun y asi el XML queda legible.

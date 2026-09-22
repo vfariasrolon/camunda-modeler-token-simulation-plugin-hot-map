@@ -900,12 +900,14 @@ export default class DataTablePanel {
             ${th('Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia', 'barrera', ' colspan="5" class="col-barrera"')}
             ${th('Carga física (opcional): cargada kg · arrastrada kg · distancia m', 'carga', ' colspan="3" class="col-carga"')}
             ${th('Habilidad', 'habilidad')}
+            ${th('Cupo', 'cupo')}
+            ${th('Arranque del cupo', 'arranqueCupo')}
           </tr>
           <!-- Fila COMPARTIDA para la ayuda de columna. No se expande la celda de la
                cabecera: eso descuadraria el ancho de esa columna y moveria toda la
                tabla. Aqui el texto sale siempre en el mismo sitio y el ancho no cambia. -->
           <tr class="fila-ayuda-col hidden">
-            <td colspan="23" class="ayuda-campo"></td>
+            <td colspan="25" class="ayuda-campo"></td>
           </tr>
         </thead>
         <tbody>
@@ -952,6 +954,11 @@ export default class DataTablePanel {
               ${opcionesHab.map((n) => `<option value="${esc(n)}" ${habActual === n ? 'selected' : ''}>${
                 n === '' ? '(ninguna)' : esc(n)}</option>`).join('')}
             </select>`;
+
+            // CUPO: N piezas a la vez. Solo se considera declarado con size > 1: un 1 es «una pieza
+            // a la vez», que es lo de siempre, y dejarlo vacio en la tabla evita que parezca que
+            // todas las tareas usan cupo.
+            const cupo = d.cupo && Number(d.cupo.size) > 1 ? d.cupo : null;
 
             const miembroActual = (d.resources && d.resources.miembro) || '';
             const miembros = miembrosDePiscina(this._getPools(), actual);
@@ -1026,6 +1033,13 @@ export default class DataTablePanel {
                 ${celdaCarga('masaArrastradaKg', c.masaArrastradaKg, 'kg', 'step="any" min="0"')}
                 ${celdaCarga('distanciaM', c.distanciaM, 'm', 'step="any" min="0"')}
                 <td>${selectHabilidad}</td>
+                <td><input type="number" step="1" min="1" class="cell mini" data-field="cupo.size"
+                  value="${cupo ? cupo.size : ''}" placeholder="—"
+                  title="N piezas procesadas A LA VEZ y liberadas juntas. Vacío o 1 = una pieza a la vez. El «Tiempo» es el del cupo completo, no el de una pieza."></td>
+                <td><select class="cell" data-field="cupo.arranque" ${cupo ? '' : 'disabled title="Pon primero un cupo mayor que 1"'}>
+                  <option value="lleno" ${cupo && cupo.arranque === 'lleno' ? 'selected' : ''}>esperar a llenar</option>
+                  <option value="inmediato" ${cupo && cupo.arranque === 'inmediato' ? 'selected' : ''}>arrancar con lo que haya</option>
+                </select></td>
               </tr>`;
           }).join('')}
         </tbody>

@@ -270,7 +270,7 @@ check('Tareas: se pintan los valores de barrera guardados',
 const COLUMNAS_CON_AYUDA = [
   'tarea', 'distribucion', 'tiempo', 'unidad', 'tiempoMin', 'tiempoModa', 'tiempoMax',
   'tasaFallo', 'retrabajo', 'unidadRetrabajo', 'recurso', 'miembro', 'cant', 'frecuencia',
-  'barrera', 'carga', 'habilidad'
+  'barrera', 'carga', 'habilidad', 'cupo', 'arranqueCupo'
 ];
 
 const botonesCol = Array.from(document.querySelectorAll('.btn-ayuda-col'));
@@ -291,7 +291,7 @@ check('Tareas: cada «?» apunta a una columna conocida, sin repetirse',
 // cabecera: expandir esa celda descuadraria el ancho de su columna y moveria la tabla.
 const filaAyuda = document.querySelector('thead .fila-ayuda-col');
 check('Tareas: la ayuda va en una fila compartida dentro de la cabecera',
-  Boolean(filaAyuda) && filaAyuda.querySelector('td').getAttribute('colspan') === '23',
+  Boolean(filaAyuda) && filaAyuda.querySelector('td').getAttribute('colspan') === '25',
   filaAyuda ? filaAyuda.querySelector('td').getAttribute('colspan') : 'sin fila');
 
 check('Tareas: la ayuda arranca OCULTA', filaAyuda.classList.contains('hidden'));
@@ -483,6 +483,96 @@ const csvTareas2 = filasDePestana(panel._activeTab, panel._contextoCsv());
 check('CSV tareas: exportar → importar → exportar es idempotente',
   iguales(csvTareas2, filasCsv),
   JSON.stringify(csvTareas2.filter((r, i) => !iguales(r, filasCsv[i]))));
+
+// --- 6a-bis. CUPO: N piezas a la vez, liberadas juntas ---------------------
+//
+// El caso del usuario: un horno que mete 20 tabletas y las saca todas de golpe, o un
+// carro de transporte que se llena antes de moverse. Es la funcion mas facil de
+// confundir de toda la tabla, porque «Cant.» ya existe y significa LO CONTRARIO: N
+// recursos para UNA pieza. Por eso se comprueba que son campos distintos.
+{
+  panel._activeTab = 'tasks';
+  panel._renderTasks();
+
+  const celdaCupo = (id) => fila(id).querySelector('[data-field="cupo.size"]');
+  const celdaArranque = (id) => fila(id).querySelector('[data-field="cupo.arranque"]');
+
+  check('Cupo: la columna existe y arranca VACIA (una pieza a la vez)', celdaCupo('Task_1').value === '',
+    `"${celdaCupo('Task_1').value}"`);
+  // Sin cupo, la politica esta deshabilitada: no se puede elegir cuando arranca algo que no
+  // existe, y dejarla activa invitaria a rellenarla sin efecto.
+  check('Cupo: sin cupo, el arranque queda deshabilitado', celdaArranque('Task_1').disabled === true);
+
+  // Se declara un cupo de 20 con «esperar a llenar» (el carro).
+  escribir('Task_1', 'cupo.size', 20);
+  escribir('Task_1', 'cupo.arranque', 'lleno');
+  const escritosCupo = recoger('tasks');
+  const conCupo = buscar(escritosCupo, 'Task_1');
+  check('Cupo: se guarda con su tamaño y su política',
+    conCupo.cupo && conCupo.cupo.size === 20 && conCupo.cupo.arranque === 'lleno',
+    JSON.stringify(conCupo.cupo));
+
+  // LA PROPIEDAD QUE IMPIDE LA CONFUSION: `cupo` y `resources.quantityRequired` son campos
+  // distintos y no se pisan. Si se confundieran, declarar un horno de 20 pediria 20 operarios.
+  check('Cupo: NO toca «Cant.» (son cosas contrarias)',
+    !conCupo.resources || conCupo.resources.quantityRequired === undefined
+      || conCupo.resources.quantityRequired === 1,
+    JSON.stringify(conCupo.resources));
+
+  // Ida y vuelta por el CSV, que es donde el cupo puede perderse en silencio.
+  const filasCupo = filasDePestana(panel._activeTab, panel._contextoCsv());
+  check('CSV: la columna cupo está en la cabecera',
+    filasCupo[0].includes('cupo') && filasCupo[0].includes('arranque_cupo'),
+    filasCupo[0].slice(-4).join(','));
+  const filaCupo1 = filasCupo.find((r) => r[0] === 'Task_1');
+  check('CSV: el cupo se exporta con su valor',
+    String(filaCupo1[filaCupo1.length - 2]) === '20'
+      && String(filaCupo1[filaCupo1.length - 1]) === 'lleno',
+    `${filaCupo1[filaCupo1.length - 2]} / ${filaCupo1[filaCupo1.length - 1]}`);
+
+  guardar(importarCsv(panel._activeTab, aCsv(filasCupo), panel._contextoCsv()));
+  const vueltaCupo = buscar(recoger('tasks'), 'Task_1');
+  check('CSV: el cupo sobrevive a exportar e importar',
+    vueltaCupo.cupo && vueltaCupo.cupo.size === 20 && vueltaCupo.cupo.arranque === 'lleno',
+    JSON.stringify(vueltaCupo.cupo));
+
+  // Un CSV ANTERIOR (sin las columnas) no puede heredar el cupo que hubiera en el diagrama:
+  // si lo heredara, el archivo mandaria sobre datos que no declara.
+  const csvSinCupo = [
+    [ 'id', 'nombre', 'distribucion', 'tiempo_proceso', 'unidad_proceso', 'min', 'moda', 'max',
+      'tasa_fallo_pct', 'retrabajo', 'unidad_retrabajo', 'recurso', 'cant_recurso', 'frecuencia' ].join(','),
+    [ 'Task_2', 'Inspeccionar', 'fixed', '5', 'minutes', '', '', '', '0', '20', 'minutes', '', '', 'token' ].join(',')
+  ].join('\r\n');
+  const sinCupo = buscar(importarCsv('tasks', csvSinCupo, panel._contextoCsv()), 'Task_2');
+  check('CSV antiguo: sin columnas de cupo, la tarea queda SIN cupo',
+    !('cupo' in sinCupo), JSON.stringify(sinCupo.cupo));
+
+  // Un cupo de 1 es «una pieza a la vez»: se OMITE en vez de guardarse, para que el XML de los
+  // diagramas que no usan esto no engorde y el CSV no diga «cupo 1» en cada fila.
+  escribir('Task_1', 'cupo.size', 1);
+  const conUno = buscar(recoger('tasks'), 'Task_1');
+  check('Cupo: un cupo de 1 se OMITE (es el comportamiento de siempre)',
+    !('cupo' in conUno), JSON.stringify(conUno.cupo));
+
+  // Y un cupo invalido se rechaza al guardar, no al simular: un cupo mal puesto no da error,
+  // da un proceso distinto.
+  escribir('Task_1', 'cupo.size', 2.5);
+  let errorCupo = null;
+  try { recoger('tasks'); } catch (e) { errorCupo = e.message; }
+  check('Cupo: un cupo fraccionario se rechaza', Boolean(errorCupo) && /entero/.test(errorCupo),
+    errorCupo);
+
+  escribir('Task_1', 'cupo.size', 0);
+  errorCupo = null;
+  try { recoger('tasks'); } catch (e) { errorCupo = e.message; }
+  check('Cupo: un cupo de cero se rechaza', Boolean(errorCupo) && /entero/.test(errorCupo),
+    errorCupo);
+
+  // Se deja limpio para no arrastrar el cupo a los casos siguientes.
+  escribir('Task_1', 'cupo.size', '');
+  guardar(recoger('tasks'));
+  panel._renderTasks();
+}
 
 // --- 6b. La tasa de fallo, en % de punta a punta ---------------------------
 //

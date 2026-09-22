@@ -575,7 +575,9 @@ const AYUDA_COLUMNAS = {
   barrera: 'Solo con «por lote»: quien firma el lote. disp. es la probabilidad de que atiendan; si no atienden, se espera una triangular min/moda/max; tol. es cuanto se tolera antes de marcarlo.',
   carga: 'Opcional. Cargada es la masa que SOPORTA la persona; arrastrada, la que desliza. Se aplican segun la frecuencia: por pieza o una vez por lote.',
   habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Solo se ofrecen las que estan dadas de alta en los recursos, para que no se pueda exigir una que nadie tiene.',
-  miembro: 'El miembro CONCRETO que hace esta tarea, si solo la puede hacer esa persona. Con un nombre, la tarea ESPERA a ese miembro aunque otro esté libre (es una restricción, no una preferencia). Sin nombre, el motor elige de la piscina por turnos, que es el comportamiento de siempre. Solo se ofrecen los miembros de la piscina elegida.'
+  miembro: 'El miembro CONCRETO que hace esta tarea, si solo la puede hacer esa persona. Con un nombre, la tarea ESPERA a ese miembro aunque otro esté libre (es una restricción, no una preferencia). Sin nombre, el motor elige de la piscina por turnos, que es el comportamiento de siempre. Solo se ofrecen los miembros de la piscina elegida.',
+  cupo: 'Cuantas piezas procesa la tarea A LA VEZ, liberadas juntas: un horno que mete 20 tabletas y las saca todas de golpe. El «Tiempo» es el del CUPO COMPLETO y no el de una pieza: 100 minutos para 20 piezas son 5 minutos de ciclo por pieza, no 2000 minutos. Vacío o 1 significa «una pieza a la vez», que es lo de siempre. NO confundir con «Cant.»: allí son N recursos para UNA pieza (una máquina con dos operarios); aquí es UNA plaza que retiene N piezas.',
+  arranqueCupo: 'Cuándo arranca el cupo. «Esperar a llenar» es el carro de transporte: moverlo a medio cargar es tirar un viaje, así que se espera. «Arrancar con lo que haya» es el horno que no puede quedarse encendido sin carga: si hay 7 piezas y el cupo es 20, procesa las 7. La última tanda arranca siempre, aunque no se llene: si esperara, las piezas se quedarían sin procesar para siempre.'
 };
 
 // ---------------------------------------------------------------------------
@@ -2508,7 +2510,10 @@ function filasDeTareas(ctx) {
     'tasa_fallo_pct', 'retrabajo', 'unidad_retrabajo',
     'recurso', 'cant_recurso',
     'frecuencia', 'barrera_disp', 'barrera_min', 'barrera_moda', 'barrera_max', 'barrera_tol',
-    'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad'
+    'carga_kg', 'arrastre_kg', 'distancia_m', 'habilidad',
+    // Cupo: N piezas a la vez, liberadas juntas. Va al final para no desplazar las columnas de un
+    // CSV ya guardado, y `arranque_cupo` solo tiene sentido con cupo > 1.
+    'cupo', 'arranque_cupo'
   ] ];
 
   ctx.getTasks().forEach((el) => {
@@ -2544,7 +2549,12 @@ function filasDeTareas(ctx) {
       c.masaCargadaKg == null ? '' : c.masaCargadaKg,
       c.masaArrastradaKg == null ? '' : c.masaArrastradaKg,
       c.distanciaM == null ? '' : c.distanciaM,
-      hab
+      hab,
+      // El cupo se exporta VACIO cuando no aplica o vale 1: un CSV con `1` en cada fila haria
+      // parecer que todas las tareas usan cupo, y al reimportar se guardaria igual. Vacio significa
+      // «una pieza a la vez», que es lo de siempre.
+      d.cupo && d.cupo.size > 1 ? d.cupo.size : '',
+      d.cupo && d.cupo.size > 1 ? (d.cupo.arranque || '') : ''
     ]);
   });
 
@@ -2714,6 +2724,10 @@ function importarTareas(header, body, idx, ctx) {
   const iMiembro = header.indexOf('miembro');
   const iFrec = header.indexOf('frecuencia');
   const iHab = header.indexOf('habilidad');
+  // El cupo es OPCIONAL, como la habilidad o la carga: un CSV exportado antes de que existiera no
+  // trae estas columnas y tiene que seguir entrando. Se leen por nombre y la ausencia vale vacio.
+  const iCupo = header.indexOf('cupo');
+  const iCupoArranque = header.indexOf('arranque_cupo');
 
   /**
    * Lee una columna de la barrera POR NOMBRE y exige que exista y que la fila la traiga.
@@ -2863,6 +2877,23 @@ function importarTareas(header, body, idx, ctx) {
       delete datos.carga;
       delete datos.habilidad;
       delete datos.habilidades;
+    }
+
+    // CUPO. Mismo criterio que la habilidad: si el CSV no trae la columna, el cupo se LIMPIA, para
+    // que un archivo exportado antes no herede el cupo que hubiera en el diagrama.
+    delete datos.cupo;
+    if (iCupo !== -1) {
+      const bruto = String(r[iCupo] || '').trim();
+      if (bruto !== '') {
+        const size = ctx.num(bruto, 'cupo');
+        if (size > 1) {
+          const politicaCruda = iCupoArranque !== -1 ? String(r[iCupoArranque] || '').trim() : '';
+          datos.cupo = {
+            size,
+            arranque: politicaCruda === 'lleno' ? 'lleno' : 'inmediato'
+          };
+        }
+      }
     }
 
     updates.push({ element: el, data: datos });
@@ -4830,12 +4861,14 @@ class DataTablePanel {
             ${th('Barrera (solo «por lote»): disp. · espera mín/moda/máx · tolerancia', 'barrera', ' colspan="5" class="col-barrera"')}
             ${th('Carga física (opcional): cargada kg · arrastrada kg · distancia m', 'carga', ' colspan="3" class="col-carga"')}
             ${th('Habilidad', 'habilidad')}
+            ${th('Cupo', 'cupo')}
+            ${th('Arranque del cupo', 'arranqueCupo')}
           </tr>
           <!-- Fila COMPARTIDA para la ayuda de columna. No se expande la celda de la
                cabecera: eso descuadraria el ancho de esa columna y moveria toda la
                tabla. Aqui el texto sale siempre en el mismo sitio y el ancho no cambia. -->
           <tr class="fila-ayuda-col hidden">
-            <td colspan="23" class="ayuda-campo"></td>
+            <td colspan="25" class="ayuda-campo"></td>
           </tr>
         </thead>
         <tbody>
@@ -4882,6 +4915,11 @@ class DataTablePanel {
               ${opcionesHab.map((n) => `<option value="${esc(n)}" ${habActual === n ? 'selected' : ''}>${
                 n === '' ? '(ninguna)' : esc(n)}</option>`).join('')}
             </select>`;
+
+            // CUPO: N piezas a la vez. Solo se considera declarado con size > 1: un 1 es «una pieza
+            // a la vez», que es lo de siempre, y dejarlo vacio en la tabla evita que parezca que
+            // todas las tareas usan cupo.
+            const cupo = d.cupo && Number(d.cupo.size) > 1 ? d.cupo : null;
 
             const miembroActual = (d.resources && d.resources.miembro) || '';
             const miembros = (0,_MemberAssignment_js__WEBPACK_IMPORTED_MODULE_3__.miembrosDePiscina)(this._getPools(), actual);
@@ -4956,6 +4994,13 @@ class DataTablePanel {
                 ${celdaCarga('masaArrastradaKg', c.masaArrastradaKg, 'kg', 'step="any" min="0"')}
                 ${celdaCarga('distanciaM', c.distanciaM, 'm', 'step="any" min="0"')}
                 <td>${selectHabilidad}</td>
+                <td><input type="number" step="1" min="1" class="cell mini" data-field="cupo.size"
+                  value="${cupo ? cupo.size : ''}" placeholder="—"
+                  title="N piezas procesadas A LA VEZ y liberadas juntas. Vacío o 1 = una pieza a la vez. El «Tiempo» es el del cupo completo, no el de una pieza."></td>
+                <td><select class="cell" data-field="cupo.arranque" ${cupo ? '' : 'disabled title="Pon primero un cupo mayor que 1"'}>
+                  <option value="lleno" ${cupo && cupo.arranque === 'lleno' ? 'selected' : ''}>esperar a llenar</option>
+                  <option value="inmediato" ${cupo && cupo.arranque === 'inmediato' ? 'selected' : ''}>arrancar con lo que haya</option>
+                </select></td>
               </tr>`;
           }).join('')}
         </tbody>
@@ -8291,6 +8336,188 @@ const habilidadesDisponibles = (piscinas) => {
     });
   });
   return [ ...todas ].filter(Boolean).sort((a, b) => a.localeCompare(b, 'es'));
+};
+
+
+/***/ }),
+
+/***/ "./client/simulation/ProcesoPorCupo.js":
+/*!*********************************************!*\
+  !*** ./client/simulation/ProcesoPorCupo.js ***!
+  \*********************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   ARRANCA_AL_LLENAR: () => (/* binding */ ARRANCA_AL_LLENAR),
+/* harmony export */   ARRANCA_CON_LO_QUE_HAYA: () => (/* binding */ ARRANCA_CON_LO_QUE_HAYA),
+/* harmony export */   cicloPorPieza: () => (/* binding */ cicloPorPieza),
+/* harmony export */   decidirArranqueDeCupo: () => (/* binding */ decidirArranqueDeCupo),
+/* harmony export */   esperaDeFormacion: () => (/* binding */ esperaDeFormacion),
+/* harmony export */   problemasDeCupo: () => (/* binding */ problemasDeCupo)
+/* harmony export */ });
+/**
+ * PROCESO POR CUPO: N piezas a la vez, y salen las N juntas.
+ *
+ * ===========================================================================
+ * ESTADO: SOLO EL MODULO DE DECISION. NO ESTA CONECTADO AL MOTOR.
+ * ===========================================================================
+ *
+ * Lo que hay aqui esta probado (arnes `25-proceso-por-cupo`), pero el motor NO lo usa todavia:
+ * falta la integracion, y el primer intento SE REVIRTIO a proposito. Esta nota existe para que
+ * quien lo retome no repita el camino que fallo.
+ *
+ * POR QUE SE REVIRTIO EL PRIMER INTENTO: se interceptaba `scheduleTask` para acumular piezas en
+ * una tanda. Ese punto de enganche produjo TRES bugs silenciosos -ninguno daba error, todos daban
+ * una corrida que «termina bien» con menos piezas-, y el tercero no se llego a cerrar:
+ *
+ *   1. La lider arrancaba por DOS caminos a la vez -el flujo original y el evento que encolaba el
+ *      acumulador-, asi que se procesaba por el camino que NO llevaba las acompanantes. Medido:
+ *      de 20 piezas completaban 2.
+ *   2. `release()` reconstruye el `TASK_START` cuando el recurso no esta libre, y no copiaba los
+ *      campos de la tanda: las acompanantes se perdian al pasar por la cola del recurso.
+ *   3. El `while (!eventQueue.isEmpty())` daba la corrida por terminada con piezas esperando a
+ *      llenar un cupo que ya no se iba a llenar: quedaban colgadas sin aviso.
+ *
+ * Traza del ultimo estado, por si sirve de punto de partida: la tanda se formaba bien
+ * (`ACUM inst=20 antes=19 despues=0`) y la lider salia con sus acompanantes
+ * (`TASK_START inst=1 acomp=19`), pero su `TASK_COMPLETE` NUNCA llegaba al bucle: la lider
+ * arrancaba y se quedaba colgada, sin error.
+ *
+ * EL PUNTO DE ENGANCHE QUE HAY QUE USAR, en su lugar: tratar el cupo como un RECURSO, no como una
+ * intercepcion del bucle. Una tarea con cupo N se comporta como una piscina de N plazas que toma
+ * N piezas, las retiene el tiempo del cupo y las suelta juntas. Asi la tanda es un estado del
+ * recurso -que ya tiene cola, capacidad y contabilidad de ocupacion-, y no hay que tocar
+ * `scheduleTask` ni el bucle de eventos.
+ *
+ * ===========================================================================
+ *
+ * QUE ES, Y EN QUE SE DIFERENCIA DE LO QUE YA HABIA:
+ *
+ *   - `quantityRequired` es «esta tarea consume N unidades del recurso para UNA pieza»: una
+ *     maquina que necesita dos operarios. Mas recursos para el mismo trabajo.
+ *   - Los LOTES agrupan N piezas y las procesan EN SECUENCIA, una tras otra.
+ *   - ESTO es N piezas procesadas SIMULTANEAMENTE y liberadas a la vez: un horno que mete 20
+ *     tabletas y las saca todas juntas, una tina de galvanizado, un carro de transporte que se
+ *     llena antes de moverse.
+ *
+ * EL TIEMPO ES EL DEL LOTE COMPLETO, no el de una pieza. Un horno que tarda 100 minutos en
+ * procesar 20 piezas NO tarda 2 000: tarda 100, y las 20 salen al mismo tiempo. Eso da un tiempo
+ * de ciclo POR PIEZA de 100/20 = 5 minutos, que es lo que hace que el proceso sea barato -y la
+ * razon de que existan los hornos-.
+ *
+ * LA CONSECUENCIA QUE HAY QUE ENTENDER, y por la que esto no es solo «dividir»: una pieza
+ * individual puede esperar hasta el tiempo entero del lote. Si llega justo despues de que el horno
+ * arranco, espera los 100 minutos completos. Su tiempo de CICLO es 5 min de media, pero su ESPERA
+ * no: el cupo mejora el throughput y empeora la latencia, y las dos cosas se informan.
+ *
+ * ESTE MODULO ES PURO: decide si un cupo arranca y cuanto dura. No toca el motor ni el reloj, asi
+ * que el arnes comprueba las tres politicas de arranque sin simular nada.
+ */
+
+/** Las dos politicas de arranque que puede declarar una tarea. */
+const ARRANCA_AL_LLENAR = 'lleno';
+const ARRANCA_CON_LO_QUE_HAYA = 'inmediato';
+
+/**
+ * ¿Arranca ya el cupo, o hay que esperar a mas piezas?
+ *
+ * LAS DOS POLITICAS SON CASOS REALES, y por eso las elige la TAREA y no el motor:
+ *
+ *   - `lleno` (esperar a llenar): un CARRO DE TRANSPORTE. Moverlo a medio cargar es tirar un
+ *     viaje: se espera a tener el cupo. Genera una espera de formacion de lote, que aparece en el
+ *     informe como espera propia de la tarea.
+ *   - `inmediato` (arrancar con lo que haya): un HORNO que no puede quedarse encendido sin carga.
+ *     Si hay 7 piezas y el cupo es 20, se procesan las 7.
+ *
+ * Devuelve `{ arranca, motivo }`: `motivo` es para el informe, porque «esperando a llenar» y
+ * «esperando un recurso» son dos diagnósticos distintos que hoy se verian igual.
+ */
+const decidirArranqueDeCupo = ({ politica, enEspera, cupo, esUltimaTanda }) => {
+  const n = Math.max(0, Number(enEspera) || 0);
+  const tam = Math.max(1, Number(cupo) || 1);
+
+  if (n <= 0) return { arranca: false, motivo: 'sin piezas en espera', tanda: 0 };
+
+  // LA ULTIMA TANDA NO ESPERA A LLENAR. Sin esta regla, un carro que espera 20 piezas con un
+  // pedido de 15 NO ARRANCA NUNCA y la corrida termina con 15 piezas sin mover: el motor no
+  // tendria de donde sacar las 5 que faltan y el trabajo quedaria atascado para siempre.
+  //
+  // Y TAMBIEN SE RECORTA AL CUPO: la ultima tanda sigue siendo una tanda, asi que no puede
+  // procesar mas piezas de las que caben. Sin el `min`, un pedido de 25 con cupo 20 metia 25 en
+  // el horno de una vez.
+  if (esUltimaTanda) return { arranca: true, motivo: 'última tanda: no hay más piezas por llegar', tanda: Math.min(n, tam) };
+
+  if (politica === ARRANCA_CON_LO_QUE_HAYA) {
+    // El cupo es el TECHO, no solo el objetivo: un horno de 20 piezas no puede meter 25. Se
+    // recorta igual que en la politica de llenado, y el resto queda para la siguiente tanda.
+    return { arranca: true, motivo: 'arranca con lo que haya', tanda: Math.min(n, tam) };
+  }
+
+  // Politica `lleno`: solo arranca al alcanzar el cupo.
+  if (n >= tam) return { arranca: true, motivo: 'cupo completo', tanda: tam };
+
+  return { arranca: false, motivo: `esperando a llenar el cupo (${n} de ${tam})`, tanda: 0 };
+};
+
+/**
+ * El tiempo de ciclo POR PIEZA de un cupo, que no es el tiempo del cupo.
+ *
+ * ES LA CIFRA QUE EXPLICA POR QUE EXISTE EL PROCESO POR CUPO: 100 minutos para 20 piezas son 5
+ * minutos por pieza. Pero se calcula y se informa APARTE del tiempo del cupo, porque confundirlos
+ * es el error que hace parecer que un horno es 20 veces mas lento de lo que es.
+ */
+const cicloPorPieza = (tiempoDelCupo, tamanoDeLaTanda) => {
+  const t = Number(tiempoDelCupo) || 0;
+  const n = Number(tamanoDeLaTanda) || 0;
+  if (n <= 0) return null;
+  return t / n;
+};
+
+/**
+ * La espera de formacion de lote: lo que una pieza aguanta hasta que el cupo arranca.
+ *
+ * POR QUE HAY QUE MEDIRLA Y NO DEJARLA IMPLICITA: es el precio del cupo, y es invisible si solo se
+ * informa el tiempo de ciclo. Una tina que espera a 30 piezas puede dar un ciclo por pieza
+ * excelente y tener a la primera pieza esperando una hora. El informe tiene que poder enseñar las
+ * dos caras o el lector optimizara la equivocada.
+ */
+const esperaDeFormacion = (llegoEn, arrancoEn) => {
+  const a = Number(llegoEn);
+  const b = Number(arrancoEn);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.max(0, b - a);
+};
+
+/**
+ * Valida la configuracion de un cupo declarada en la tarea.
+ *
+ * Devuelve la lista de problemas -vacia si esta bien-. Se valida ANTES de simular porque un cupo
+ * mal puesto no da error: da una corrida plausible con el proceso equivocado. Un cupo de 1 es
+ * «una pieza a la vez», que es el comportamiento de siempre, y se acepta a proposito.
+ */
+const problemasDeCupo = ({ cupo, politica, tiempoDelCupo }) => {
+  const problemas = [];
+  const n = Number(cupo);
+
+  if (!Number.isFinite(n)) {
+    problemas.push('el cupo tiene que ser un número');
+  } else if (!Number.isInteger(n) || n < 1) {
+    problemas.push(`el cupo debe ser un entero ≥ 1 (has puesto ${cupo})`);
+  }
+
+  if (politica !== ARRANCA_AL_LLENAR && politica !== ARRANCA_CON_LO_QUE_HAYA) {
+    problemas.push(`la política de arranque debe ser «${ARRANCA_AL_LLENAR}» o `
+      + `«${ARRANCA_CON_LO_QUE_HAYA}» (has puesto ${politica})`);
+  }
+
+  const t = Number(tiempoDelCupo);
+  if (!Number.isFinite(t) || t <= 0) {
+    problemas.push('el tiempo del cupo tiene que ser mayor que 0');
+  }
+
+  return problemas;
 };
 
 
@@ -17986,6 +18213,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   redondear2: () => (/* binding */ redondear2),
 /* harmony export */   setByPath: () => (/* binding */ setByPath)
 /* harmony export */ });
+/* harmony import */ var _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./ProcesoPorCupo.js */ "./client/simulation/ProcesoPorCupo.js");
 /**
  * LECTURA Y VALIDACION DE LA TABLA DE DATOS: del DOM al dato del diagrama.
  *
@@ -18006,6 +18234,7 @@ __webpack_require__.r(__webpack_exports__);
  * FORMATO DE LOS ERRORES: todos son `Error` con el nombre del elemento delante («Cortar: ...»),
  * porque en una tabla de veinte filas un mensaje sin nombre obliga a buscar a mano cual falla.
  */
+
 
 /**
  * Un numero escrito por una persona.
@@ -18197,6 +18426,35 @@ const datosDeFilaDeTarea = (tr, ctx) => {
 
   delete datos.carga;
   if (Object.keys(carga).length) datos.carga = carga;
+
+  // CUPO: N piezas a la vez, liberadas juntas. Es el horno que mete 20 tabletas y las saca todas
+  // de golpe, o el carro que se llena antes de moverse.
+  //
+  // NO CONFUNDIR con `resources.quantityRequired`, que es lo contrario: N unidades del recurso
+  // para UNA pieza -una maquina que necesita dos operarios-. Aqui es UNA plaza que retiene N
+  // piezas, y por eso el tiempo declarado es el del CUPO COMPLETO y no el de una pieza.
+  //
+  // Se guarda AUSENTE cuando el cupo es 1: asi ningun diagrama existente cambia de forma ni de
+  // numeros por abrir y guardar la tabla. Mismo trato que la frecuencia «por token».
+  const cupoBruto = String(val('cupo.size') == null ? '' : val('cupo.size')).trim();
+  const arranqueBruto = String(val('cupo.arranque') == null ? '' : val('cupo.arranque')).trim();
+  delete datos.cupo;
+  if (cupoBruto !== '') {
+    const size = numero(cupoBruto, `${name} · cupo`);
+    const politica = arranqueBruto === _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_0__.ARRANCA_AL_LLENAR ? _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_0__.ARRANCA_AL_LLENAR : _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_0__.ARRANCA_CON_LO_QUE_HAYA;
+
+    // SE VALIDA SIEMPRE, incluso con cupo 1 o 0. Antes la validacion vivia dentro del `if (size > 1)`
+    // y eso dejaba pasar un CERO sin decir nada: «procesa cero piezas a la vez» es imposible, y la
+    // tarea se habria guardado con un cupo que el motor no sabe leer. El propio arnes lo caza.
+    const problemas = (0,_ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_0__.problemasDeCupo)({ cupo: size, politica, tiempoDelCupo: 1 })
+      // El tiempo no se valida aqui: lo declara la tarea en su columna «Tiempo», no el cupo.
+      .filter((p) => !/tiempo del cupo/.test(p));
+    if (problemas.length) throw new Error(`${name}: ${problemas.join('; ')}`);
+
+    // Un cupo de 1 es «una pieza a la vez», que es el comportamiento de siempre: se omite para no
+    // engordar el XML de los diagramas que no usan esto.
+    if (size > 1) datos.cupo = { size, arranque: politica };
+  }
 
   // HABILIDAD exigida. Se admite una o varias separadas por comas, y se guarda `habilidad`
   // (singular) cuando es una sola porque es el caso comun y asi el XML queda legible.
