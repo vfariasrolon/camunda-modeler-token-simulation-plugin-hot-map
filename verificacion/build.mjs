@@ -38,6 +38,7 @@ const motor = leer('SimulationEngine.js')
   .replace("from './LegalOvertime.js'", "from './LegalOvertime.mjs'")
   .replace("from './Workload.js'", "from './Workload.mjs'")
   .replace("from './TiemposPorProceso.js'", "from './TiemposPorProceso.mjs'")
+  .replace("from './ProcesoPorCupo.js'", "from './ProcesoPorCupo.mjs'")
   .replace("from 'bpmn-js/lib/util/ModelUtil'", "from './ModelUtil.mjs'");
 
 writeFileSync(join(AQUI, 'SimulationEngine.mjs'), motor);

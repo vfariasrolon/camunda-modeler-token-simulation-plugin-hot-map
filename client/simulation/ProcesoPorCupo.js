@@ -2,35 +2,35 @@
  * PROCESO POR CUPO: N piezas a la vez, y salen las N juntas.
  *
  * ===========================================================================
- * ESTADO: SOLO EL MODULO DE DECISION. NO ESTA CONECTADO AL MOTOR.
+ * ESTADO: CONECTADO AL MOTOR Y FUNCIONANDO.
  * ===========================================================================
  *
- * Lo que hay aqui esta probado (arnes `25-proceso-por-cupo`), pero el motor NO lo usa todavia:
- * falta la integracion, y el primer intento SE REVIRTIO a proposito. Esta nota existe para que
- * quien lo retome no repita el camino que fallo.
+ * Este modulo decide CUANDO arranca un cupo y CON CUANTAS piezas; el motor lo usa
+ * desde `SimulationEngine._acumularEnCupo`. Se edita en la pestana Tareas -columnas
+ * «Cupo» y «Arranque del cupo»- y viaja en el CSV como `cupo` y `arranque_cupo`.
  *
- * POR QUE SE REVIRTIO EL PRIMER INTENTO: se interceptaba `scheduleTask` para acumular piezas en
- * una tanda. Ese punto de enganche produjo TRES bugs silenciosos -ninguno daba error, todos daban
- * una corrida que «termina bien» con menos piezas-, y el tercero no se llego a cerrar:
+ * COMO ESTA CONECTADO, porque el mecanismo importa: la tanda es una COLA.
  *
- *   1. La lider arrancaba por DOS caminos a la vez -el flujo original y el evento que encolaba el
- *      acumulador-, asi que se procesaba por el camino que NO llevaba las acompanantes. Medido:
- *      de 20 piezas completaban 2.
- *   2. `release()` reconstruye el `TASK_START` cuando el recurso no esta libre, y no copiaba los
- *      campos de la tanda: las acompanantes se perdian al pasar por la cola del recurso.
- *   3. El `while (!eventQueue.isEmpty())` daba la corrida por terminada con piezas esperando a
- *      llenar un cupo que ya no se iba a llenar: quedaban colgadas sin aviso.
+ *   1. Cada pieza que llega a la tarea se acumula en una lista de espera.
+ *   2. Cuando la politica dice que arranca, sale la PRIMERA como LIDER y el resto se
+ *      APARCA.
+ *   3. La lider se procesa normal: pide el recurso, paga el tiempo y el coste.
+ *   4. Al terminar, suelta a las aparcadas: cada una cierra su instancia EN ESE
+ *      INSTANTE, sin volver a trabajar ni a costear, y sigue su camino. La tarea
+ *      siguiente las despacha de una en una, que es lo que el motor ya sabia hacer.
  *
- * Traza del ultimo estado, por si sirve de punto de partida: la tanda se formaba bien
- * (`ACUM inst=20 antes=19 despues=0`) y la lider salia con sus acompanantes
- * (`TASK_START inst=1 acomp=19`), pero su `TASK_COMPLETE` NUNCA llegaba al bucle: la lider
- * arrancaba y se quedaba colgada, sin error.
+ * NO HAY NINGUN `for` NI `while` EN ESTA INTEGRACION, y es a proposito: en un motor
+ * de eventos discretos el tiempo avanza por SALTOS, no por iteraciones. La tanda no
+ * «recorre» sus piezas: programa UN evento al final del cupo y el reloj salta hasta
+ * el. Un bucle que disparara N eventos a la vez rompe esa invariante -cada evento se
+ * procesa solo- y es exactamente lo que produjo los tres bugs silenciosos del primer
+ * intento, que se revirtio.
  *
- * EL PUNTO DE ENGANCHE QUE HAY QUE USAR, en su lugar: tratar el cupo como un RECURSO, no como una
- * intercepcion del bucle. Una tarea con cupo N se comporta como una piscina de N plazas que toma
- * N piezas, las retiene el tiempo del cupo y las suelta juntas. Asi la tanda es un estado del
- * recurso -que ya tiene cola, capacidad y contabilidad de ocupacion-, y no hay que tocar
- * `scheduleTask` ni el bucle de eventos.
+ * EL BUG QUE COSTO MAS CARO, para no repetirlo: la lista de acompanantes tiene que
+ * sobrevivir TRES SALTOS -el marcador de la cola del recurso, el re-arranque que hace
+ * `release()`, y el evento de fin-. Si se pierde en cualquiera, las acompanantes se
+ * quedan aparcadas para siempre y la corrida termina con menos piezas que instancias
+ * SIN NINGUN ERROR. La comprobacion que lo caza es `completadas === runValue`.
  *
  * ===========================================================================
  *

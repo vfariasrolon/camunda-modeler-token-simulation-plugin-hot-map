@@ -8361,35 +8361,35 @@ __webpack_require__.r(__webpack_exports__);
  * PROCESO POR CUPO: N piezas a la vez, y salen las N juntas.
  *
  * ===========================================================================
- * ESTADO: SOLO EL MODULO DE DECISION. NO ESTA CONECTADO AL MOTOR.
+ * ESTADO: CONECTADO AL MOTOR Y FUNCIONANDO.
  * ===========================================================================
  *
- * Lo que hay aqui esta probado (arnes `25-proceso-por-cupo`), pero el motor NO lo usa todavia:
- * falta la integracion, y el primer intento SE REVIRTIO a proposito. Esta nota existe para que
- * quien lo retome no repita el camino que fallo.
+ * Este modulo decide CUANDO arranca un cupo y CON CUANTAS piezas; el motor lo usa
+ * desde `SimulationEngine._acumularEnCupo`. Se edita en la pestana Tareas -columnas
+ * «Cupo» y «Arranque del cupo»- y viaja en el CSV como `cupo` y `arranque_cupo`.
  *
- * POR QUE SE REVIRTIO EL PRIMER INTENTO: se interceptaba `scheduleTask` para acumular piezas en
- * una tanda. Ese punto de enganche produjo TRES bugs silenciosos -ninguno daba error, todos daban
- * una corrida que «termina bien» con menos piezas-, y el tercero no se llego a cerrar:
+ * COMO ESTA CONECTADO, porque el mecanismo importa: la tanda es una COLA.
  *
- *   1. La lider arrancaba por DOS caminos a la vez -el flujo original y el evento que encolaba el
- *      acumulador-, asi que se procesaba por el camino que NO llevaba las acompanantes. Medido:
- *      de 20 piezas completaban 2.
- *   2. `release()` reconstruye el `TASK_START` cuando el recurso no esta libre, y no copiaba los
- *      campos de la tanda: las acompanantes se perdian al pasar por la cola del recurso.
- *   3. El `while (!eventQueue.isEmpty())` daba la corrida por terminada con piezas esperando a
- *      llenar un cupo que ya no se iba a llenar: quedaban colgadas sin aviso.
+ *   1. Cada pieza que llega a la tarea se acumula en una lista de espera.
+ *   2. Cuando la politica dice que arranca, sale la PRIMERA como LIDER y el resto se
+ *      APARCA.
+ *   3. La lider se procesa normal: pide el recurso, paga el tiempo y el coste.
+ *   4. Al terminar, suelta a las aparcadas: cada una cierra su instancia EN ESE
+ *      INSTANTE, sin volver a trabajar ni a costear, y sigue su camino. La tarea
+ *      siguiente las despacha de una en una, que es lo que el motor ya sabia hacer.
  *
- * Traza del ultimo estado, por si sirve de punto de partida: la tanda se formaba bien
- * (`ACUM inst=20 antes=19 despues=0`) y la lider salia con sus acompanantes
- * (`TASK_START inst=1 acomp=19`), pero su `TASK_COMPLETE` NUNCA llegaba al bucle: la lider
- * arrancaba y se quedaba colgada, sin error.
+ * NO HAY NINGUN `for` NI `while` EN ESTA INTEGRACION, y es a proposito: en un motor
+ * de eventos discretos el tiempo avanza por SALTOS, no por iteraciones. La tanda no
+ * «recorre» sus piezas: programa UN evento al final del cupo y el reloj salta hasta
+ * el. Un bucle que disparara N eventos a la vez rompe esa invariante -cada evento se
+ * procesa solo- y es exactamente lo que produjo los tres bugs silenciosos del primer
+ * intento, que se revirtio.
  *
- * EL PUNTO DE ENGANCHE QUE HAY QUE USAR, en su lugar: tratar el cupo como un RECURSO, no como una
- * intercepcion del bucle. Una tarea con cupo N se comporta como una piscina de N plazas que toma
- * N piezas, las retiene el tiempo del cupo y las suelta juntas. Asi la tanda es un estado del
- * recurso -que ya tiene cola, capacidad y contabilidad de ocupacion-, y no hay que tocar
- * `scheduleTask` ni el bucle de eventos.
+ * EL BUG QUE COSTO MAS CARO, para no repetirlo: la lista de acompanantes tiene que
+ * sobrevivir TRES SALTOS -el marcador de la cola del recurso, el re-arranque que hace
+ * `release()`, y el evento de fin-. Si se pierde en cualquiera, las acompanantes se
+ * quedan aparcadas para siempre y la corrida termina con menos piezas que instancias
+ * SIN NINGUN ERROR. La comprobacion que lo caza es `completadas === runValue`.
  *
  * ===========================================================================
  *
@@ -14275,14 +14275,16 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ SimulationEngine)
 /* harmony export */ });
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _BusinessCalendar_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./BusinessCalendar.js */ "./client/simulation/BusinessCalendar.js");
 /* harmony import */ var _WarmupCurve_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./WarmupCurve.js */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./LaborRules.js */ "./client/simulation/LaborRules.js");
 /* harmony import */ var _TiemposPorProceso_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./TiemposPorProceso.js */ "./client/simulation/TiemposPorProceso.js");
-/* harmony import */ var _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./LegalOvertime.js */ "./client/simulation/LegalOvertime.js");
-/* harmony import */ var _Workload_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./Workload.js */ "./client/simulation/Workload.js");
+/* harmony import */ var _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./ProcesoPorCupo.js */ "./client/simulation/ProcesoPorCupo.js");
+/* harmony import */ var _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./LegalOvertime.js */ "./client/simulation/LegalOvertime.js");
+/* harmony import */ var _Workload_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./Workload.js */ "./client/simulation/Workload.js");
+
 
 
 
@@ -14445,7 +14447,7 @@ class ResourcePool {
 
     // Miembros con nombre. SIN miembros la piscina se comporta exactamente como
     // antes de A5: esto es lo que hace que ningun diagrama existente cambie.
-    this.members = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.normalizeMembers)(config.members);
+    this.members = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.normalizeMembers)(config.members);
     // Turno de reparto en ronda. Con «siempre la primera» una persona acapararia
     // el trabajo y la otra saldria ociosa en el informe, cuando en la planta se
     // reparten.
@@ -14467,7 +14469,7 @@ class ResourcePool {
       tarifaHora: m.tarifaHora,
       tareas: 0,
       busyMinutes: 0,
-      carga: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)()
+      carga: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.cargaVacia)()
     } ]));
   }
 
@@ -14481,7 +14483,7 @@ class ResourcePool {
    * las tiene, la tarea se BLOQUEA: es la decision conservadora.
    */
   puedeAtender(requeridas) {
-    return (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.poolPuedeHacerla)(this, requeridas);
+    return (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.poolPuedeHacerla)(this, requeridas);
   }
 
   /**
@@ -14526,10 +14528,10 @@ class ResourcePool {
     // DESIGNACION: solo esa persona, y solo si puede. Sin ronda y sin alternativas.
     if (designado) {
       const suyo = this.members.find((m) => m.nombre === designado);
-      return (suyo && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.puedeHacerla)(suyo, requeridas)) ? suyo : null;
+      return (suyo && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.puedeHacerla)(suyo, requeridas)) ? suyo : null;
     }
 
-    const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.puedeHacerla)(m, requeridas));
+    const aptos = this.members.filter((m) => (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.puedeHacerla)(m, requeridas));
     if (!aptos.length) return null;
     // Ronda sobre los APTOS: se avanza el turno segun cuantos hayan.
     this._ultimoMiembro = (this._ultimoMiembro + 1) % aptos.length;
@@ -14577,7 +14579,7 @@ class ResourcePool {
     if (!fila) return;
     fila.tareas += 1;
     fila.busyMinutes += Math.max(0, Number(minutos) || 0);
-    if (carga) fila.carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(fila.carga, carga);
+    if (carga) fila.carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.acumularCarga)(fila.carga, carga);
   }
 }
 
@@ -14709,8 +14711,8 @@ class SimulationEngine {
     // por dia, y `overtimeMode` decide si se aplica. Se reinician en cada corrida porque cada
     // escenario es una corrida independiente: arrastrar el cupo de la anterior haria que el
     // segundo escenario no pudiera hacer ninguna extra, que es un fallo que se ve tarde.
-    this._estadoExtra = (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.crearEstadoSemana)();
-    this.overtimeMode = _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_TOPE;
+    this._estadoExtra = (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.crearEstadoSemana)();
+    this.overtimeMode = _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_SIN_TOPE;
 
     // POR QUE EL TRABAJO ESPERO, cuando el plan respeta el tope. Un plan que se alarga y no
     // dice por que parece un fallo del modelo; con el motivo, el informe puede explicar que
@@ -14732,7 +14734,7 @@ class SimulationEngine {
     // Y la operatividad: el tiempo muerto por categoria, que es lo que permite
     // decir quien tiene holgura y por que esta parado.
     this.carga = {
-      area: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)(),
+      area: (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.cargaVacia)(),
       porTarea: new Map(),
       porPersona: new Map(),
       porMiembro: new Map()
@@ -14861,7 +14863,7 @@ class SimulationEngine {
       return [];
     }
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:ParallelGateway')) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:ParallelGateway')) {
       return element.outgoing.map(flow => {
         const flowResults = this.results.get(flow.id);
         if (flowResults) flowResults.executionCount++;
@@ -14870,7 +14872,7 @@ class SimulationEngine {
     }
 
     let chosenFlow = null;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:ExclusiveGateway') && element.outgoing.length > 1) {
       const rand = this._random();
       let cumulativeProbability = 0;
       for (const flow of element.outgoing) {
@@ -14926,7 +14928,7 @@ class SimulationEngine {
     if (!(extraPedida > 0)) return { concedidoMs: 0, motivo: null };
 
     const fecha = new Date(inicioMs);
-    return (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.concederExtraDe)({
+    return (0,_LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.concederExtraDe)({
       extraMs: extraPedida,
       modo: this.overtimeMode,
       topes: {
@@ -14989,7 +14991,8 @@ class SimulationEngine {
 
     // Un token que solo CONTINUA tras una tarea por lote no cuenta como una
     // ejecucion suya: la tarea por lote se ejecuto una vez, no una por token.
-    if (!event.continuacionDeLote) elementResults.executionCount++;
+    // Un acompanante de tanda tampoco: la tarea por cupo se ejecuto UNA vez, no N.
+    if (!event.continuacionDeLote && !event.acompananteDe) elementResults.executionCount++;
 
     const nextElements = this.findNextElements(element);
 
@@ -15001,7 +15004,7 @@ class SimulationEngine {
     nextElements.forEach(({ element: nextElement, connection: nextConnection }) => {
       const data = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(nextElement);
 
-      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
+      if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(nextElement, 'bpmn:ParallelGateway') && nextElement.incoming.length > 1) {
         const instanceState = this.instanceStates.get(instanceId);
         const gatewayState = instanceState.gateways[nextElement.id] || (instanceState.gateways[nextElement.id] = { arrived: new Set() });
 
@@ -15010,7 +15013,7 @@ class SimulationEngine {
         if (gatewayState.arrived.size === nextElement.incoming.length) {
           this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
         }
-      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(nextElement, 'bpmn:Task') && data) {
+      } else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(nextElement, 'bpmn:Task') && data) {
         // Tarea POR LOTE: la ejecuta una sola vez el primer token que llega, y
         // los demas esperan (barrera). Ver _atenderTareaPorLote.
         if (data.frequency === 'lot' && this.lotConfig.enabled) {
@@ -15021,6 +15024,139 @@ class SimulationEngine {
       } else {
         this.eventQueue.add({ type: 'GATEWAY_COMPLETE', element: nextElement, time: this.clock, instanceId, startTime });
       }
+    });
+  }
+
+  /**
+   * ¿Esta tarea declara un cupo mayor que 1?
+   *
+   * Un cupo de 1 es «una pieza a la vez», que es el comportamiento de siempre: se trata como si no
+   * hubiera cupo para que ningun diagrama existente cambie de numeros por declararlo.
+   */
+  _tieneCupo(data) {
+    const cupo = data && data.cupo && Number(data.cupo.size);
+    return Number.isFinite(cupo) && cupo > 1;
+  }
+
+  /**
+   * Añade una pieza a la tanda en formacion de una tarea con cupo.
+   *
+   * Devuelve `'espera'` cuando la pieza queda aparcada, o `null` cuando hay que seguir procesandola
+   * -que es cuando la tanda se completa y esta pieza es su lider-.
+   *
+   * EL MECANISMO, que es una COLA y no un bucle:
+   *
+   *   1. Cada pieza que llega se guarda en la lista de espera de esa tarea.
+   *   2. Cuando la politica dice que arranca -cupo lleno, o con lo que haya, o es la ultima
+   *      tanda-, sale la PRIMERA como lider y las demas se APARCAN en `this._aparcadas`.
+   *   3. La lider se procesa de forma normal: pide el recurso, paga el tiempo y el coste.
+   *   4. Al terminar, la lider suelta a las aparcadas: cada una completa su instancia EN ESE
+   *      INSTANTE, sin volver a trabajar ni a costear, y sigue su camino. La tarea siguiente las
+   *      despacha de una en una, que es lo que el motor ya sabe hacer.
+   *
+   * POR QUE ASI Y NO HACIENDO UN `for`: en un motor de eventos discretos el tiempo avanza por
+   * SALTOS, no por iteraciones. La tanda no «recorre» sus piezas: programa UN evento al final del
+   * cupo y el reloj salta hasta el. Un bucle que disparara N eventos a la vez romperia esa
+   * invariante -cada evento se procesa solo- y es exactamente lo que produjo los bugs silenciosos
+   * del intento anterior.
+   */
+  _acumularEnCupo(element, data, taskEvent, ctx) {
+    const cupo = Number(data.cupo.size);
+    const politica = data.cupo.arranque === _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_5__.ARRANCA_CON_LO_QUE_HAYA
+      ? _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_5__.ARRANCA_CON_LO_QUE_HAYA : _ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_5__.ARRANCA_AL_LLENAR;
+
+    if (!this._tandas) this._tandas = new Map();
+    let estado = this._tandas.get(element.id);
+    if (!estado) {
+      estado = { esperando: [] };
+      this._tandas.set(element.id, estado);
+    }
+
+    estado.esperando.push(taskEvent);
+    const enEspera = estado.esperando.length;
+
+    // ¿Queda alguna pieza por llegar? La ultima tanda NO puede esperar a llenarse: si esperara, el
+    // carro aguantaria piezas que ya no van a tener compania y la corrida terminaria con trabajo
+    // sin hacer, sin ningun error que lo explique.
+    const esUltima = this.instanceCounter >= this.runValue
+      && !this.eventQueue.items.some((e) => e.element && e.element.id === element.id);
+
+    const decision = (0,_ProcesoPorCupo_js__WEBPACK_IMPORTED_MODULE_5__.decidirArranqueDeCupo)({ politica, enEspera, cupo, esUltimaTanda: esUltima });
+    if (!decision.arranca) return 'espera';
+
+    // ARRANCA LA TANDA: sale la lider y el resto se aparca.
+    const tanda = estado.esperando.splice(0, decision.tanda);
+    const lider = tanda[0];
+    const acompanantes = tanda.slice(1);
+
+    if (acompanantes.length) {
+      if (!this._aparcadas) this._aparcadas = new Map();
+      acompanantes.forEach((t) => {
+        this._aparcadas.set(t.instanceId, { taskEvent: t, element });
+        // LA ESPERA DE FORMACION se anota aqui: el rato que la pieza aguanto hasta que el cupo
+        // arranco. Sin esto, el precio del cupo -la latencia- quedaria invisible y solo se veria su
+        // beneficio -el throughput-.
+        const r = this.results.get(element.id);
+        if (r) {
+          const minutos = this.standardCalendar.calculateBusinessDurationInMinutes(
+            new Date(t.waitStart != null ? t.waitStart : t.startTime), new Date(this.clock));
+          r.totalWaitTime += minutos;
+        }
+      });
+    }
+
+    // La lider se procesa como cualquier tarea, y lleva apuntadas a sus acompanantes para soltarlas
+    // al terminar. El trabajo, el recurso y el coste son SUYOS: la tanda se cobra una sola vez.
+    taskEvent.acompanantes = acompanantes.map((t) => t.instanceId);
+    // Y su espera es la de la pieza que mas aguanto, que es la que define el ciclo del cupo.
+    if (acompanantes.length) taskEvent.waitStart = lider.waitStart;
+
+    return null;
+  }
+
+  /**
+   * Suelta las piezas aparcadas de una tanda cuando su lider termina.
+   *
+   * Cada acompanante completa su instancia EN ESTE INSTANTE y sigue su camino. No vuelve a trabajar
+   * ni a costear: el tiempo del cupo y su importe ya los pago la lider, y cobrarlos otra vez es el
+   * error que haria que un horno de 100 minutos para 20 piezas costase 2000.
+   */
+  _soltarAcompanantes(event) {
+    const ids = event.acompanantes;
+    if (!ids || !ids.length || !this._aparcadas) return;
+
+    ids.forEach((id) => {
+      const guardada = this._aparcadas.get(id);
+      if (!guardada) return;
+      this._aparcadas.delete(id);
+      // Se encola su TASK_COMPLETE AHORA, con los campos de trabajo A CERO: el trabajo lo hizo y lo
+      // pago la lider, pero la instancia tiene que cerrarse o la pieza desaparece sin error.
+      this.eventQueue.add({
+        type: 'TASK_COMPLETE',
+        element: guardada.element,
+        time: this.clock,
+        instanceId: id,
+        startTime: guardada.taskEvent.startTime,
+        processingTime: 0,
+        reworkTime: 0,
+        overtime: 0,
+        operationCost: 0,
+        costoExterno: 0,
+        piezasFacturadas: 0,
+        doubleOvertimePremium: 0,
+        tripleOvertimePremium: 0,
+        dayPremium: 0,
+        dayPremiumKind: null,
+        quantityRequired: 0,
+        totalDuration: 0,
+        effectiveDuration: 0,
+        // El recurso lo pidio la lider: pedirlo otra vez ocuparia el horno N veces.
+        recursoTomado: true,
+        waitStart: null,
+        // Y no cuenta como ejecucion del elemento: la tarea por cupo se ejecuto UNA vez, no N. Es
+        // el mismo trato que `continuacionDeLote`, que ya existia para este problema.
+        acompananteDe: event.instanceId
+      });
     });
   }
 
@@ -15045,7 +15181,7 @@ class SimulationEngine {
     // categoria de tiempo muerto. Es la decision conservadora (un dato que falta
     // bloquea, no acelera) y es lo unico que puede producir «bloqueado por
     // habilidad». Sin nombres no se filtra, porque no hay datos que filtrar.
-    const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.habilidadesRequeridas)(data);
+    const requeridas = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.habilidadesRequeridas)(data);
     // EL MIEMBRO DESIGNADO, leido aqui porque la guarda de habilidad lo necesita: si la tarea
     // nombra a alguien que NO tiene la habilidad exigida, el bloqueo es seguro y hay que detectarlo
     // igual que el caso de «ninguno de la piscina la tiene». Sin esto, la tarea pasaria la guarda
@@ -15053,7 +15189,22 @@ class SimulationEngine {
     // recurso.
     const designado = (data.resources && data.resources.miembro) || null;
     const designadoPuede = !designado || !pool
-      || (() => { const m = pool.members.find((x) => x.nombre === designado); return m && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.puedeHacerla)(m, requeridas); })();
+      || (() => { const m = pool.members.find((x) => x.nombre === designado); return m && (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.puedeHacerla)(m, requeridas); })();
+
+    // CUPO: N piezas a la vez, liberadas juntas.
+    //
+    // Va AQUI, antes de pedir nada, porque una tanda es UNA ejecucion de la tarea: si cada pieza
+    // pidiera el recurso por su cuenta, un horno de 20 plazas se ocuparia 20 veces y su tiempo de
+    // ciclo saldria 20 veces mayor.
+    //
+    // El mecanismo es el de una COLA, no el de un bucle: las piezas se acumulan y, cuando la tanda
+    // arranca, se procesa la primera -la lider- y las demas quedan APARCADAS hasta que la lider
+    // termina. Entonces salen todas juntas y cada una sigue su camino, de modo que la tarea
+    // siguiente las despacha de una en una segun su propio tiempo.
+    if (this._tieneCupo(data) && !taskEvent.acompananteDe) {
+      const seguir = this._acumularEnCupo(element, data, taskEvent, { pool, quantityRequired, requeridas, designado });
+      if (seguir === 'espera') return;
+    }
 
     if (pool && !designadoPuede) {
       const motivo = pool.members.some((m) => m.nombre === designado)
@@ -15106,7 +15257,11 @@ class SimulationEngine {
         quantityRequired,
         waitStart: time,
         esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
-        lotNumber: taskEvent.lotNumber || null
+        lotNumber: taskEvent.lotNumber || null,
+        // La tanda viaja CON el marcador: si el recurso no esta libre, la tarea se queda en cola y
+        // `release()` la reprograma. Sin esto, la lista de acompanantes se perdia EN ESE SALTO y las
+        // piezas se quedaban aparcadas para siempre.
+        acompanantes: taskEvent.acompanantes || null
       };
       // El marcador se queda en la cola de la piscina; `release()` lo devuelve
       // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
@@ -15170,7 +15325,7 @@ class SimulationEngine {
     // LFT: es su factura, no tu plantilla. Si se le aplicara el tope, subcontratar quedaria
     // artificialmente limitado y el escenario legal mentiria sobre su propia produccion.
     const esExternaAqui = Boolean(pool && pool.origen === 'externo');
-    const concesion = (this.overtimeMode === _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_TOPE_LEGAL && !esExternaAqui)
+    const concesion = (this.overtimeMode === _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_TOPE_LEGAL && !esExternaAqui)
       ? this._concederExtra(extraPedida, time)
       : { concedidoMs: extraPedida, motivo: null };
     const overtime = concesion.concedidoMs;
@@ -15311,6 +15466,10 @@ class SimulationEngine {
       // cola, ese es el instante en que se libero la unidad. Sin el, la traza por token no puede
       // medir la espera y la deja en cero.
       waitStart: taskEvent.waitStart != null ? taskEvent.waitStart : null,
+      // LA TANDA VIAJA HASTA EL FIN, que es donde se sueltan las acompanantes. Son TRES saltos
+      // -marcador de la cola, re-arranque y evento de fin- y si se pierde en cualquiera, las piezas
+      // desaparecen sin ningun error: es el bug que costo mas caro en el intento anterior.
+      acompanantes: taskEvent.acompanantes || null,
       processingTime,
       reworkTime,
       overtime: taskOvertimeDuration,
@@ -15422,14 +15581,14 @@ class SimulationEngine {
    * 20 daria 240 kg cuando en planta fue un solo viaje.
    */
   _anotarCarga(event, data, pool) {
-    const carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.normalizeCarga)(data.carga);
-    const inc = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaDeUnaEjecucion)(carga, 1);
+    const carga = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.normalizeCarga)(data.carga);
+    const inc = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.cargaDeUnaEjecucion)(carga, 1);
 
     const vacia = inc.cargadaKg === 0 && inc.arrastradaKg === 0;
     // El area se anota SIEMPRE, incluso con carga cero: asi el informe puede
     // decir «no hay carga declarada» en vez de tener que distinguir «no hay
     // tareas» de «las tareas no mueven peso».
-    this.carga.area = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(this.carga.area, inc);
+    this.carga.area = (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.acumularCarga)(this.carga.area, inc);
 
     // Minutos del puesto y reparto por persona. Va ANTES del corte por carga
     // vacia y sin depender de ella: el TIEMPO trabajado y la masa movida son dos
@@ -15442,17 +15601,17 @@ class SimulationEngine {
 
     if (vacia) return inc;
 
-    const t = this.carga.porTarea.get(event.element.id) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)();
-    this.carga.porTarea.set(event.element.id, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(t, inc));
+    const t = this.carga.porTarea.get(event.element.id) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.cargaVacia)();
+    this.carga.porTarea.set(event.element.id, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.acumularCarga)(t, inc));
 
     if (event.miembro) {
-      const p = this.carga.porMiembro.get(event.miembro.nombre) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)();
-      this.carga.porMiembro.set(event.miembro.nombre, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(p, inc));
+      const p = this.carga.porMiembro.get(event.miembro.nombre) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.cargaVacia)();
+      this.carga.porMiembro.set(event.miembro.nombre, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.acumularCarga)(p, inc));
     } else if (pool) {
       // Sin nombres, la carga es de la PISCINA: se guarda por piscina para no
       // perderla, y el informe la muestra como «sin nombre asignado».
-      const p = this.carga.porPersona.get(pool.name) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.cargaVacia)();
-      this.carga.porPersona.set(pool.name, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_6__.acumularCarga)(p, inc));
+      const p = this.carga.porPersona.get(pool.name) || (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.cargaVacia)();
+      this.carga.porPersona.set(pool.name, (0,_Workload_js__WEBPACK_IMPORTED_MODULE_7__.acumularCarga)(p, inc));
     }
 
     return inc;
@@ -15477,7 +15636,7 @@ class SimulationEngine {
   }
 
   _findRootConfig() {
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:StartEvent'));
     const rootEvents = startEvents.filter(el => (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el)?.isRoot);
 
     if (rootEvents.length === 1) {
@@ -15509,15 +15668,15 @@ class SimulationEngine {
     // construir el calendario extendido, porque `sin-extra` no debe extender la jornada: su
     // plan es la jornada base y punto.
     const modoPedido = options.overtimeMode;
-    this.overtimeMode = [ _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_EXTRA, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_TOPE_LEGAL, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_TOPE ].includes(modoPedido)
+    this.overtimeMode = [ _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_SIN_EXTRA, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_TOPE_LEGAL, _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_SIN_TOPE ].includes(modoPedido)
       ? modoPedido
-      : (options.useOvertime ? _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_TOPE : _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_EXTRA);
+      : (options.useOvertime ? _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_SIN_TOPE : _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_SIN_EXTRA);
 
     // La jornada se extiende cuando el plan contempla extra, sea con tope o sin el. Un plan
     // «con tope» que no extendiera la jornada no tendria donde poner la extra que si permite
     // la ley, y su produccion seria identica a la del plan sin extra: dos escenarios iguales
     // con nombres distintos.
-    const extiendeJornada = options.useOvertime && this.overtimeMode !== _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_5__.MODO_SIN_EXTRA;
+    const extiendeJornada = options.useOvertime && this.overtimeMode !== _LegalOvertime_js__WEBPACK_IMPORTED_MODULE_6__.MODO_SIN_EXTRA;
 
     if (extiendeJornada && this.rootConfig.overtime) {
       const overtimeCalendarConfig = JSON.parse(JSON.stringify(rootConfig.calendar));
@@ -15556,14 +15715,14 @@ class SimulationEngine {
 
     console.log(`--- Simulation Starting (useOvertime: ${options.useOvertime}) ---`);
 
-    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Participant'));
+    const processRoot = this._elementRegistry.find(el => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Participant'));
     const processConfig = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(processRoot);
     const { runValue } = this.rootConfig.simulationConfig || { runValue: 100 };
     if (processConfig && processConfig.resourcePools) {
       processConfig.resourcePools.forEach(p => this.resourcePools.set(p.name, new ResourcePool(p)));
     }
 
-    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:StartEvent'));
+    const startEvents = this._elementRegistry.filter(el => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:StartEvent'));
     if (!startEvents.length) {
       console.error("No start event found. Cannot run simulation.");
       return this.results;
@@ -15759,7 +15918,8 @@ class SimulationEngine {
               miembro,
               // Y DESDE CUANDO ESPERABA: es el unico dato que se perderia al salir de la cola, y
               // sin el la traza por token no puede medir la espera de esta tarea.
-              waitStart: marcador.waitStart
+              waitStart: marcador.waitStart,
+              acompanantes: marcador.acompanantes || null
             });
           });
         }
@@ -15769,6 +15929,11 @@ class SimulationEngine {
         // cola en el mismo instante.
         if (event.esTareaDeLote) this._cerrarTareaDeLote(event);
 
+        // CUPO: la lider termina y suelta a las piezas que estuvieron dentro con ella. Salen las N
+        // JUNTAS -es lo que define a un proceso por cupo- y a partir de aqui cada una sigue su
+        // camino, asi que la tarea siguiente las despacha de una en una segun su propio tiempo.
+        this._soltarAcompanantes(event);
+
         this.processEvent(event);
       } else {
         this.processEvent(event);
@@ -15777,7 +15942,7 @@ class SimulationEngine {
       // Llegada de la siguiente instancia. En modo LOTES no se usa: alli las
       // instancias de un lote entran juntas y el siguiente lote lo dispara el
       // cierre del anterior.
-      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
+      if (!this.lotConfig.enabled && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(event.element, 'bpmn:StartEvent') && this.instanceCounter < runValue) {
         this.instanceCounter++;
         const arrivalIntervalInMinutes = arrivalInterval / 60000;
         const nextArrivalTime = this.calendar.addWorkingTime(new Date(event.time), arrivalIntervalInMinutes).getTime();
@@ -16377,7 +16542,7 @@ class SimulationEngine {
       minutosDelDiaQueYaSonExtra: this.legalDayRecortadoMin || 0
     });
 
-    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:Task'));
+    const tareas = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Task'));
 
     if (!tareas.length) {
       console.log('No hay tareas en el diagrama.');
@@ -16434,7 +16599,7 @@ class SimulationEngine {
     // los de una tarea: `findNextElements` incrementa el de la salida elegida. Se listan
     // TODAS las del diagrama, incluso con 0, porque las que no se recorrieron son el
     // hallazgo de la vista: una rama muerta es capacidad que se paga y no se usa.
-    const flujos = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_7__.is)(el, 'bpmn:SequenceFlow'));
+    const flujos = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:SequenceFlow'));
     if (flujos.length) {
       const totalPasos = flujos.reduce((acc, el) => acc + ((this.results.get(el.id) || {}).executionCount || 0), 0);
       console.log('SALIDAS · por conexion (pasos por la linea)');

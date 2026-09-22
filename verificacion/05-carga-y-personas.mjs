@@ -43,7 +43,8 @@ function correr({ runValue = 4, tareas, pools, lots, labor, cost, overtime }) {
         ...(t.habilidad ? { habilidad: t.habilidad } : {}),
         ...(t.habilidades ? { habilidades: t.habilidades } : {}),
         ...(t.frequency ? { frequency: t.frequency } : {}),
-        ...(t.barrier ? { barrier: t.barrier } : {})
+        ...(t.barrier ? { barrier: t.barrier } : {}),
+        ...(t.cupo ? { cupo: { size: t.cupo, arranque: t.arranque || 'lleno' } } : {})
       }
     }));
 
@@ -472,6 +473,92 @@ console.log('\n== 14. La traza por token: la espera se mide y no se cobra dos ve
     'y la suma de los costos por caso CUADRA con el total (no se cobra dos veces la espera)',
     `${tres(porCaso)} vs ${tres(totalTareas)}`);
   ok(porCaso > 0, 'con coste de espera declarado, el caso acumula algo', tres(porCaso));
+}
+
+console.log('\n== 15. CUPO: N piezas a la vez, liberadas juntas (motor real) ==');
+{
+  // EL CASO DEL USUARIO: un carro que espera a llenarse con 20 piezas, y despues una tarea que las
+  // despacha de una en una. La comprobacion que caza el bug de las piezas perdidas es COMPLETADAS:
+  // si alguna acompanante no cierra su instancia, desaparece sin dar ningun error.
+  const r = correr({
+    runValue: 20,
+    tareas: [
+      { id: 'Horno', minutos: 100, pool: 'H', cupo: 20, arranque: 'lleno' },
+      { id: 'Sig', minutos: 5, pool: 'S' }
+    ],
+    pools: [ { name: 'H', quantity: 1 }, { name: 'S', quantity: 1 } ]
+  });
+
+  // LA COMPROBACION MAS IMPORTANTE. Antes de tenerla, el motor perdia 19 de 20 piezas sin que
+  // nada fallara: la corrida «terminaba bien» con la mitad del trabajo hecho.
+  ok(r.completadas === 20,
+    'NINGUNA pieza se pierde: las 20 completan el proceso',
+    `${r.completadas} de 20`);
+
+  const h = r.resultados.get('Horno') || {};
+  const sig = r.resultados.get('Sig') || {};
+
+  // El cupo agrupa: 20 piezas en tandas, no 20 ejecuciones.
+  ok(h.executionCount > 0 && h.executionCount <= 3,
+    'el Horno agrupa: pocas tandas para 20 piezas, no 20 ejecuciones',
+    String(h.executionCount));
+
+  // Y la tarea siguiente SI las despacha de una en una, que es el modelo de «cola de
+  // procesamiento» que pidio el usuario: el horno descarga 20 y el puesto siguiente las toma
+  // segun su propio tiempo.
+  ok(sig.executionCount === 20,
+    'y la tarea siguiente despacha las 20 de una en una',
+    String(sig.executionCount));
+
+  // EL TIEMPO SE COBRA UNA VEZ POR TANDA: si se cobrara por pieza, un horno de 100 min para 20
+  // piezas daria 2000 min de ciclo, que es el error que hace parecer lento un horno.
+  const ciclo = (h.totalCycleTime || 0) / (h.executionCount || 1);
+  ok(ciclo < 300, 'el tiempo del cupo no se multiplica por las piezas', `${tres(ciclo)} min/tanda`);
+
+  // Y el horno se ocupa por tanda, no una vez por pieza.
+  const rh = r.motor.utilization.get('H');
+  ok(rh.busyMinutes < 400, 'el recurso se ocupa por tanda',
+    `${Math.round(rh.busyMinutes)} min ocupado para ${h.executionCount} tanda(s)`);
+}
+
+console.log('\n== 16. CUPO: cupo de 1 es el comportamiento de siempre ==');
+{
+  // La compatibilidad: un diagrama sin cupo -o con cupo 1- tiene que dar EXACTAMENTE los mismos
+  // numeros que antes de que esta funcion existiera.
+  const conCupo1 = correr({
+    runValue: 4,
+    tareas: [ { id: 'T1', minutos: 30, pool: 'P', cupo: 1, arranque: 'inmediato' } ],
+    pools: [ { name: 'P', quantity: 1 } ]
+  });
+  const sinCupo = correr({
+    runValue: 4,
+    tareas: [ { id: 'T1', minutos: 30, pool: 'P' } ],
+    pools: [ { name: 'P', quantity: 1 } ]
+  });
+
+  const a = conCupo1.resultados.get('T1') || {};
+  const b = sinCupo.resultados.get('T1') || {};
+  ok(a.executionCount === 4 && b.executionCount === 4,
+    'una pieza por ejecucion en los dos casos', `${a.executionCount} vs ${b.executionCount}`);
+  ok(conCupo1.completadas === 4 && sinCupo.completadas === 4,
+    'y completan las mismas piezas', `${conCupo1.completadas} vs ${sinCupo.completadas}`);
+  ok(tres(a.totalCycleTime) === tres(b.totalCycleTime),
+    'el ciclo total es identico: el cupo 1 no cambia nada',
+    `${tres(a.totalCycleTime)} vs ${tres(b.totalCycleTime)}`);
+}
+
+console.log('\n== 17. CUPO: la ultima tanda arranca aunque no se llene ==');
+{
+  // 5 piezas con cupo 20: NUNCA se llena. Sin la regla de la ultima tanda, el carro esperaria 20
+  // para siempre y las 5 se quedarian sin procesar, sin ningun error que lo explique.
+  const r = correr({
+    runValue: 5,
+    tareas: [ { id: 'Horno', minutos: 60, pool: 'H', cupo: 20, arranque: 'lleno' } ],
+    pools: [ { name: 'H', quantity: 1 } ]
+  });
+  ok(r.completadas === 5,
+    'las 5 piezas completan aunque el cupo de 20 no se llene',
+    `${r.completadas} de 5`);
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);

@@ -5,6 +5,9 @@ import { normalizeWarmup, effectiveDuration, describeWarmup } from './WarmupCurv
 import { resolveLabor, describeLabor } from './LaborRules.js';
 import { resumenPorProceso } from './TiemposPorProceso.js';
 import {
+  decidirArranqueDeCupo, ARRANCA_AL_LLENAR, ARRANCA_CON_LO_QUE_HAYA
+} from './ProcesoPorCupo.js';
+import {
   crearEstadoSemana, concederExtraDe, describeMotivo,
   MODO_SIN_EXTRA, MODO_TOPE_LEGAL, MODO_SIN_TOPE
 } from './LegalOvertime.js';
@@ -710,7 +713,8 @@ export default class SimulationEngine {
 
     // Un token que solo CONTINUA tras una tarea por lote no cuenta como una
     // ejecucion suya: la tarea por lote se ejecuto una vez, no una por token.
-    if (!event.continuacionDeLote) elementResults.executionCount++;
+    // Un acompanante de tanda tampoco: la tarea por cupo se ejecuto UNA vez, no N.
+    if (!event.continuacionDeLote && !event.acompananteDe) elementResults.executionCount++;
 
     const nextElements = this.findNextElements(element);
 
@@ -745,6 +749,139 @@ export default class SimulationEngine {
     });
   }
 
+  /**
+   * ¿Esta tarea declara un cupo mayor que 1?
+   *
+   * Un cupo de 1 es «una pieza a la vez», que es el comportamiento de siempre: se trata como si no
+   * hubiera cupo para que ningun diagrama existente cambie de numeros por declararlo.
+   */
+  _tieneCupo(data) {
+    const cupo = data && data.cupo && Number(data.cupo.size);
+    return Number.isFinite(cupo) && cupo > 1;
+  }
+
+  /**
+   * Añade una pieza a la tanda en formacion de una tarea con cupo.
+   *
+   * Devuelve `'espera'` cuando la pieza queda aparcada, o `null` cuando hay que seguir procesandola
+   * -que es cuando la tanda se completa y esta pieza es su lider-.
+   *
+   * EL MECANISMO, que es una COLA y no un bucle:
+   *
+   *   1. Cada pieza que llega se guarda en la lista de espera de esa tarea.
+   *   2. Cuando la politica dice que arranca -cupo lleno, o con lo que haya, o es la ultima
+   *      tanda-, sale la PRIMERA como lider y las demas se APARCAN en `this._aparcadas`.
+   *   3. La lider se procesa de forma normal: pide el recurso, paga el tiempo y el coste.
+   *   4. Al terminar, la lider suelta a las aparcadas: cada una completa su instancia EN ESE
+   *      INSTANTE, sin volver a trabajar ni a costear, y sigue su camino. La tarea siguiente las
+   *      despacha de una en una, que es lo que el motor ya sabe hacer.
+   *
+   * POR QUE ASI Y NO HACIENDO UN `for`: en un motor de eventos discretos el tiempo avanza por
+   * SALTOS, no por iteraciones. La tanda no «recorre» sus piezas: programa UN evento al final del
+   * cupo y el reloj salta hasta el. Un bucle que disparara N eventos a la vez romperia esa
+   * invariante -cada evento se procesa solo- y es exactamente lo que produjo los bugs silenciosos
+   * del intento anterior.
+   */
+  _acumularEnCupo(element, data, taskEvent, ctx) {
+    const cupo = Number(data.cupo.size);
+    const politica = data.cupo.arranque === ARRANCA_CON_LO_QUE_HAYA
+      ? ARRANCA_CON_LO_QUE_HAYA : ARRANCA_AL_LLENAR;
+
+    if (!this._tandas) this._tandas = new Map();
+    let estado = this._tandas.get(element.id);
+    if (!estado) {
+      estado = { esperando: [] };
+      this._tandas.set(element.id, estado);
+    }
+
+    estado.esperando.push(taskEvent);
+    const enEspera = estado.esperando.length;
+
+    // ¿Queda alguna pieza por llegar? La ultima tanda NO puede esperar a llenarse: si esperara, el
+    // carro aguantaria piezas que ya no van a tener compania y la corrida terminaria con trabajo
+    // sin hacer, sin ningun error que lo explique.
+    const esUltima = this.instanceCounter >= this.runValue
+      && !this.eventQueue.items.some((e) => e.element && e.element.id === element.id);
+
+    const decision = decidirArranqueDeCupo({ politica, enEspera, cupo, esUltimaTanda: esUltima });
+    if (!decision.arranca) return 'espera';
+
+    // ARRANCA LA TANDA: sale la lider y el resto se aparca.
+    const tanda = estado.esperando.splice(0, decision.tanda);
+    const lider = tanda[0];
+    const acompanantes = tanda.slice(1);
+
+    if (acompanantes.length) {
+      if (!this._aparcadas) this._aparcadas = new Map();
+      acompanantes.forEach((t) => {
+        this._aparcadas.set(t.instanceId, { taskEvent: t, element });
+        // LA ESPERA DE FORMACION se anota aqui: el rato que la pieza aguanto hasta que el cupo
+        // arranco. Sin esto, el precio del cupo -la latencia- quedaria invisible y solo se veria su
+        // beneficio -el throughput-.
+        const r = this.results.get(element.id);
+        if (r) {
+          const minutos = this.standardCalendar.calculateBusinessDurationInMinutes(
+            new Date(t.waitStart != null ? t.waitStart : t.startTime), new Date(this.clock));
+          r.totalWaitTime += minutos;
+        }
+      });
+    }
+
+    // La lider se procesa como cualquier tarea, y lleva apuntadas a sus acompanantes para soltarlas
+    // al terminar. El trabajo, el recurso y el coste son SUYOS: la tanda se cobra una sola vez.
+    taskEvent.acompanantes = acompanantes.map((t) => t.instanceId);
+    // Y su espera es la de la pieza que mas aguanto, que es la que define el ciclo del cupo.
+    if (acompanantes.length) taskEvent.waitStart = lider.waitStart;
+
+    return null;
+  }
+
+  /**
+   * Suelta las piezas aparcadas de una tanda cuando su lider termina.
+   *
+   * Cada acompanante completa su instancia EN ESTE INSTANTE y sigue su camino. No vuelve a trabajar
+   * ni a costear: el tiempo del cupo y su importe ya los pago la lider, y cobrarlos otra vez es el
+   * error que haria que un horno de 100 minutos para 20 piezas costase 2000.
+   */
+  _soltarAcompanantes(event) {
+    const ids = event.acompanantes;
+    if (!ids || !ids.length || !this._aparcadas) return;
+
+    ids.forEach((id) => {
+      const guardada = this._aparcadas.get(id);
+      if (!guardada) return;
+      this._aparcadas.delete(id);
+      // Se encola su TASK_COMPLETE AHORA, con los campos de trabajo A CERO: el trabajo lo hizo y lo
+      // pago la lider, pero la instancia tiene que cerrarse o la pieza desaparece sin error.
+      this.eventQueue.add({
+        type: 'TASK_COMPLETE',
+        element: guardada.element,
+        time: this.clock,
+        instanceId: id,
+        startTime: guardada.taskEvent.startTime,
+        processingTime: 0,
+        reworkTime: 0,
+        overtime: 0,
+        operationCost: 0,
+        costoExterno: 0,
+        piezasFacturadas: 0,
+        doubleOvertimePremium: 0,
+        tripleOvertimePremium: 0,
+        dayPremium: 0,
+        dayPremiumKind: null,
+        quantityRequired: 0,
+        totalDuration: 0,
+        effectiveDuration: 0,
+        // El recurso lo pidio la lider: pedirlo otra vez ocuparia el horno N veces.
+        recursoTomado: true,
+        waitStart: null,
+        // Y no cuenta como ejecucion del elemento: la tarea por cupo se ejecuto UNA vez, no N. Es
+        // el mismo trato que `continuacionDeLote`, que ya existia para este problema.
+        acompananteDe: event.instanceId
+      });
+    });
+  }
+
   scheduleTask(taskEvent) {
     const { element, time, instanceId, startTime } = taskEvent;
     const data = getSimulationData(element);
@@ -775,6 +912,21 @@ export default class SimulationEngine {
     const designado = (data.resources && data.resources.miembro) || null;
     const designadoPuede = !designado || !pool
       || (() => { const m = pool.members.find((x) => x.nombre === designado); return m && puedeHacerla(m, requeridas); })();
+
+    // CUPO: N piezas a la vez, liberadas juntas.
+    //
+    // Va AQUI, antes de pedir nada, porque una tanda es UNA ejecucion de la tarea: si cada pieza
+    // pidiera el recurso por su cuenta, un horno de 20 plazas se ocuparia 20 veces y su tiempo de
+    // ciclo saldria 20 veces mayor.
+    //
+    // El mecanismo es el de una COLA, no el de un bucle: las piezas se acumulan y, cuando la tanda
+    // arranca, se procesa la primera -la lider- y las demas quedan APARCADAS hasta que la lider
+    // termina. Entonces salen todas juntas y cada una sigue su camino, de modo que la tarea
+    // siguiente las despacha de una en una segun su propio tiempo.
+    if (this._tieneCupo(data) && !taskEvent.acompananteDe) {
+      const seguir = this._acumularEnCupo(element, data, taskEvent, { pool, quantityRequired, requeridas, designado });
+      if (seguir === 'espera') return;
+    }
 
     if (pool && !designadoPuede) {
       const motivo = pool.members.some((m) => m.nombre === designado)
@@ -827,7 +979,11 @@ export default class SimulationEngine {
         quantityRequired,
         waitStart: time,
         esTareaDeLote: Boolean(taskEvent.esTareaDeLote),
-        lotNumber: taskEvent.lotNumber || null
+        lotNumber: taskEvent.lotNumber || null,
+        // La tanda viaja CON el marcador: si el recurso no esta libre, la tarea se queda en cola y
+        // `release()` la reprograma. Sin esto, la lista de acompanantes se perdia EN ESE SALTO y las
+        // piezas se quedaban aparcadas para siempre.
+        acompanantes: taskEvent.acompanantes || null
       };
       // El marcador se queda en la cola de la piscina; `release()` lo devuelve
       // cuando haya hueco y entonces se vuelve a llamar aqui, ya con la hora real.
@@ -1032,6 +1188,10 @@ export default class SimulationEngine {
       // cola, ese es el instante en que se libero la unidad. Sin el, la traza por token no puede
       // medir la espera y la deja en cero.
       waitStart: taskEvent.waitStart != null ? taskEvent.waitStart : null,
+      // LA TANDA VIAJA HASTA EL FIN, que es donde se sueltan las acompanantes. Son TRES saltos
+      // -marcador de la cola, re-arranque y evento de fin- y si se pierde en cualquiera, las piezas
+      // desaparecen sin ningun error: es el bug que costo mas caro en el intento anterior.
+      acompanantes: taskEvent.acompanantes || null,
       processingTime,
       reworkTime,
       overtime: taskOvertimeDuration,
@@ -1480,7 +1640,8 @@ export default class SimulationEngine {
               miembro,
               // Y DESDE CUANDO ESPERABA: es el unico dato que se perderia al salir de la cola, y
               // sin el la traza por token no puede medir la espera de esta tarea.
-              waitStart: marcador.waitStart
+              waitStart: marcador.waitStart,
+              acompanantes: marcador.acompanantes || null
             });
           });
         }
@@ -1489,6 +1650,11 @@ export default class SimulationEngine {
         // barrera. Va antes de processEvent para que los despiertos entren en la
         // cola en el mismo instante.
         if (event.esTareaDeLote) this._cerrarTareaDeLote(event);
+
+        // CUPO: la lider termina y suelta a las piezas que estuvieron dentro con ella. Salen las N
+        // JUNTAS -es lo que define a un proceso por cupo- y a partir de aqui cada una sigue su
+        // camino, asi que la tarea siguiente las despacha de una en una segun su propio tiempo.
+        this._soltarAcompanantes(event);
 
         this.processEvent(event);
       } else {
