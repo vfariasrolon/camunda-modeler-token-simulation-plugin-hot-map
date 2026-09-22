@@ -24,6 +24,11 @@ const leer = (f) => readFileSync(join(SIM, f), 'utf8');
 // escritas a mano -9 tokens directos y 1 que espera 40 min-, que una corrida real no da a pedir.
 writeFileSync(join(AQUI, 'TiemposPorProceso.mjs'), leer('TiemposPorProceso.js'));
 
+// ProcesoPorCupo es puro: decide cuando arranca un cupo -N piezas a la vez, liberadas juntas- y
+// cuanto dura. Sus dos politicas son casos reales -el horno que arranca con lo que haya y el carro
+// que espera a llenarse- y la ultima tanda no puede esperar a llenar o la corrida se atasca.
+writeFileSync(join(AQUI, 'ProcesoPorCupo.mjs'), leer('ProcesoPorCupo.js'));
+
 // El motor: solo se cambian las rutas de import a .mjs.
 const motor = leer('SimulationEngine.js')
   .replace("from './util'", "from './util.mjs'")
