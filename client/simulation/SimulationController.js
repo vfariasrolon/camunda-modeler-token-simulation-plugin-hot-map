@@ -18,7 +18,7 @@ import {
 import { LADO_CELDA, calcularZonas, ladoQueCabe } from './HeatmapZones.js';
 import { normalizarFlujos, cuotasDeRama, rutaDominante, formatearCuota } from './DominantRoute.js';
 import { cuelloPorEspera, peorTransito } from './TiemposPorProceso.js';
-import { diagnosticarCapacidad, avisosPorSaturacion } from './CapacityGuard.js';
+import { diagnosticarCapacidad, avisosPorSaturacion, desfaseDeCapacidad } from './CapacityGuard.js';
 
 // Geometric icons to match the look and feel of the editor
 const RunIcon = `
@@ -3046,11 +3046,49 @@ es poca ocupación y verde oscuro es la máxima. Pasa el ratón por una celda pa
     const util = [ ...(report.utilization || new Map()).values() ]
       .map((u) => ({ name: u.name, utilization: u.utilization, quantity: u.quantity }));
     const diag = diagnosticarCapacidad(util);
+
+    // EL DESFASE CONCRETO, con los numeros del diagrama.
+    //
+    // El aviso de saturacion dice QUE pasa -«ρ ≥ 1, los tiempos no son representativos»-, pero no
+    // CUANTO. Con `bob` -1 llegada por minuto, 25 tareas de 244 min, una unidad por piscina- el
+    // usuario leyo «254 dias» y lo reporto como error: «no tiene sentido, cuando mucho eran 10
+    // dias». Y no era un error, pero para verlo habia que hacer una cuenta que el informe no
+    // ensenaba: 480 entran al dia y la planta produce ~60, asi que la cola crece 420 y NO SE VACIA.
+    const desfase = (() => {
+      if (report.completedInstances <= 0 || !report.totalWorkingDays) return null;
+      // Las llegadas por dia salen de la tasa declarada y de los minutos de jornada.
+      const cfg = this.overtimeReport && this.overtimeReport.config;
+      const tasa = cfg && cfg.arrivalRate;
+      if (!tasa || !(tasa.value > 0)) return null;
+      const porHora = tasa.unit === 'hour' ? tasa.value
+        : tasa.unit === 'second' ? tasa.value * 3600 : tasa.value * 60;
+      const minutosJornada = (report.calendarDuration / report.totalWorkingDays) / 60000;
+      const llegadasPorDia = porHora * (minutosJornada / 60);
+      // La CAPACIDAD la manda el recurso mas cargado: lo que produce al dia es su rho aplicado
+      // sobre las llegadas -si rho es 1,4, produce 1/1,4 de lo que llega-.
+      const peor = util.slice().sort((a, b) => b.utilization - a.utilization)[0];
+      if (!peor || !(peor.utilization > 0)) return null;
+      const capacidadPorDia = llegadasPorDia / peor.utilization;
+      return desfaseDeCapacidad({ llegadasPorDia, capacidadPorDia, piezas: report.completedInstances });
+    })();
+
     const bloqueSaturacion = (diag.nivel === 'saturado' || diag.nivel === 'al-limite' || diag.nivel === 'justo')
       ? `<div class="sim-saturacion ${diag.nivel === 'saturado' ? 'mal' : (diag.nivel === 'al-limite' ? 'aviso' : 'ok')}">
           <strong>${diag.titulo}.</strong> ${diag.consecuencia}
           ${diag.criticos.length ? `<ul>${diag.criticos.map((c) =>
             `<li><strong>${c.name}</strong> — ρ = ${c.utilization.toFixed(3)} con ${c.quantity} unidad(es)</li>`).join('')}</ul>` : ''}
+          ${desfase ? `
+            <div class="sim-desfase">
+              <strong>${desfase.titulo}.</strong> ${desfase.consecuencia}
+              <table class="sim-desfase-tabla">
+                <tr><th>Entran por día</th><td>${desfase.llegadasPorDia} piezas</td></tr>
+                <tr><th>Se pueden producir</th><td>${desfase.capacidadPorDia} piezas</td></tr>
+                <tr class="destacado"><th>La cola crece</th><td>${desfase.colaPorDia} piezas al día</td></tr>
+                ${desfase.diasDeTrabajo != null ? `<tr><th>Solo producir el lote</th>
+                  <td>${desfase.diasDeTrabajo.toFixed(1)} días laborables
+                  <span class="sub">sin contar que siguen entrando piezas</span></td></tr>` : ''}
+              </table>
+            </div>` : ''}
           ${diag.accion ? `<div class="que-hacer"><strong>Qué hacer:</strong> ${diag.accion}</div>` : ''}
         </div>`
       : '';

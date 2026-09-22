@@ -486,6 +486,42 @@
     border-top: 1px solid rgba(0, 0, 0, .08);
 }
 
+/* EL DESFASE: entran N al dia, se producen M, la cola crece N-M.
+   Va DENTRO del aviso de saturacion y con mas peso visual que el texto de arriba, porque es la
+   cifra que el lector busca cuando ve «254 dias»: no «que pasa», sino «cuanto». */
+.sim-desfase {
+    margin-top: 9px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, .72);
+    border: 1px solid rgba(198, 40, 40, .25);
+    border-radius: 4px;
+}
+
+.sim-desfase-tabla {
+    width: auto;
+    margin-top: 6px;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+}
+
+.sim-desfase-tabla th {
+    text-align: left;
+    font-weight: 600;
+    padding: 2px 12px 2px 0;
+    color: #555;
+    white-space: nowrap;
+}
+
+.sim-desfase-tabla td {
+    padding: 2px 0;
+}
+
+/* La fila del crecimiento de la cola es LA conclusion: es lo que dice que el plan no cabe. */
+.sim-desfase-tabla tr.destacado td {
+    font-weight: 700;
+    color: #c62828;
+}
+
 /* LA RUTA DOMINANTE. Un color por si solo no dice «estas conexiones forman UN camino»: lo dice
    el halo, y el halo necesita su leyenda o es decoracion que nadie sabe leer. */
 .heatmap-legend-ruta {

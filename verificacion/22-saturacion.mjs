@@ -9,7 +9,7 @@
 // proceso que deberia tardar 15. El reporte fue «no me hace match», y era el resultado correcto de
 // un modelo que no cierra.
 import {
-  diagnosticarCapacidad, avisosPorSaturacion,
+  diagnosticarCapacidad, avisosPorSaturacion, desfaseDeCapacidad,
   UMBRAL_SATURADO, UMBRAL_AL_LIMITE, UMBRAL_HOLGURA_JUSTA
 } from './CapacityGuard.mjs';
 
@@ -167,6 +167,42 @@ console.log('\n== 7. El texto del aviso, tal como se imprime ==');
     JSON.stringify(d.criticos[0]));
   ok(d.criticos.length === 1, 'y solo los que estan por encima del umbral',
     d.criticos.map((c) => c.name).join(', '));
+}
+
+console.log('\n== 12. El DESFASE: cuantas entran al dia y cuantas se producen ==');
+{
+  // EL CASO DEL USUARIO, con los numeros de su diagrama `bob`: 1 llegada por minuto -480 al
+  // dia-, 25 tareas de 244 min por pieza y UNA unidad en cada piscina. La corrida daba 254 dias
+  // para 3000 piezas y lo reporto como error: «no tiene sentido, cuando mucho eran 10 dias».
+  const d = desfaseDeCapacidad({ llegadasPorDia: 480, capacidadPorDia: 60, piezas: 3000 });
+
+  ok(d !== null, 'con mas llegadas que capacidad hay desfase que declarar');
+  ok(d.llegadasPorDia === 480, 'dice cuantas entran al dia', String(d.llegadasPorDia));
+  ok(d.capacidadPorDia === 60, 'y cuantas se producen', String(d.capacidadPorDia));
+  // LA CIFRA QUE RESUELVE LA DUDA: la cola crece 420 al dia y por eso no se vacia nunca.
+  ok(d.colaPorDia === 420, 'y cuanto crece la cola al dia', String(d.colaPorDia));
+  ok(Math.abs(d.factor - 8) < 1e-9, 'con el factor de desfase', String(d.factor));
+  // Lo que tardaria SOLO producir el lote, sin que sigan entrando piezas: es el numero que el
+  // usuario tiene en la cabeza, y verlo al lado del real explica la diferencia.
+  ok(Math.abs(d.diasDeTrabajo - 50) < 1e-9,
+    'y cuanto tardaria solo producir el lote', String(d.diasDeTrabajo));
+  ok(/cola crece 420 piezas al d/.test(d.consecuencia),
+    'la consecuencia lleva el numero dentro', d.consecuencia.slice(0, 90));
+  ok(/no cabe/.test(d.consecuencia),
+    'y dice la conclusion, no solo el dato');
+
+  // CON CAPACIDAD DE SOBRA NO SE AVISA: un aviso permanente se aprende a ignorar.
+  ok(desfaseDeCapacidad({ llegadasPorDia: 60, capacidadPorDia: 480, piezas: 3000 }) === null,
+    'si se produce mas de lo que llega, no hay desfase');
+  // Justo en el limite tampoco: la cola no crece.
+  ok(desfaseDeCapacidad({ llegadasPorDia: 100, capacidadPorDia: 100, piezas: 10 }) === null,
+    'con llegadas iguales a capacidad, la cola no crece y no se avisa');
+
+  // Datos que no permiten calcularlo: mejor callar que inventar un numero.
+  ok(desfaseDeCapacidad({ llegadasPorDia: NaN, capacidadPorDia: 60, piezas: 10 }) === null,
+    'con datos no numericos no se inventa nada');
+  ok(desfaseDeCapacidad({ llegadasPorDia: 0, capacidadPorDia: 60, piezas: 10 }) === null,
+    'y sin llegadas tampoco hay desfase que declarar');
 }
 
 console.log(`\n== RESULTADO: ${fallos === 0 ? 'TODAS LAS COMPROBACIONES PASAN' : fallos + ' FALLO(S)'} ==\n`);
