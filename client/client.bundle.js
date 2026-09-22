@@ -423,6 +423,277 @@ module.exports = SimpleHeatSVG;
 
 /***/ }),
 
+/***/ "./client/simulation/Ayuda.js":
+/*!************************************!*\
+  !*** ./client/simulation/Ayuda.js ***!
+  \************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   AYUDA_COLUMNAS: () => (/* binding */ AYUDA_COLUMNAS),
+/* harmony export */   AYUDA_PESTANA: () => (/* binding */ AYUDA_PESTANA),
+/* harmony export */   alternarAyudaDeColumna: () => (/* binding */ alternarAyudaDeColumna),
+/* harmony export */   enlazarAyudaDeColumnas: () => (/* binding */ enlazarAyudaDeColumnas),
+/* harmony export */   enlazarAyudaPorCampo: () => (/* binding */ enlazarAyudaPorCampo),
+/* harmony export */   htmlDeAyuda: () => (/* binding */ htmlDeAyuda),
+/* harmony export */   marcarAyudaDeColumna: () => (/* binding */ marcarAyudaDeColumna)
+/* harmony export */ });
+/**
+ * LA AYUDA DEL EDITOR DE DATOS: el contenido y los «?».
+ *
+ * QUE ES ESTE MODULO: los textos que explican cada columna y cada pestaña, y la logica de abrir y
+ * cerrar los desplegables. Son tres piezas que ya existian separadas en el archivo -`AYUDA_PESTANA`,
+ * `AYUDA_COLUMNAS` y cinco metodos de bind y toggle- y que aqui quedan juntas porque son la misma
+ * cosa: lo que el usuario lee cuando no sabe que poner.
+ *
+ * POR QUE MERECE UN MODULO: la ayuda es la unica parte del plugin que puede MENTIR sin que nada se
+ * rompa. Un texto que describe un campo que ya no existe, o que dice «en minutos» cuando el motor lee
+ * milisegundos, no da ningun error: da un diagrama mal configurado y un usuario convencido de haber
+ * hecho lo correcto. Sacarla aparte permite comprobar los textos programaticamente -que cada columna
+ * con ayuda tenga columna, que cada campo con ayuda exista-, que es lo que hace el arnes
+ * `11-textos-sin-mentir` con el resto de la interfaz.
+ *
+ * NO TOCA bpmn-js NI EL MOTOR: son textos y clases CSS.
+ *
+ * LA REGLA DE REDACCCION, que se respeta en TODOS los textos: cada cosa se explica en TRES partes y
+ * en este orden.
+ *
+ *   1. `campos`: que se declara aqui, para saber que se puede rellenar.
+ *   2. `mide`: que se puede MEDIR con esos datos, que es la pregunta real del analista.
+ *   3. `ojo`: la trampa que mas cara sale si se ignora, y siempre con la CONSECUENCIA.
+ *
+ * Decir solo «que campos hay» no ayuda: el usuario no quiere la lista de campos, quiere saber para
+ * que le sirven. Por eso `mide` va antes que `ojo`, y `ojo` explica siempre lo que pasa, no la regla.
+ */
+
+/**
+ * Ayuda de cada pestaña. `campos` es `[titulo, texto][]` y `mide`/`ojo` son listas de frases.
+ */
+const AYUDA_PESTANA = {
+  tasks: {
+    titulo: 'Tareas: ritmo, calidad y carga física de cada paso',
+    campos: [
+      [ 'Distribución', 'fija (un valor) o triangular (mín/moda/máx). Decide qué columnas se leen.' ],
+      [ 'Tiempo y unidad', 'la duración base. Con triangular, el campo «Tiempo» se IGNORA.' ],
+      [ 'Tasa de fallo y retrabajo', 'probabilidad de fallo por ejecución y el tiempo que se añade al repetir.' ],
+      [ 'Recurso y Cant.', 'la piscina que consume y cuántas unidades toma a la vez.' ],
+      [ 'Frecuencia', 'por token (una vez por pieza) o por lote (una vez por lote).' ],
+      [ 'Barrera', 'quien firma: probabilidad de atender, espera si no atiende, y tolerancia.' ],
+      [ 'Carga física', 'masa cargada (la que soporta), masa arrastrada (la que desliza) y distancia.' ],
+      [ 'Habilidad', 'la que exige la tarea (una etiqueta; varias, separadas por comas).' ]
+    ],
+    mide: [
+      'Con tiempo y unidad: <strong>coste, tiempo de ciclo y sus percentiles</strong> (p50/p95).',
+      'Añadiendo recurso: <strong>esperas en cola, utilización (ρ) y cuello de botella</strong>.',
+      'Añadiendo fallo y retrabajo: <strong>calidad y su impacto en el ciclo</strong>.',
+      'Con frecuencia y barrera: <strong>ciclo de lote, parones y esperas de firma</strong>.',
+      'Con masa y distancia: <strong>toneladas movidas y kg·m</strong>, separando lo cargado de lo arrastrado.',
+      'Con habilidad y piscinas con nombres: <strong>bloqueo por habilidad</strong> y quién podría absorber la tarea.'
+    ],
+    ojo: [
+      'La <strong>unidad</strong> se escribe en plural (<code>minutes</code>): un <code>minute</code> se interpretaría como milisegundos, un factor de 60 000, y sin ningún aviso.',
+      'La masa se aplica según la <strong>frecuencia</strong>: una tarea «por lote» mueve su peso <em>una vez por lote</em>. Si no fuera así, 12 kg por pieza en un lote de 20 darían 240 kg cuando en planta se hizo un solo viaje.',
+      '<strong>Deja la carga vacía</strong> si no aplica. Un 0 dice «no mueve peso»; vacío dice «no lo sabemos», y el diagnóstico los distingue.'
+    ]
+  },
+  flows: {
+    titulo: 'Flujos: el reparto de cada compuerta',
+    campos: [
+      [ 'Probabilidad (%)', 'el reparto de las salidas de una compuerta <strong>exclusiva</strong>.' ]
+    ],
+    mide: [
+      'La <strong>mezcla de caminos</strong>: cuántos casos van por cada rama, y con eso el volumen y el coste por camino.'
+    ],
+    ojo: [
+      'El reparto de cada compuerta <strong>debe sumar 100 %</strong>: el motor acumula y manda todo el sobrante a la última rama sin avisar. El guardado lo bloquea.',
+      'Al cambiar una salida, <strong>las demás se ajustan solas</strong> (a partes iguales si estaban iguales, en proporción si no).',
+      'Una compuerta de <strong>una sola salida</strong> aparece fija al 100 %: el motor siempre la toma y no lee su probabilidad.'
+    ]
+  },
+  resources: {
+    titulo: 'Recursos: las piscinas de unidades equivalentes',
+    campos: [
+      [ 'Nombre', 'el de la piscina. Debe ser único.' ],
+      [ 'Cantidad', 'cuántas unidades idénticas hay (personas, máquinas, vehículos).' ],
+      [ 'Miembros (A5)', 'opcional: nombres con tarifa, habilidades y carga máxima dentro de la piscina.' ]
+    ],
+    mide: [
+      'Con la cantidad: <strong>utilización (ρ), colas y cuello de botella</strong>, que es lo que dice si el plan cabe en la plantilla.',
+      'Con miembros con nombre (A5): <strong>quién trabaja, cuánto tiempo y qué carga movió</strong>, más el <strong>bloqueo por habilidad</strong> y el diagnóstico de absorción.'
+    ],
+    ojo: [
+      'La cantidad es <strong>capacidad</strong>: los miembros con nombre no la cambian, solo dan identidad y tarifa.',
+      'Una tarea que apunta a una piscina que no existe <strong>ignora el recurso en silencio</strong>. Por eso la columna «Recurso» de Tareas es un desplegable y no texto libre.'
+    ]
+  },
+  global: {
+    titulo: 'Global: el reloj, el coste y las reglas',
+    campos: [
+      [ 'Tasa de llegada', 'llegadas por unidad de tiempo. Es una TASA, no un intervalo.' ],
+      [ 'Tarifa y coste de espera', 'lo que cuesta la hora trabajada y la hora en cola.' ],
+      [ 'Jornada, descansos y arranque', 'el reloj real: tramos, pausas y arranque lento.' ],
+      [ 'Horas extra', 'el cupo semanal y sus multiplicadores (LFT arts. 66 y 68).' ],
+      [ 'Lotes y semilla', 'llegadas en serie y reproducibilidad de la corrida.' ],
+      [ 'Reglas laborales (A2)', 'turno, topes del art. 65, primas de domingo y festivo, y sus vigencias.' ]
+    ],
+    mide: [
+      'Con la jornada y los descansos: <strong>capacidad real</strong>, sin inflarla (una jornada de 8 h no son 8 h de trabajo).',
+      'Con el cupo y las primas: <strong>coste real con horas extra</strong> y su reparto doble/triple.',
+      'Con las reglas laborales: <strong>cumplimiento de la LFT</strong> — cuántas semanas se pasaron del tope, y por cuánto.',
+      'Con la semilla: <strong>reproducibilidad y comparación limpia</strong> entre planes (mismo azar para los dos).'
+    ],
+    ojo: [
+      'La tasa de llegada es <strong>una tasa</strong>: <code>60</code> por <code>minute</code> es una llegada por <em>segundo</em>, no una cada 60 minutos.',
+      'Sin <strong>evento raíz</strong> la simulación no arranca, aunque todo lo demás esté relleno.'
+    ]
+  }
+};
+
+/**
+ * Ayuda de cada columna de la tabla de Tareas y de la de Flujos.
+ *
+ * La clave es la misma que la del `data-ayuda-col` de la cabecera. El arnes comprueba que cada clave
+ * de aqui exista como columna y al reves, que es lo que impide que un texto quede huerfano al
+ * renombrar una columna.
+ */
+const AYUDA_COLUMNAS = {
+  tarea: 'El nombre de la tarea en el diagrama. Es solo lectura: se cambia en el diagrama, no aqui.',
+  distribucion: 'fija (un solo valor) o triangular (min/moda/max). Decide que columnas de tiempo se leen: con triangular, la columna «Tiempo» se IGNORA.',
+  tiempo: 'La duracion base. Con distribucion «fija» es el valor unico; con triangular no se lee.',
+  unidad: 'minutes, hours o seconds, siempre en PLURAL. Un «minute» en singular se interpretaria como milisegundos: un error de 60 000 veces y sin ningun aviso.',
+  tiempoMin: 'Solo con triangular: el tiempo mas corto observado. Tiene que ser menor o igual que la moda.',
+  tiempoModa: 'Solo con triangular: el tiempo MAS PROBABLE, no la media. Tiene que quedar entre el minimo y el maximo.',
+  tiempoMax: 'Solo con triangular: el tiempo mas largo observado. Tiene que ser mayor o igual que la moda.',
+  tasaFallo: 'Probabilidad de fallo por ejecucion, en PORCENTAJE: 5 significa que falla 5 de cada 100. El motor lo guarda como 0,05.',
+  retrabajo: 'Lo que se tarda en rehacer una pieza que fallo. Se suma al tiempo de ciclo.',
+  unidadRetrabajo: 'La unidad del retrabajo, en plural. Puede ser distinta de la del proceso.',
+  recurso: 'La piscina que consume la tarea. Tiene que existir en la pestaña Recursos: un nombre que no exista hace que el recurso se ignore EN SILENCIO.',
+  cant: 'Cuantas unidades de la piscina toma la tarea a la vez. Con 2, ocupa dos personas mientras dura.',
+  frecuencia: 'por token (una vez por pieza) o por lote (una sola vez por lote). Decide si el tiempo y la carga se aplican por pieza o por lote.',
+  barrera: 'Solo con «por lote»: quien firma el lote. disp. es la probabilidad de que atiendan; si no atienden, se espera una triangular min/moda/max; tol. es cuanto se tolera antes de marcarlo.',
+  carga: 'Opcional. Cargada es la masa que SOPORTA la persona; arrastrada, la que desliza. Se aplican segun la frecuencia: por pieza o una vez por lote.',
+  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Solo se ofrecen las que estan dadas de alta en los recursos, para que no se pueda exigir una que nadie tiene.',
+  miembro: 'El miembro CONCRETO que hace esta tarea, si solo la puede hacer esa persona. Con un nombre, la tarea ESPERA a ese miembro aunque otro esté libre (es una restricción, no una preferencia). Sin nombre, el motor elige de la piscina por turnos, que es el comportamiento de siempre. Solo se ofrecen los miembros de la piscina elegida.'
+};
+
+// ---------------------------------------------------------------------------
+// Los «?»: abrir y cerrar
+// ---------------------------------------------------------------------------
+
+/**
+ * Enlaza los «?» de la cabecera de la tabla.
+ *
+ * `mostrar(clave)` se llama con la clave de la columna pulsada. El resaltado del boton lo decide el
+ * panel: es el unico que sabe si el «?» es de una columna o de un campo, y el toggle necesita saber
+ * cual quedo visible.
+ */
+const enlazarAyudaDeColumnas = (contenedor, mostrar) => {
+  contenedor.querySelectorAll('.btn-ayuda-col').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      mostrar(btn.dataset.ayudaCol);
+    });
+  });
+};
+
+/**
+ * Muestra la ayuda de una columna en la fila compartida bajo la cabecera.
+ *
+ * Volver a pulsar el MISMO «?» la repliega, para poder cerrarla sin buscar otra columna. Pulsar otro
+ * la cambia, que es lo que se espera al ir comparando columnas. Devuelve la clave que quedo visible,
+ * o `null` si se replego: el panel lo usa para marcar el boton.
+ */
+const alternarAyudaDeColumna = (contenedor, clave) => {
+  const fila = contenedor.querySelector('.fila-ayuda-col');
+  if (!fila) return null;
+
+  const celda = fila.querySelector('td');
+  const texto = AYUDA_COLUMNAS[clave] || '';
+  const yaVisible = !fila.classList.contains('hidden');
+
+  if (yaVisible && celda.textContent === texto) {
+    fila.classList.add('hidden');
+    return null;
+  }
+
+  celda.textContent = texto;
+  fila.classList.remove('hidden');
+  return clave;
+};
+
+/** Deja marcado el «?» de la columna cuya ayuda esta a la vista. */
+const marcarAyudaDeColumna = (contenedor, clave) => {
+  contenedor.querySelectorAll('.btn-ayuda-col').forEach((b) => {
+    if (b.dataset.ayudaCol === clave) b.classList.add('activo');
+    else b.classList.remove('activo');
+  });
+};
+
+/**
+ * Enlaza los «?» que van al lado de cada campo del formulario global.
+ *
+ * POR QUE AL LADO DEL CAMPO Y NO UN TEXTO FIJO: con 30 campos, un parrafo por campo llena la
+ * pantalla y se acaba ignorando. El «?» se pulsa en el momento de la duda, que es exactamente cuando
+ * se lee. Y va con clic y no con `data-tip` (que es hover) porque en un desplegable o en una casilla
+ * el hover no llega.
+ */
+const enlazarAyudaPorCampo = (alcance) => {
+  alcance.querySelectorAll('.btn-ayuda-campo').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      const caja = alcance.querySelector(`[data-ayuda-de="${btn.dataset.ayuda}"]`);
+      if (!caja) return;
+
+      if (caja.classList.contains('hidden')) {
+        caja.classList.remove('hidden');
+        btn.classList.add('activo');
+      } else {
+        caja.classList.add('hidden');
+        btn.classList.remove('activo');
+      }
+    });
+  });
+};
+
+/**
+ * Pinta el cuerpo de la ayuda de una pestaña.
+ *
+ * Se redibuja en cada llamada porque el contenido depende de la PESTANA, y la pestana puede haber
+ * cambiado desde la ultima vez. Quien la abre y la cierra con una clase es el panel, para que el
+ * usuario no tenga que reabrirla al cambiar de tab.
+ *
+ * Devuelve el HTML, o `''` si la pestaña no tiene ayuda declarada.
+ */
+const htmlDeAyuda = (tab) => {
+  const a = AYUDA_PESTANA[tab];
+  if (!a) return '';
+
+  const listas = (items, clase) => `<ul class="${clase}">${items.map((i) => (
+    Array.isArray(i) ? `<li><strong>${i[0]}</strong>: ${i[1]}</li>` : `<li>${i}</li>`
+  )).join('')}</ul>`;
+
+  return `
+    <h4>${a.titulo}</h4>
+    <div class="columnas">
+      <div>
+        <h5>Qué se declara aquí</h5>
+        ${listas(a.campos, 'campos')}
+      </div>
+      <div>
+        <h5>Qué se puede medir con estos datos</h5>
+        ${listas(a.mide, 'mide')}
+      </div>
+    </div>
+    <h5 class="ojo-titulo">Lo que hay que tener presente</h5>
+    ${listas(a.ojo, 'ojo')}
+  `;
+};
+
+
+/***/ }),
+
 /***/ "./client/simulation/BusinessCalendar.js":
 /*!***********************************************!*\
   !*** ./client/simulation/BusinessCalendar.js ***!
@@ -3600,8 +3871,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ DataTablePanel)
 /* harmony export */ });
-/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
-/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
+/* harmony import */ var min_dom__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! min-dom */ "./node_modules/.pnpm/min-dom@4.2.1/node_modules/min-dom/dist/index.esm.js");
+/* harmony import */ var bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! bpmn-js/lib/util/ModelUtil */ "./node_modules/.pnpm/bpmn-js@18.6.3/node_modules/bpmn-js/lib/util/ModelUtil.js");
 /* harmony import */ var _util__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./util */ "./client/simulation/util.js");
 /* harmony import */ var _WarmupCurve__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./WarmupCurve */ "./client/simulation/WarmupCurve.js");
 /* harmony import */ var _LaborRules__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./LaborRules */ "./client/simulation/LaborRules.js");
@@ -3609,7 +3880,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _CsvTareas_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./CsvTareas.js */ "./client/simulation/CsvTareas.js");
 /* harmony import */ var _validacion_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./validacion.js */ "./client/simulation/validacion.js");
 /* harmony import */ var _DatosDePrueba_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./DatosDePrueba.js */ "./client/simulation/DatosDePrueba.js");
-/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+/* harmony import */ var _Ayuda_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./Ayuda.js */ "./client/simulation/Ayuda.js");
+/* harmony import */ var _data_table_css__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./data-table.css */ "./client/simulation/data-table.css");
+
 
 
 
@@ -3625,120 +3898,6 @@ const PANEL_CLS = 'sim-data-table-panel';
 const OPEN_CLS = 'open';
 const TAB_ACTIVE_CLS = 'active';
 
-// ---------------------------------------------------------------------------
-// Ayuda por pestana.
-//
-// Cada pestana explica TRES cosas, y en este orden a proposito:
-//   1. `campos`: que se declara aqui (para saber que se puede rellenar).
-//   2. `mide`: que se puede MEDIR con esos datos (la pregunta real del analista).
-//   3. `ojo`: la trampa que mas cara sale si se ignora.
-//
-// Decir solo «que campos hay» no ayuda: el usuario no quiere la lista de campos,
-// quiere saber para que le sirven. Por eso `mide` va antes que `ojo`, y `ojo`
-// explica siempre la CONSECUENCIA, no la regla.
-// ---------------------------------------------------------------------------
-const AYUDA_PESTANA = {
-  tasks: {
-    titulo: 'Tareas: ritmo, calidad y carga física de cada paso',
-    campos: [
-      [ 'Distribución', 'fija (un valor) o triangular (mín/moda/máx). Decide qué columnas se leen.' ],
-      [ 'Tiempo y unidad', 'la duración base. Con triangular, el campo «Tiempo» se IGNORA.' ],
-      [ 'Tasa de fallo y retrabajo', 'probabilidad de fallo por ejecución y el tiempo que se añade al repetir.' ],
-      [ 'Recurso y Cant.', 'la piscina que consume y cuántas unidades toma a la vez.' ],
-      [ 'Frecuencia', 'por token (una vez por pieza) o por lote (una vez por lote).' ],
-      [ 'Barrera', 'quien firma: probabilidad de atender, espera si no atiende, y tolerancia.' ],
-      [ 'Carga física', 'masa cargada (la que soporta), masa arrastrada (la que desliza) y distancia.' ],
-      [ 'Habilidad', 'la que exige la tarea (una etiqueta; varias, separadas por comas).' ]
-    ],
-    mide: [
-      'Con tiempo y unidad: <strong>coste, tiempo de ciclo y sus percentiles</strong> (p50/p95).',
-      'Añadiendo recurso: <strong>esperas en cola, utilización (ρ) y cuello de botella</strong>.',
-      'Añadiendo fallo y retrabajo: <strong>calidad y su impacto en el ciclo</strong>.',
-      'Con frecuencia y barrera: <strong>ciclo de lote, parones y esperas de firma</strong>.',
-      'Con masa y distancia: <strong>toneladas movidas y kg·m</strong>, separando lo cargado de lo arrastrado.',
-      'Con habilidad y piscinas con nombres: <strong>bloqueo por habilidad</strong> y quién podría absorber la tarea.'
-    ],
-    ojo: [
-      'La <strong>unidad</strong> se escribe en plural (<code>minutes</code>): un <code>minute</code> se interpretaría como milisegundos, un factor de 60 000, y sin ningún aviso.',
-      'La masa se aplica según la <strong>frecuencia</strong>: una tarea «por lote» mueve su peso <em>una vez por lote</em>. Si no fuera así, 12 kg por pieza en un lote de 20 darían 240 kg cuando en planta se hizo un solo viaje.',
-      '<strong>Deja la carga vacía</strong> si no aplica. Un 0 dice «no mueve peso»; vacío dice «no lo sabemos», y el diagnóstico los distingue.'
-    ]
-  },
-  flows: {
-    titulo: 'Flujos: el reparto de cada compuerta',
-    campos: [
-      [ 'Probabilidad (%)', 'el reparto de las salidas de una compuerta <strong>exclusiva</strong>.' ]
-    ],
-    mide: [
-      'La <strong>mezcla de caminos</strong>: cuántos casos van por cada rama, y con eso el volumen y el coste por camino.'
-    ],
-    ojo: [
-      'El reparto de cada compuerta <strong>debe sumar 100 %</strong>: el motor acumula y manda todo el sobrante a la última rama sin avisar. El guardado lo bloquea.',
-      'Al cambiar una salida, <strong>las demás se ajustan solas</strong> (a partes iguales si estaban iguales, en proporción si no).',
-      'Una compuerta de <strong>una sola salida</strong> aparece fija al 100 %: el motor siempre la toma y no lee su probabilidad.'
-    ]
-  },
-  resources: {
-    titulo: 'Recursos: las piscinas de unidades equivalentes',
-    campos: [
-      [ 'Nombre', 'el de la piscina. Debe ser único.' ],
-      [ 'Cantidad', 'cuántas unidades idénticas hay (personas, máquinas, vehículos).' ],
-      [ 'Miembros (A5)', 'opcional: nombres con tarifa, habilidades y carga máxima dentro de la piscina.' ]
-    ],
-    mide: [
-      'Con la cantidad: <strong>utilización (ρ), colas y cuello de botella</strong>, que es lo que dice si el plan cabe en la plantilla.',
-      'Con miembros con nombre (A5): <strong>quién trabaja, cuánto tiempo y qué carga movió</strong>, más el <strong>bloqueo por habilidad</strong> y el diagnóstico de absorción.'
-    ],
-    ojo: [
-      'La cantidad es <strong>capacidad</strong>: los miembros con nombre no la cambian, solo dan identidad y tarifa.',
-      'Una tarea que apunta a una piscina que no existe <strong>ignora el recurso en silencio</strong>. Por eso la columna «Recurso» de Tareas es un desplegable y no texto libre.'
-    ]
-  },
-  global: {
-    titulo: 'Global: el reloj, el coste y las reglas',
-    campos: [
-      [ 'Tasa de llegada', 'llegadas por unidad de tiempo. Es una TASA, no un intervalo.' ],
-      [ 'Tarifa y coste de espera', 'lo que cuesta la hora trabajada y la hora en cola.' ],
-      [ 'Jornada, descansos y arranque', 'el reloj real: tramos, pausas y arranque lento.' ],
-      [ 'Horas extra', 'el cupo semanal y sus multiplicadores (LFT arts. 66 y 68).' ],
-      [ 'Lotes y semilla', 'llegadas en serie y reproducibilidad de la corrida.' ],
-      [ 'Reglas laborales (A2)', 'turno, topes del art. 65, primas de domingo y festivo, y sus vigencias.' ]
-    ],
-    mide: [
-      'Con la jornada y los descansos: <strong>capacidad real</strong>, sin inflarla (una jornada de 8 h no son 8 h de trabajo).',
-      'Con el cupo y las primas: <strong>coste real con horas extra</strong> y su reparto doble/triple.',
-      'Con las reglas laborales: <strong>cumplimiento de la LFT</strong> — cuántas semanas se pasaron del tope, y por cuánto.',
-      'Con la semilla: <strong>reproducibilidad y comparación limpia</strong> entre planes (mismo azar para los dos).'
-    ],
-    ojo: [
-      'La tasa de llegada es <strong>una tasa</strong>: <code>60</code> por <code>minute</code> es una llegada por <em>segundo</em>, no una cada 60 minutos.',
-      'Sin <strong>evento raíz</strong> la simulación no arranca, aunque todo lo demás esté relleno.'
-    ]
-  }
-};
-
-// ---------------------------------------------------------------------------
-// Unidades. NO unificar en una sola lista: el motor usa DOS convenciones
-// distintas y confundirlas produce errores silenciosos.
-//
-//   - Tareas (processingTime / reworkTime): PLURAL -> lo lee
-//     timeToMilliseconds() en SimulationEngine.js. Cualquier otro valor cae al
-//     fallback y se interpreta como MILISEGUNDOS (factor 60.000 de error).
-//   - arrivalRate: SINGULAR -> lo lee el bloque de arrivalRate en
-//     SimulationEngine.js. Cualquier otro valor se trata como minutos.
-// ---------------------------------------------------------------------------
-const TASK_UNITS = ['minutes', 'hours', 'seconds'];
-const RATE_UNITS = ['minute', 'hour', 'second'];
-const LOT_SIZE_MODES = ['fixed', 'triangular', 'empirical'];
-const TASK_FREQUENCIES = ['token', 'lot'];
-
-// Nombres de los dias para las casillas de "dias laborables". El indice es el
-// valor que espera el motor: 0 = domingo.
-const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
-
-// Cada cuanto se ejecuta una tarea y, si es por lote, quien tiene que firmarla.
-// `token` = una vez por token (el comportamiento de siempre); `lot` = una sola
-// vez por lote, la primera vez que el flujo pasa por ahi.
 const BARRIER_DEFAULTS = () => ({
   availableProbability: 0.7,
   waitMin: 10,
@@ -3779,25 +3938,6 @@ const pad = (n) => String(n).padStart(2, '0');
  * encabezado: que la unidad va en plural, que «moda» es el mas probable y no la media,
  * o que la carga se aplica segun la frecuencia.
  */
-const AYUDA_COLUMNAS = {
-  tarea: 'El nombre de la tarea en el diagrama. Es solo lectura: se cambia en el diagrama, no aqui.',
-  distribucion: 'fija (un solo valor) o triangular (min/moda/max). Decide que columnas de tiempo se leen: con triangular, la columna «Tiempo» se IGNORA.',
-  tiempo: 'La duracion base. Con distribucion «fija» es el valor unico; con triangular no se lee.',
-  unidad: 'minutes, hours o seconds, siempre en PLURAL. Un «minute» en singular se interpretaria como milisegundos: un error de 60 000 veces y sin ningun aviso.',
-  tiempoMin: 'Solo con triangular: el tiempo mas corto observado. Tiene que ser menor o igual que la moda.',
-  tiempoModa: 'Solo con triangular: el tiempo MAS PROBABLE, no la media. Tiene que quedar entre el minimo y el maximo.',
-  tiempoMax: 'Solo con triangular: el tiempo mas largo observado. Tiene que ser mayor o igual que la moda.',
-  tasaFallo: 'Probabilidad de fallo por ejecucion, en PORCENTAJE: 5 significa que falla 5 de cada 100. El motor lo guarda como 0,05.',
-  retrabajo: 'Lo que se tarda en rehacer una pieza que fallo. Se suma al tiempo de ciclo.',
-  unidadRetrabajo: 'La unidad del retrabajo, en plural. Puede ser distinta de la del proceso.',
-  recurso: 'La piscina que consume la tarea. Tiene que existir en la pestaña Recursos: un nombre que no exista hace que el recurso se ignore EN SILENCIO.',
-  cant: 'Cuantas unidades de la piscina toma la tarea a la vez. Con 2, ocupa dos personas mientras dura.',
-  frecuencia: 'por token (una vez por pieza) o por lote (una sola vez por lote). Decide si el tiempo y la carga se aplican por pieza o por lote.',
-  barrera: 'Solo con «por lote»: quien firma el lote. disp. es la probabilidad de que atiendan; si no atienden, se espera una triangular min/moda/max; tol. es cuanto se tolera antes de marcarlo.',
-  carga: 'Opcional. Cargada es la masa que SOPORTA la persona; arrastrada, la que desliza. Se aplican segun la frecuencia: por pieza o una vez por lote.',
-  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Solo se ofrecen las que estan dadas de alta en los recursos, para que no se pueda exigir una que nadie tiene.',
-  miembro: 'El miembro CONCRETO que hace esta tarea, si solo la puede hacer esa persona. Con un nombre, la tarea ESPERA a ese miembro aunque otro esté libre (es una restricción, no una preferencia). Sin nombre, el motor elige de la piscina por turnos, que es el comportamiento de siempre. Solo se ofrecen los miembros de la piscina elegida.'
-};
 
 /**
  * Los campos de la configuracion global, agrupados por FAMILIA.
@@ -3817,6 +3957,15 @@ const AYUDA_COLUMNAS = {
  * seccion: la tabla de vigencias pisa a los dos (prima doble y triple son de
  * `overtime`; dominical, festivo, tope al dia y dias por semana, de `labor`).
  */
+const TASK_UNITS = ['minutes', 'hours', 'seconds'];
+const RATE_UNITS = ['minute', 'hour', 'second'];
+const LOT_SIZE_MODES = ['fixed', 'triangular', 'empirical'];
+const TASK_FREQUENCIES = ['token', 'lot'];
+
+// Nombres de los dias para las casillas de «dias laborables». El indice es el valor que espera el
+// motor: 0 = domingo.
+const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
+
 const GLOBAL_SECCIONES = [
   {
     clave: 'simulacion',
@@ -4136,19 +4285,19 @@ class DataTablePanel {
    */
   _esEditable(element) {
     if (!element || (0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(element)) return false;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Task')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:StartEvent')) return true;
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Participant')) return true;
-    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:SequenceFlow')
-      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element.source, 'bpmn:ExclusiveGateway'));
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:Task')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:StartEvent')) return true;
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:Participant')) return true;
+    return (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:SequenceFlow')
+      && Boolean(element.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element.source, 'bpmn:ExclusiveGateway'));
   }
 
   _ponerLapiz(element) {
-    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(
+    const nodo = (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.domify)(
       `<div class="sim-data-table-overlay" title="Editar los datos de simulación de este elemento"`
       + ` data-tip="Editar en la tabla de datos">${svg(EditIcon)}</div>`
     );
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(nodo, 'click', () => this.openFor(element));
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(nodo, 'click', () => this.openFor(element));
     this._overlayId = this._overlays.add(element, 'sim-data-table', {
       position: { top: -12, left: -12 },
       html: nodo
@@ -4167,7 +4316,7 @@ class DataTablePanel {
   _init() {
     if (this._panel) return;
 
-    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(`
+    const panel = this._panel = (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.domify)(`
       <div class="${PANEL_CLS}">
         <div class="panel-header">
           <span class="panel-title">${svg(TableIcon)} Datos de simulación por tabla</span>
@@ -4202,23 +4351,23 @@ class DataTablePanel {
     this._status = panel.querySelector('.status');
     this._fileInput = panel.querySelector('.csv-input');
 
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(panel.querySelector('.btn-ayuda'), 'click', () => this._toggleAyuda());
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(panel.querySelector('.btn-close'), 'click', () => this.close());
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(panel.querySelector('.btn-save'), 'click', () => this.save());
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(panel.querySelector('.btn-test'), 'click', () => this.generarDatosDePrueba());
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(panel.querySelector('.btn-export'), 'click', () => this.exportCsv());
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(panel.querySelector('.btn-import'), 'click', () => this._fileInput.click());
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(this._fileInput, 'change', (e) => this.importCsv(e));
 
     panel.querySelectorAll('.panel-tabs button').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(btn, 'click', () => {
         this._activeTab = btn.dataset.tab;
-        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
+        panel.querySelectorAll('.panel-tabs button').forEach((b) => (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(b).toggle(TAB_ACTIVE_CLS, b === btn));
         // Si la ayuda esta abierta, se RECARGA con la pestana nueva: si no, al
         // cambiar de pestana seguiria explicando la anterior, que es peor que no
         // tener ayuda porque el usuario lee la respuesta equivocada.
-        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._ayuda).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._ayuda).add('hidden');
+        if (this._ayuda && !(0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(this._ayuda).has('hidden')) {
+          (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(this._ayuda).add('hidden');
           this._toggleAyuda();
         }
         this._render();
@@ -4226,11 +4375,11 @@ class DataTablePanel {
     });
   }
 
-  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._panel).has(OPEN_CLS); }
+  isOpen() { return this._panel && (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(this._panel).has(OPEN_CLS); }
   toggle() { this.isOpen() ? this.close() : this.open(); }
   open() {
     if (!this._panel) this._init();
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._panel).add(OPEN_CLS);
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(this._panel).add(OPEN_CLS);
     this._render();
   }
 
@@ -4246,10 +4395,10 @@ class DataTablePanel {
   openFor(element) {
     if (!element) return this.open();
 
-    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
-    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
+    if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:Task')) this._activeTab = 'tasks';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:SequenceFlow')) this._activeTab = 'flows';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:StartEvent')) this._activeTab = 'global';
+    else if ((0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(element, 'bpmn:Participant')) this._activeTab = 'resources';
     else this._activeTab = 'tasks';
 
     this._focusId = element.id;
@@ -4258,11 +4407,11 @@ class DataTablePanel {
     // _render() reconstruye las pestañas sin conservar cual estaba activa, asi
     // que se marca aqui.
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     const fila = this._panel.querySelector(`tbody tr[data-el-id="${element.id}"]`);
     if (fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).add('fila-foco');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(fila).add('fila-foco');
       if (fila.scrollIntoView) fila.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
   }
@@ -4315,7 +4464,7 @@ class DataTablePanel {
     this._activeTab = objetivo.tab || 'tasks';
     this.open();
     this._panel.querySelectorAll('.panel-tabs button').forEach((b) =>
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(b).toggle(TAB_ACTIVE_CLS, b.dataset.tab === this._activeTab));
 
     // Despues de abrir y RENDERIZAR: el resaltado trabaja sobre nodos que hasta
     // ahora no existian.
@@ -4355,7 +4504,7 @@ class DataTablePanel {
     this._limpiarDestino();
 
     this._destinoResaltado = objetivos;
-    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(nodo).add('destino-resaltado'));
+    objetivos.forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(nodo).add('destino-resaltado'));
     if (objetivos[0].scrollIntoView) objetivos[0].scrollIntoView({ block: 'center', inline: 'nearest' });
     if (objetivos[0].focus && objetivos[0].focus.call) objetivos[0].focus();
 
@@ -4377,12 +4526,12 @@ class DataTablePanel {
    */
   _limpiarDestino() {
     clearTimeout(this._temporizadorDestino);
-    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(nodo).remove('destino-resaltado'));
+    (this._destinoResaltado || []).forEach((nodo) => (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(nodo).remove('destino-resaltado'));
     this._destinoResaltado = null;
   }
 
   close() {
-    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._panel).remove(OPEN_CLS);
+    if (this._panel) (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(this._panel).remove(OPEN_CLS);
     this._focusId = null;
     // El resaltado del atajo no sobrevive al cierre: al volver a abrir, la tabla tiene
     // que verse limpia y no con la marca de un viaje de hace media hora.
@@ -4424,11 +4573,11 @@ class DataTablePanel {
     this._quitarOferta();
     if (!this._panel) return;
 
-    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(
+    const boton = this._btnDesactivar = (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.domify)(
       '<button class="btn-desactivar" type="button">Desactivar modo y reintentar</button>'
     );
 
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(boton, 'click', () => {
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(boton, 'click', () => {
       this._quitarOferta();
       try {
         this._editorActions.trigger('toggleTokenSimulation');
@@ -4454,17 +4603,17 @@ class DataTablePanel {
   // -- acceso a datos -------------------------------------------------------
 
   _getTasks() {
-    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Task'));
+    return this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(el, 'bpmn:Task'));
   }
 
   _getFlows() {
     return this._elementRegistry.filter(
-      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el.source, 'bpmn:ExclusiveGateway')
+      (el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(el, 'bpmn:SequenceFlow') && el.source && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(el.source, 'bpmn:ExclusiveGateway')
     );
   }
 
   _getRootStartEvent() {
-    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:StartEvent'));
+    const starts = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(el, 'bpmn:StartEvent'));
     return starts.find((el) => {
       const d = (0,_util__WEBPACK_IMPORTED_MODULE_0__.getSimulationData)(el);
       return d && d.isRoot;
@@ -4480,7 +4629,7 @@ class DataTablePanel {
    * algun dia, tiene que cambiar en los dos sitios a la vez.
    */
   _getProcessRoot() {
-    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:Participant')) || null;
+    return this._elementRegistry.find((el) => (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(el, 'bpmn:Process') || (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(el, 'bpmn:Participant')) || null;
   }
 
   /** Piscinas de recursos declaradas en el proceso. */
@@ -4560,38 +4709,18 @@ class DataTablePanel {
   }
 
   /**
-   * Ayuda de la pestana activa: campos, qué se mide con ellos y la trampa.
+   * Ayuda de la pestana activa: campos, que se mide con ellos y la trampa.
    *
-   * Se redibuja en cada llamada porque el contenido depende de la PESTANA, y la
-   * pestana puede haber cambiado desde la ultima vez. Se mantiene abierta/cerrada
-   * con una clase para que el usuario no tenga que reabrirla al cambiar de tab.
+   * El contenido vive en `Ayuda.js`; aqui solo se pinta y se abre o se cierra. Se redibuja en cada
+   * llamada porque depende de la PESTANA, y se mantiene abierta con una clase para que el usuario no
+   * tenga que reabrirla al cambiar de tab.
    */
   _toggleAyuda() {
     if (!this._ayuda) return;
-    const a = AYUDA_PESTANA[this._activeTab];
-    if (!a) return;
-
-    const listas = (items, clase) => `<ul class="${clase}">${items.map((i) => (
-      Array.isArray(i) ? `<li><strong>${i[0]}</strong>: ${i[1]}</li>` : `<li>${i}</li>`
-    )).join('')}</ul>`;
-
-    this._ayuda.innerHTML = `
-      <h4>${a.titulo}</h4>
-      <div class="columnas">
-        <div>
-          <h5>Qué se declara aquí</h5>
-          ${listas(a.campos, 'campos')}
-        </div>
-        <div>
-          <h5>Qué se puede medir con estos datos</h5>
-          ${listas(a.mide, 'mide')}
-        </div>
-      </div>
-      <h5 class="ojo-titulo">Lo que hay que tener presente</h5>
-      ${listas(a.ojo, 'ojo')}
-    `;
-
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(this._ayuda).toggle('hidden');
+    const html = (0,_Ayuda_js__WEBPACK_IMPORTED_MODULE_7__.htmlDeAyuda)(this._activeTab);
+    if (!html) return;
+    this._ayuda.innerHTML = html;
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(this._ayuda).toggle('hidden');
   }
 
   /**
@@ -4606,7 +4735,7 @@ class DataTablePanel {
     if (this._getRootStartEvent()) return;
     if (!this._body) return;
 
-    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.domify)(
+    const aviso = (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.domify)(
       '<p class="aviso-raiz">Sin evento raíz configurado la simulación no se ejecutará. '
       + 'Ve a la pestaña <strong>Global</strong> para crearlo.</p>'
     );
@@ -4625,7 +4754,7 @@ class DataTablePanel {
 
     // La ayuda de columna va en la CABECERA. Con 23 columnas por tarea, un «?» en cada
     // celda serian cientos de botones repitiendo el mismo texto.
-    const th = (texto, clave, extra) => `<th${extra || ''}>${texto}${AYUDA_COLUMNAS[clave]
+    const th = (texto, clave, extra) => `<th${extra || ''}>${texto}${_Ayuda_js__WEBPACK_IMPORTED_MODULE_7__.AYUDA_COLUMNAS[clave]
       ? ` <button class="btn-ayuda-col" type="button" data-ayuda-col="${clave}"
            title="Qué valor espera esta columna">?</button>` : ''}</th>`;
 
@@ -4814,47 +4943,21 @@ class DataTablePanel {
     this._bindAutoguardado();
   }
 
-  /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
-  _bindAyudaDeColumnas() {
-    this._body.querySelectorAll('.btn-ayuda-col').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', (e) => {
-        if (e && e.preventDefault) e.preventDefault();
-        this._mostrarAyudaColumna(btn.dataset.ayudaCol);
-      });
-    });
-  }
-
   /**
-   * Pinta la ayuda de una columna en la fila compartida bajo la cabecera.
+   * Los «?» de la cabecera y la fila compartida que muestra su texto.
    *
-   * Volver a pulsar el MISMO «?» la repliega, para que se pueda cerrar sin buscar otra
-   * columna. Pulsar otro la cambia, que es lo que se espera al ir comparando columnas.
+   * Volver a pulsar el MISMO «?» repliega la ayuda, para cerrarla sin buscar otra columna; pulsar
+   * otro la cambia, que es lo que se espera al ir comparando. La logica vive en `Ayuda.js` y aqui se
+   * sincroniza el boton marcado.
    */
-  _mostrarAyudaColumna(clave) {
-    const fila = this._body.querySelector('.fila-ayuda-col');
-    if (!fila) return;
-
-    const celda = fila.querySelector('td');
-    const texto = AYUDA_COLUMNAS[clave] || '';
-    const yaVisible = !(0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).has('hidden');
-
-    if (yaVisible && celda.textContent === texto) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).add('hidden');
-      this._marcarAyudaColumna(null);
-      return;
-    }
-
-    celda.textContent = texto;
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(fila).remove('hidden');
-    this._marcarAyudaColumna(clave);
+  _bindAyudaDeColumnas() {
+    (0,_Ayuda_js__WEBPACK_IMPORTED_MODULE_7__.enlazarAyudaDeColumnas)(this._body, (clave) => {
+      this._marcarAyudaColumna((0,_Ayuda_js__WEBPACK_IMPORTED_MODULE_7__.alternarAyudaDeColumna)(this._body, clave));
+    });
   }
 
-  /** Deja marcado el «?» de la columna cuya ayuda esta a la vista. */
   _marcarAyudaColumna(clave) {
-    this._body.querySelectorAll('.btn-ayuda-col').forEach((b) => {
-      if (b.dataset.ayudaCol === clave) (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).add('activo');
-      else (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(b).remove('activo');
-    });
+    (0,_Ayuda_js__WEBPACK_IMPORTED_MODULE_7__.marcarAyudaDeColumna)(this._body, clave);
   }
 
   /**
@@ -4878,7 +4981,7 @@ class DataTablePanel {
         });
       };
 
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(select, 'change', sincronizar);
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(select, 'change', sincronizar);
       sincronizar();
     });
   }
@@ -4906,7 +5009,7 @@ class DataTablePanel {
       // muerta para siempre.
       const selPool = tr.querySelector('[data-field="resources.pool"]');
       if (selPool) {
-        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(selPool, 'change', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(selPool, 'change', () => {
           const cant = tr.querySelector('[data-field="resources.quantityRequired"]');
           if (!cant) return;
           cant.disabled = selPool.value === '';
@@ -4915,7 +5018,7 @@ class DataTablePanel {
       }
 
       tr.querySelectorAll('[data-field]').forEach((campo) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
+        min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(campo, 'change', () => this._autoguardarFila(tr, campo));
       });
     });
   }
@@ -4936,9 +5039,9 @@ class DataTablePanel {
    * aqui es lo que hay guardado». Vuelve a amarillo en cuanto se edita otra vez.
    */
   _autoguardarFila(tr, campo) {
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('invalido');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardado');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).remove('invalido');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).remove('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).add('guardando');
 
     let fila;
     try {
@@ -4946,14 +5049,14 @@ class DataTablePanel {
     } catch (err) {
       // Se queda en rojo y SIN guardar, y el texto del usuario no se toca para que
       // pueda corregirlo. Una fila invalida no bloquea a las demas.
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).add('invalido');
       this._setStatus(err.message, 'error');
       return;
     }
 
     if (!fila) {
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).remove('guardando');
       return;
     }
 
@@ -4977,14 +5080,14 @@ class DataTablePanel {
         return;
       }
 
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
-      (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('invalido');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).remove('guardando');
+      (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).add('invalido');
       this._setStatus(`No se pudo guardar: ${err.message || err}`, 'error');
       return;
     }
 
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).remove('guardando');
-    (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(campo).add('guardado');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).remove('guardando');
+    (0,min_dom__WEBPACK_IMPORTED_MODULE_10__.classes)(campo).add('guardado');
     this._setStatus(`Guardado: ${this._label(fila.element)}.`, 'ok');
   }
 
@@ -5043,7 +5146,7 @@ class DataTablePanel {
 
     const boton = this._body.querySelector('.btn-anadir-fila');
     if (boton) {
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(boton, 'click', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(boton, 'click', () => {
         const tbody = this._body.querySelector('.filas-pool');
         // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
         // parseo de un contenedor que no sea <table>/<tbody>.
@@ -5064,7 +5167,7 @@ class DataTablePanel {
       // seria guardar y reabrir, que es justo lo que el usuario no hace.
       this._bindCobro(tbody);
 
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(tbody, 'click', (e) => {
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(tbody, 'click', (e) => {
         const objetivo = e.target;
         if (!objetivo || !objetivo.closest) return;
 
@@ -5143,8 +5246,8 @@ class DataTablePanel {
       if (pieza) pieza.hidden = !porPieza;
     };
 
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(origen, 'change', sincronizar);
-    min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(cobro, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(origen, 'change', sincronizar);
+    min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(cobro, 'change', sincronizar);
     sincronizar();
   }
 
@@ -5299,7 +5402,7 @@ class DataTablePanel {
     this._body.querySelectorAll('[data-field="branchingProbability"]').forEach((input) => {
       if (input.disabled) return;
 
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(input, 'input', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(input, 'input', () => {
         this._equilibrar(input);
         this._refrescarSumas();
       });
@@ -5308,7 +5411,7 @@ class DataTablePanel {
       // rango -> al limite. Sin esto el campo podia quedarse en -10 y el
       // indicador decia "100 %" (la suma los recortaba) mientras el guardado lo
       // bloqueaba: indicador y validacion se contradecian.
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(input, 'change', () => {
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(input, 'change', () => {
         const crudo = String(input.value).replace(',', '.');
         const n = Number(crudo);
         if (crudo.trim() === '' || Number.isNaN(n)) input.value = '0';
@@ -5415,7 +5518,7 @@ class DataTablePanel {
       // que ya existiera, pero no habia forma de crearlo desde aqui. El usuario
       // rellenaba las tareas, guardaba, y al simular recibia "No root start
       // event found" sin saber que le faltaba. Ahora se puede crear desde aqui.
-      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_8__.is)(el, 'bpmn:StartEvent'));
+      const inicios = this._elementRegistry.filter((el) => !(0,_util__WEBPACK_IMPORTED_MODULE_0__.isLabel)(el) && (0,bpmn_js_lib_util_ModelUtil__WEBPACK_IMPORTED_MODULE_9__.is)(el, 'bpmn:StartEvent'));
 
       if (!inicios.length) {
         this._body.innerHTML = `
@@ -5445,7 +5548,7 @@ class DataTablePanel {
       `;
 
       this._body.querySelectorAll('.btn-raiz').forEach((btn) => {
-        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
+        min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(btn, 'click', () => this.marcarRaiz(btn.dataset.elId));
       });
       return;
     }
@@ -5736,7 +5839,7 @@ class DataTablePanel {
     listas.forEach(({ accion, tbody, fila }) => {
       const boton = this._body.querySelector(`[data-accion="${accion}"]`);
       if (boton) {
-        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(boton, 'click', () => {
+        min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(boton, 'click', () => {
           const cuerpo = this._body.querySelector(tbody);
           // insertAdjacentHTML y no domify(): un <tr> suelto no sobrevive al
           // parseo de un contenedor que no sea <table>/<tbody>.
@@ -5746,7 +5849,7 @@ class DataTablePanel {
 
       const cuerpo = this._body.querySelector(tbody);
       if (cuerpo) {
-        min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(cuerpo, 'click', (e) => {
+        min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(cuerpo, 'click', (e) => {
           const btn = e.target.closest ? e.target.closest('.btn-quitar-pool') : null;
           if (!btn) return;
           const tr = btn.closest('tr');
@@ -5759,8 +5862,8 @@ class DataTablePanel {
       if (!f.key.startsWith('warmup.')) return;
       const campo = this._body.querySelector(`[data-field="${f.key}"]`);
       if (!campo) return;
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(campo, 'input', () => this._refrescarCurvaArranque());
+      min_dom__WEBPACK_IMPORTED_MODULE_10__.event.bind(campo, 'change', () => this._refrescarCurvaArranque());
     });
 
     this._bindAyudaPorCampo(this._body);
@@ -5769,31 +5872,13 @@ class DataTablePanel {
   /**
    * El boton «?» que va al lado de cada campo.
    *
-   * POR QUE AL LADO DEL CAMPO Y NO UN TEXTO FIJO: con 30 campos, un parrafo por campo
-   * llena la pantalla y se acaba ignorando. El «?» se pulsa en el momento de la duda,
-   * que es exactamente cuando se lee. Y va con clic y no con `data-tip` (que es hover)
-   * porque en un desplegable o en una casilla el hover no llega.
-   *
-   * El texto se saca del propio campo (`f.ayuda`), no de una lista aparte: anadir un
-   * campo sin ayuda es posible, pero no puede quedar desincronizada una ayuda de su
-   * campo.
+   * Al lado y no un texto fijo: con 30 campos, un parrafo por campo llena la pantalla y se acaba
+   * ignorando. Se pulsa en el momento de la duda, que es cuando se lee. El texto sale del propio
+   * campo (`f.ayuda`) y no de una lista aparte, asi que una ayuda no puede quedar desincronizada de
+   * su campo.
    */
   _bindAyudaPorCampo(alcance) {
-    alcance.querySelectorAll('.btn-ayuda-campo').forEach((btn) => {
-      min_dom__WEBPACK_IMPORTED_MODULE_9__.event.bind(btn, 'click', (e) => {
-        if (e && e.preventDefault) e.preventDefault();
-        const caja = alcance.querySelector(`[data-ayuda-de="${btn.dataset.ayuda}"]`);
-        if (!caja) return;
-
-        if ((0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(caja).has('hidden')) {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(caja).remove('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(btn).add('activo');
-        } else {
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(caja).add('hidden');
-          (0,min_dom__WEBPACK_IMPORTED_MODULE_9__.classes)(btn).remove('activo');
-        }
-      });
-    });
+    (0,_Ayuda_js__WEBPACK_IMPORTED_MODULE_7__.enlazarAyudaPorCampo)(alcance);
   }
 
   // -- guardar --------------------------------------------------------------

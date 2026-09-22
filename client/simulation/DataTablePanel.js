@@ -9,126 +9,16 @@ import {
   numero, datosDeFilaDeTarea, datosDeRecursos, datosDeFlujos, datosGlobales, setByPath, getByPath
 } from './validacion.js';
 import { generarDatosDePrueba } from './DatosDePrueba.js';
+import {
+  AYUDA_COLUMNAS, enlazarAyudaDeColumnas, alternarAyudaDeColumna, marcarAyudaDeColumna,
+  enlazarAyudaPorCampo, htmlDeAyuda
+} from './Ayuda.js';
 import './data-table.css';
 
 const PANEL_CLS = 'sim-data-table-panel';
 const OPEN_CLS = 'open';
 const TAB_ACTIVE_CLS = 'active';
 
-// ---------------------------------------------------------------------------
-// Ayuda por pestana.
-//
-// Cada pestana explica TRES cosas, y en este orden a proposito:
-//   1. `campos`: que se declara aqui (para saber que se puede rellenar).
-//   2. `mide`: que se puede MEDIR con esos datos (la pregunta real del analista).
-//   3. `ojo`: la trampa que mas cara sale si se ignora.
-//
-// Decir solo «que campos hay» no ayuda: el usuario no quiere la lista de campos,
-// quiere saber para que le sirven. Por eso `mide` va antes que `ojo`, y `ojo`
-// explica siempre la CONSECUENCIA, no la regla.
-// ---------------------------------------------------------------------------
-const AYUDA_PESTANA = {
-  tasks: {
-    titulo: 'Tareas: ritmo, calidad y carga física de cada paso',
-    campos: [
-      [ 'Distribución', 'fija (un valor) o triangular (mín/moda/máx). Decide qué columnas se leen.' ],
-      [ 'Tiempo y unidad', 'la duración base. Con triangular, el campo «Tiempo» se IGNORA.' ],
-      [ 'Tasa de fallo y retrabajo', 'probabilidad de fallo por ejecución y el tiempo que se añade al repetir.' ],
-      [ 'Recurso y Cant.', 'la piscina que consume y cuántas unidades toma a la vez.' ],
-      [ 'Frecuencia', 'por token (una vez por pieza) o por lote (una vez por lote).' ],
-      [ 'Barrera', 'quien firma: probabilidad de atender, espera si no atiende, y tolerancia.' ],
-      [ 'Carga física', 'masa cargada (la que soporta), masa arrastrada (la que desliza) y distancia.' ],
-      [ 'Habilidad', 'la que exige la tarea (una etiqueta; varias, separadas por comas).' ]
-    ],
-    mide: [
-      'Con tiempo y unidad: <strong>coste, tiempo de ciclo y sus percentiles</strong> (p50/p95).',
-      'Añadiendo recurso: <strong>esperas en cola, utilización (ρ) y cuello de botella</strong>.',
-      'Añadiendo fallo y retrabajo: <strong>calidad y su impacto en el ciclo</strong>.',
-      'Con frecuencia y barrera: <strong>ciclo de lote, parones y esperas de firma</strong>.',
-      'Con masa y distancia: <strong>toneladas movidas y kg·m</strong>, separando lo cargado de lo arrastrado.',
-      'Con habilidad y piscinas con nombres: <strong>bloqueo por habilidad</strong> y quién podría absorber la tarea.'
-    ],
-    ojo: [
-      'La <strong>unidad</strong> se escribe en plural (<code>minutes</code>): un <code>minute</code> se interpretaría como milisegundos, un factor de 60 000, y sin ningún aviso.',
-      'La masa se aplica según la <strong>frecuencia</strong>: una tarea «por lote» mueve su peso <em>una vez por lote</em>. Si no fuera así, 12 kg por pieza en un lote de 20 darían 240 kg cuando en planta se hizo un solo viaje.',
-      '<strong>Deja la carga vacía</strong> si no aplica. Un 0 dice «no mueve peso»; vacío dice «no lo sabemos», y el diagnóstico los distingue.'
-    ]
-  },
-  flows: {
-    titulo: 'Flujos: el reparto de cada compuerta',
-    campos: [
-      [ 'Probabilidad (%)', 'el reparto de las salidas de una compuerta <strong>exclusiva</strong>.' ]
-    ],
-    mide: [
-      'La <strong>mezcla de caminos</strong>: cuántos casos van por cada rama, y con eso el volumen y el coste por camino.'
-    ],
-    ojo: [
-      'El reparto de cada compuerta <strong>debe sumar 100 %</strong>: el motor acumula y manda todo el sobrante a la última rama sin avisar. El guardado lo bloquea.',
-      'Al cambiar una salida, <strong>las demás se ajustan solas</strong> (a partes iguales si estaban iguales, en proporción si no).',
-      'Una compuerta de <strong>una sola salida</strong> aparece fija al 100 %: el motor siempre la toma y no lee su probabilidad.'
-    ]
-  },
-  resources: {
-    titulo: 'Recursos: las piscinas de unidades equivalentes',
-    campos: [
-      [ 'Nombre', 'el de la piscina. Debe ser único.' ],
-      [ 'Cantidad', 'cuántas unidades idénticas hay (personas, máquinas, vehículos).' ],
-      [ 'Miembros (A5)', 'opcional: nombres con tarifa, habilidades y carga máxima dentro de la piscina.' ]
-    ],
-    mide: [
-      'Con la cantidad: <strong>utilización (ρ), colas y cuello de botella</strong>, que es lo que dice si el plan cabe en la plantilla.',
-      'Con miembros con nombre (A5): <strong>quién trabaja, cuánto tiempo y qué carga movió</strong>, más el <strong>bloqueo por habilidad</strong> y el diagnóstico de absorción.'
-    ],
-    ojo: [
-      'La cantidad es <strong>capacidad</strong>: los miembros con nombre no la cambian, solo dan identidad y tarifa.',
-      'Una tarea que apunta a una piscina que no existe <strong>ignora el recurso en silencio</strong>. Por eso la columna «Recurso» de Tareas es un desplegable y no texto libre.'
-    ]
-  },
-  global: {
-    titulo: 'Global: el reloj, el coste y las reglas',
-    campos: [
-      [ 'Tasa de llegada', 'llegadas por unidad de tiempo. Es una TASA, no un intervalo.' ],
-      [ 'Tarifa y coste de espera', 'lo que cuesta la hora trabajada y la hora en cola.' ],
-      [ 'Jornada, descansos y arranque', 'el reloj real: tramos, pausas y arranque lento.' ],
-      [ 'Horas extra', 'el cupo semanal y sus multiplicadores (LFT arts. 66 y 68).' ],
-      [ 'Lotes y semilla', 'llegadas en serie y reproducibilidad de la corrida.' ],
-      [ 'Reglas laborales (A2)', 'turno, topes del art. 65, primas de domingo y festivo, y sus vigencias.' ]
-    ],
-    mide: [
-      'Con la jornada y los descansos: <strong>capacidad real</strong>, sin inflarla (una jornada de 8 h no son 8 h de trabajo).',
-      'Con el cupo y las primas: <strong>coste real con horas extra</strong> y su reparto doble/triple.',
-      'Con las reglas laborales: <strong>cumplimiento de la LFT</strong> — cuántas semanas se pasaron del tope, y por cuánto.',
-      'Con la semilla: <strong>reproducibilidad y comparación limpia</strong> entre planes (mismo azar para los dos).'
-    ],
-    ojo: [
-      'La tasa de llegada es <strong>una tasa</strong>: <code>60</code> por <code>minute</code> es una llegada por <em>segundo</em>, no una cada 60 minutos.',
-      'Sin <strong>evento raíz</strong> la simulación no arranca, aunque todo lo demás esté relleno.'
-    ]
-  }
-};
-
-// ---------------------------------------------------------------------------
-// Unidades. NO unificar en una sola lista: el motor usa DOS convenciones
-// distintas y confundirlas produce errores silenciosos.
-//
-//   - Tareas (processingTime / reworkTime): PLURAL -> lo lee
-//     timeToMilliseconds() en SimulationEngine.js. Cualquier otro valor cae al
-//     fallback y se interpreta como MILISEGUNDOS (factor 60.000 de error).
-//   - arrivalRate: SINGULAR -> lo lee el bloque de arrivalRate en
-//     SimulationEngine.js. Cualquier otro valor se trata como minutos.
-// ---------------------------------------------------------------------------
-const TASK_UNITS = ['minutes', 'hours', 'seconds'];
-const RATE_UNITS = ['minute', 'hour', 'second'];
-const LOT_SIZE_MODES = ['fixed', 'triangular', 'empirical'];
-const TASK_FREQUENCIES = ['token', 'lot'];
-
-// Nombres de los dias para las casillas de "dias laborables". El indice es el
-// valor que espera el motor: 0 = domingo.
-const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
-
-// Cada cuanto se ejecuta una tarea y, si es por lote, quien tiene que firmarla.
-// `token` = una vez por token (el comportamiento de siempre); `lot` = una sola
-// vez por lote, la primera vez que el flujo pasa por ahi.
 const BARRIER_DEFAULTS = () => ({
   availableProbability: 0.7,
   waitMin: 10,
@@ -169,25 +59,6 @@ const pad = (n) => String(n).padStart(2, '0');
  * encabezado: que la unidad va en plural, que «moda» es el mas probable y no la media,
  * o que la carga se aplica segun la frecuencia.
  */
-const AYUDA_COLUMNAS = {
-  tarea: 'El nombre de la tarea en el diagrama. Es solo lectura: se cambia en el diagrama, no aqui.',
-  distribucion: 'fija (un solo valor) o triangular (min/moda/max). Decide que columnas de tiempo se leen: con triangular, la columna «Tiempo» se IGNORA.',
-  tiempo: 'La duracion base. Con distribucion «fija» es el valor unico; con triangular no se lee.',
-  unidad: 'minutes, hours o seconds, siempre en PLURAL. Un «minute» en singular se interpretaria como milisegundos: un error de 60 000 veces y sin ningun aviso.',
-  tiempoMin: 'Solo con triangular: el tiempo mas corto observado. Tiene que ser menor o igual que la moda.',
-  tiempoModa: 'Solo con triangular: el tiempo MAS PROBABLE, no la media. Tiene que quedar entre el minimo y el maximo.',
-  tiempoMax: 'Solo con triangular: el tiempo mas largo observado. Tiene que ser mayor o igual que la moda.',
-  tasaFallo: 'Probabilidad de fallo por ejecucion, en PORCENTAJE: 5 significa que falla 5 de cada 100. El motor lo guarda como 0,05.',
-  retrabajo: 'Lo que se tarda en rehacer una pieza que fallo. Se suma al tiempo de ciclo.',
-  unidadRetrabajo: 'La unidad del retrabajo, en plural. Puede ser distinta de la del proceso.',
-  recurso: 'La piscina que consume la tarea. Tiene que existir en la pestaña Recursos: un nombre que no exista hace que el recurso se ignore EN SILENCIO.',
-  cant: 'Cuantas unidades de la piscina toma la tarea a la vez. Con 2, ocupa dos personas mientras dura.',
-  frecuencia: 'por token (una vez por pieza) o por lote (una sola vez por lote). Decide si el tiempo y la carga se aplican por pieza o por lote.',
-  barrera: 'Solo con «por lote»: quien firma el lote. disp. es la probabilidad de que atiendan; si no atienden, se espera una triangular min/moda/max; tol. es cuanto se tolera antes de marcarlo.',
-  carga: 'Opcional. Cargada es la masa que SOPORTA la persona; arrastrada, la que desliza. Se aplican segun la frecuencia: por pieza o una vez por lote.',
-  habilidad: 'La etiqueta que exige la tarea (por ejemplo soldadura). Si ningun miembro de la piscina la tiene, la tarea queda BLOQUEADA y el informe lo dice. Solo se ofrecen las que estan dadas de alta en los recursos, para que no se pueda exigir una que nadie tiene.',
-  miembro: 'El miembro CONCRETO que hace esta tarea, si solo la puede hacer esa persona. Con un nombre, la tarea ESPERA a ese miembro aunque otro esté libre (es una restricción, no una preferencia). Sin nombre, el motor elige de la piscina por turnos, que es el comportamiento de siempre. Solo se ofrecen los miembros de la piscina elegida.'
-};
 
 /**
  * Los campos de la configuracion global, agrupados por FAMILIA.
@@ -207,6 +78,15 @@ const AYUDA_COLUMNAS = {
  * seccion: la tabla de vigencias pisa a los dos (prima doble y triple son de
  * `overtime`; dominical, festivo, tope al dia y dias por semana, de `labor`).
  */
+const TASK_UNITS = ['minutes', 'hours', 'seconds'];
+const RATE_UNITS = ['minute', 'hour', 'second'];
+const LOT_SIZE_MODES = ['fixed', 'triangular', 'empirical'];
+const TASK_FREQUENCIES = ['token', 'lot'];
+
+// Nombres de los dias para las casillas de «dias laborables». El indice es el valor que espera el
+// motor: 0 = domingo.
+const DIAS = [ 'Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb' ];
+
 const GLOBAL_SECCIONES = [
   {
     clave: 'simulacion',
@@ -950,37 +830,17 @@ export default class DataTablePanel {
   }
 
   /**
-   * Ayuda de la pestana activa: campos, qué se mide con ellos y la trampa.
+   * Ayuda de la pestana activa: campos, que se mide con ellos y la trampa.
    *
-   * Se redibuja en cada llamada porque el contenido depende de la PESTANA, y la
-   * pestana puede haber cambiado desde la ultima vez. Se mantiene abierta/cerrada
-   * con una clase para que el usuario no tenga que reabrirla al cambiar de tab.
+   * El contenido vive en `Ayuda.js`; aqui solo se pinta y se abre o se cierra. Se redibuja en cada
+   * llamada porque depende de la PESTANA, y se mantiene abierta con una clase para que el usuario no
+   * tenga que reabrirla al cambiar de tab.
    */
   _toggleAyuda() {
     if (!this._ayuda) return;
-    const a = AYUDA_PESTANA[this._activeTab];
-    if (!a) return;
-
-    const listas = (items, clase) => `<ul class="${clase}">${items.map((i) => (
-      Array.isArray(i) ? `<li><strong>${i[0]}</strong>: ${i[1]}</li>` : `<li>${i}</li>`
-    )).join('')}</ul>`;
-
-    this._ayuda.innerHTML = `
-      <h4>${a.titulo}</h4>
-      <div class="columnas">
-        <div>
-          <h5>Qué se declara aquí</h5>
-          ${listas(a.campos, 'campos')}
-        </div>
-        <div>
-          <h5>Qué se puede medir con estos datos</h5>
-          ${listas(a.mide, 'mide')}
-        </div>
-      </div>
-      <h5 class="ojo-titulo">Lo que hay que tener presente</h5>
-      ${listas(a.ojo, 'ojo')}
-    `;
-
+    const html = htmlDeAyuda(this._activeTab);
+    if (!html) return;
+    this._ayuda.innerHTML = html;
     domClasses(this._ayuda).toggle('hidden');
   }
 
@@ -1204,47 +1064,21 @@ export default class DataTablePanel {
     this._bindAutoguardado();
   }
 
-  /** Enlaza los «?» de la cabecera de Tareas con su ayuda. */
-  _bindAyudaDeColumnas() {
-    this._body.querySelectorAll('.btn-ayuda-col').forEach((btn) => {
-      domEvent.bind(btn, 'click', (e) => {
-        if (e && e.preventDefault) e.preventDefault();
-        this._mostrarAyudaColumna(btn.dataset.ayudaCol);
-      });
-    });
-  }
-
   /**
-   * Pinta la ayuda de una columna en la fila compartida bajo la cabecera.
+   * Los «?» de la cabecera y la fila compartida que muestra su texto.
    *
-   * Volver a pulsar el MISMO «?» la repliega, para que se pueda cerrar sin buscar otra
-   * columna. Pulsar otro la cambia, que es lo que se espera al ir comparando columnas.
+   * Volver a pulsar el MISMO «?» repliega la ayuda, para cerrarla sin buscar otra columna; pulsar
+   * otro la cambia, que es lo que se espera al ir comparando. La logica vive en `Ayuda.js` y aqui se
+   * sincroniza el boton marcado.
    */
-  _mostrarAyudaColumna(clave) {
-    const fila = this._body.querySelector('.fila-ayuda-col');
-    if (!fila) return;
-
-    const celda = fila.querySelector('td');
-    const texto = AYUDA_COLUMNAS[clave] || '';
-    const yaVisible = !domClasses(fila).has('hidden');
-
-    if (yaVisible && celda.textContent === texto) {
-      domClasses(fila).add('hidden');
-      this._marcarAyudaColumna(null);
-      return;
-    }
-
-    celda.textContent = texto;
-    domClasses(fila).remove('hidden');
-    this._marcarAyudaColumna(clave);
+  _bindAyudaDeColumnas() {
+    enlazarAyudaDeColumnas(this._body, (clave) => {
+      this._marcarAyudaColumna(alternarAyudaDeColumna(this._body, clave));
+    });
   }
 
-  /** Deja marcado el «?» de la columna cuya ayuda esta a la vista. */
   _marcarAyudaColumna(clave) {
-    this._body.querySelectorAll('.btn-ayuda-col').forEach((b) => {
-      if (b.dataset.ayudaCol === clave) domClasses(b).add('activo');
-      else domClasses(b).remove('activo');
-    });
+    marcarAyudaDeColumna(this._body, clave);
   }
 
   /**
@@ -2159,31 +1993,13 @@ export default class DataTablePanel {
   /**
    * El boton «?» que va al lado de cada campo.
    *
-   * POR QUE AL LADO DEL CAMPO Y NO UN TEXTO FIJO: con 30 campos, un parrafo por campo
-   * llena la pantalla y se acaba ignorando. El «?» se pulsa en el momento de la duda,
-   * que es exactamente cuando se lee. Y va con clic y no con `data-tip` (que es hover)
-   * porque en un desplegable o en una casilla el hover no llega.
-   *
-   * El texto se saca del propio campo (`f.ayuda`), no de una lista aparte: anadir un
-   * campo sin ayuda es posible, pero no puede quedar desincronizada una ayuda de su
-   * campo.
+   * Al lado y no un texto fijo: con 30 campos, un parrafo por campo llena la pantalla y se acaba
+   * ignorando. Se pulsa en el momento de la duda, que es cuando se lee. El texto sale del propio
+   * campo (`f.ayuda`) y no de una lista aparte, asi que una ayuda no puede quedar desincronizada de
+   * su campo.
    */
   _bindAyudaPorCampo(alcance) {
-    alcance.querySelectorAll('.btn-ayuda-campo').forEach((btn) => {
-      domEvent.bind(btn, 'click', (e) => {
-        if (e && e.preventDefault) e.preventDefault();
-        const caja = alcance.querySelector(`[data-ayuda-de="${btn.dataset.ayuda}"]`);
-        if (!caja) return;
-
-        if (domClasses(caja).has('hidden')) {
-          domClasses(caja).remove('hidden');
-          domClasses(btn).add('activo');
-        } else {
-          domClasses(caja).add('hidden');
-          domClasses(btn).remove('activo');
-        }
-      });
-    });
+    enlazarAyudaPorCampo(alcance);
   }
 
   // -- guardar --------------------------------------------------------------
