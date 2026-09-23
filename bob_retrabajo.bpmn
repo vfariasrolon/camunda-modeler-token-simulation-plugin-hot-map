@@ -9,7 +9,7 @@
     <bpmn:startEvent id="StartEvent_1">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;startDate&#34;: &#34;&#34;,&#10;  &#34;arrivalRate&#34;: {&#10;    &#34;value&#34;: 1,&#10;    &#34;unit&#34;: &#34;minute&#34;&#10;  },&#10;  &#34;simulationConfig&#34;: {&#10;    &#34;runValue&#34;: 3000&#10;  },&#10;  &#34;isRoot&#34;: true,&#10;  &#34;calendar&#34;: {&#10;    &#34;workingDays&#34;: [&#10;      1,&#10;      2,&#10;      3,&#10;      4,&#10;      5&#10;    ],&#10;    &#34;workingHours&#34;: {&#10;      &#34;start&#34;: {&#10;        &#34;hour&#34;: 7,&#10;        &#34;minute&#34;: 0&#10;      },&#10;      &#34;end&#34;: {&#10;        &#34;hour&#34;: 16,&#10;        &#34;minute&#34;: 0&#10;      }&#10;    },&#10;    &#34;breaks&#34;: [&#10;      {&#10;        &#34;start&#34;: {&#10;          &#34;hour&#34;: 12,&#10;          &#34;minute&#34;: 30&#10;        },&#10;        &#34;end&#34;: {&#10;          &#34;hour&#34;: 13,&#10;          &#34;minute&#34;: 30&#10;        },&#10;        &#34;cuentaComoJornada&#34;: false,&#10;        &#34;existeEnExtra&#34;: true&#10;      }&#10;    ]&#10;  },&#10;  &#34;warmup&#34;: {&#10;    &#34;shape&#34;: &#34;exponential&#34;,&#10;    &#34;initialEfficiency&#34;: 0.7,&#10;    &#34;recoveryMinutes&#34;: 30,&#10;    &#34;onShiftStart&#34;: true,&#10;    &#34;onBreakReturn&#34;: true&#10;  },&#10;  &#34;lots&#34;: {&#10;    &#34;enabled&#34;: true,&#10;    &#34;sizeMode&#34;: &#34;empirical&#34;,&#10;    &#34;size&#34;: 6,&#10;    &#34;min&#34;: 6,&#10;    &#34;mode&#34;: 6,&#10;    &#34;max&#34;: 6,&#10;    &#34;stopMinutes&#34;: 1,&#10;    &#34;table&#34;: [&#10;      {&#10;        &#34;size&#34;: 6,&#10;        &#34;weight&#34;: 100&#10;      }&#10;    ]&#10;  },&#10;  &#34;seed&#34;: &#34;&#34;,&#10;  &#34;cost&#34;: {&#10;    &#34;baseRatePerHour&#34;: 50,&#10;    &#34;waitCostPerHour&#34;: 0&#10;  },&#10;  &#34;overtime&#34;: {&#10;    &#34;limitHours&#34;: 9,&#10;    &#34;payMultiplier&#34;: 2,&#10;    &#34;excessPayMultiplier&#34;: 3&#10;  },&#10;  &#34;labor&#34;: {&#10;    &#34;shiftType&#34;: &#34;diurna&#34;,&#10;    &#34;dailyOvertimeLimitHours&#34;: 3,&#10;    &#34;maxOvertimeDaysPerWeek&#34;: 3,&#10;    &#34;sundayPremiumPercent&#34;: 25,&#10;    &#34;holidayPremiumPercent&#34;: 0,&#10;    &#34;rules&#34;: []&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;startDate&#34;: &#34;&#34;,&#10;  &#34;arrivalRate&#34;: {&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;minute&#34;&#10;  },&#10;  &#34;simulationConfig&#34;: {&#10;    &#34;runValue&#34;: 3000&#10;  },&#10;  &#34;isRoot&#34;: true,&#10;  &#34;calendar&#34;: {&#10;    &#34;workingDays&#34;: [&#10;      1,&#10;      2,&#10;      3,&#10;      4,&#10;      5&#10;    ],&#10;    &#34;workingHours&#34;: {&#10;      &#34;start&#34;: {&#10;        &#34;hour&#34;: 7,&#10;        &#34;minute&#34;: 0&#10;      },&#10;      &#34;end&#34;: {&#10;        &#34;hour&#34;: 16,&#10;        &#34;minute&#34;: 0&#10;      }&#10;    },&#10;    &#34;breaks&#34;: [&#10;      {&#10;        &#34;start&#34;: {&#10;          &#34;hour&#34;: 12,&#10;          &#34;minute&#34;: 30&#10;        },&#10;        &#34;end&#34;: {&#10;          &#34;hour&#34;: 13,&#10;          &#34;minute&#34;: 30&#10;        },&#10;        &#34;cuentaComoJornada&#34;: false,&#10;        &#34;existeEnExtra&#34;: true&#10;      }&#10;    ]&#10;  },&#10;  &#34;warmup&#34;: {&#10;    &#34;shape&#34;: &#34;exponential&#34;,&#10;    &#34;initialEfficiency&#34;: 0.7,&#10;    &#34;recoveryMinutes&#34;: 30,&#10;    &#34;onShiftStart&#34;: true,&#10;    &#34;onBreakReturn&#34;: true&#10;  },&#10;  &#34;lots&#34;: {&#10;    &#34;enabled&#34;: true,&#10;    &#34;sizeMode&#34;: &#34;empirical&#34;,&#10;    &#34;size&#34;: 6,&#10;    &#34;min&#34;: 6,&#10;    &#34;mode&#34;: 6,&#10;    &#34;max&#34;: 6,&#10;    &#34;stopMinutes&#34;: 1,&#10;    &#34;table&#34;: [&#10;      {&#10;        &#34;size&#34;: 6,&#10;        &#34;weight&#34;: 100&#10;      }&#10;    ]&#10;  },&#10;  &#34;seed&#34;: &#34;&#34;,&#10;  &#34;cost&#34;: {&#10;    &#34;baseRatePerHour&#34;: 50,&#10;    &#34;waitCostPerHour&#34;: 0&#10;  },&#10;  &#34;overtime&#34;: {&#10;    &#34;limitHours&#34;: 9,&#10;    &#34;payMultiplier&#34;: 2,&#10;    &#34;excessPayMultiplier&#34;: 3&#10;  },&#10;  &#34;labor&#34;: {&#10;    &#34;shiftType&#34;: &#34;diurna&#34;,&#10;    &#34;dailyOvertimeLimitHours&#34;: 3,&#10;    &#34;maxOvertimeDaysPerWeek&#34;: 3,&#10;    &#34;sundayPremiumPercent&#34;: 25,&#10;    &#34;holidayPremiumPercent&#34;: 0,&#10;    &#34;rules&#34;: []&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:outgoing>Flow_1j34s4z</bpmn:outgoing>
@@ -41,52 +41,36 @@
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1qm35z7</bpmn:incoming>
-      <bpmn:outgoing>Flow_0lhhesf</bpmn:outgoing>
+      <bpmn:outgoing>Flow_0fda6kv</bpmn:outgoing>
     </bpmn:task>
     <bpmn:sequenceFlow id="Flow_1qm35z7" sourceRef="Activity_16snxej" targetRef="Activity_1coucph" />
-    <bpmn:sequenceFlow id="Flow_0lhhesf" sourceRef="Activity_1coucph" targetRef="Gateway_0waqk1w" />
-    <bpmn:parallelGateway id="Gateway_0waqk1w">
-      <bpmn:incoming>Flow_0lhhesf</bpmn:incoming>
-      <bpmn:outgoing>Flow_05s03ii</bpmn:outgoing>
-      <bpmn:outgoing>Flow_1tk99i5</bpmn:outgoing>
-    </bpmn:parallelGateway>
     <bpmn:task id="Activity_0uzfevn" name="control de basura desempaque">
       <bpmn:extensionElements>
         <camunda:properties>
           <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;desempaque&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
-      <bpmn:incoming>Flow_05s03ii</bpmn:incoming>
-      <bpmn:outgoing>Flow_08habod</bpmn:outgoing>
+      <bpmn:incoming>Flow_0fda6kv</bpmn:incoming>
+      <bpmn:outgoing>Flow_19bpfe4</bpmn:outgoing>
     </bpmn:task>
-    <bpmn:sequenceFlow id="Flow_05s03ii" sourceRef="Gateway_0waqk1w" targetRef="Activity_0uzfevn" />
     <bpmn:task id="Activity_1t7u4tu" name="se acomoda tableta en mesa o carro">
       <bpmn:extensionElements>
         <camunda:properties>
           <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;desempaque&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
-      <bpmn:incoming>Flow_1tk99i5</bpmn:incoming>
-      <bpmn:outgoing>Flow_0n8htmp</bpmn:outgoing>
+      <bpmn:incoming>Flow_19bpfe4</bpmn:incoming>
+      <bpmn:outgoing>Flow_05awt6d</bpmn:outgoing>
     </bpmn:task>
-    <bpmn:sequenceFlow id="Flow_1tk99i5" sourceRef="Gateway_0waqk1w" targetRef="Activity_1t7u4tu" />
-    <bpmn:endEvent id="Event_0yzdzs9">
-      <bpmn:incoming>Flow_08habod</bpmn:incoming>
-    </bpmn:endEvent>
-    <bpmn:sequenceFlow id="Flow_08habod" sourceRef="Activity_0uzfevn" targetRef="Event_0yzdzs9" />
     <bpmn:task id="Activity_0kktna7" name="toma charola y la pone en linea">
       <bpmn:extensionElements>
         <camunda:properties>
           <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;acomodo linea&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
-      <bpmn:incoming>Flow_109hz0r</bpmn:incoming>
+      <bpmn:incoming>Flow_05awt6d</bpmn:incoming>
       <bpmn:outgoing>Flow_1ero5j2</bpmn:outgoing>
     </bpmn:task>
-    <bpmn:startEvent id="Event_03vxnm4">
-      <bpmn:outgoing>Flow_109hz0r</bpmn:outgoing>
-    </bpmn:startEvent>
-    <bpmn:sequenceFlow id="Flow_109hz0r" sourceRef="Event_03vxnm4" targetRef="Activity_0kktna7" />
     <bpmn:task id="Activity_03itks5" name="toma de mesa tableta">
       <bpmn:extensionElements>
         <camunda:properties>
@@ -94,11 +78,9 @@
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1ero5j2</bpmn:incoming>
-      <bpmn:incoming>Flow_0n8htmp</bpmn:incoming>
       <bpmn:outgoing>Flow_16ngbzv</bpmn:outgoing>
     </bpmn:task>
     <bpmn:sequenceFlow id="Flow_1ero5j2" sourceRef="Activity_0kktna7" targetRef="Activity_03itks5" />
-    <bpmn:sequenceFlow id="Flow_0n8htmp" sourceRef="Activity_1t7u4tu" targetRef="Activity_03itks5" />
     <bpmn:task id="Activity_1ra4ugj" name="coloca tablea en linea">
       <bpmn:extensionElements>
         <camunda:properties>
@@ -159,7 +141,7 @@
     <bpmn:task id="Activity_0yzy7v5" name="proceso de update">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 35,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.15,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;frequency&#34;: &#34;lot&#34;,&#10;  &#34;barrier&#34;: {&#10;    &#34;availableProbability&#34;: 0.7,&#10;    &#34;waitMin&#34;: 10,&#10;    &#34;waitMode&#34;: 20,&#10;    &#34;waitMax&#34;: 60,&#10;    &#34;toleranceMinutes&#34;: 15&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;sistemas&#34;,&#10;    &#34;quantityRequired&#34;: 2&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 15,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.15,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 15,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;frequency&#34;: &#34;lot&#34;,&#10;  &#34;barrier&#34;: {&#10;    &#34;availableProbability&#34;: 0.7,&#10;    &#34;waitMin&#34;: 10,&#10;    &#34;waitMode&#34;: 20,&#10;    &#34;waitMax&#34;: 60,&#10;    &#34;toleranceMinutes&#34;: 15&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;sistemas&#34;,&#10;    &#34;quantityRequired&#34;: 2&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_0lqhjjp</bpmn:incoming>
@@ -175,7 +157,7 @@
     <bpmn:task id="Activity_0ltjetr" name="se reinicia">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 25,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.02,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;sistemas&#34;,&#10;    &#34;quantityRequired&#34;: 2&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.02,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;sistemas&#34;,&#10;    &#34;quantityRequired&#34;: 2&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1q1dk5r</bpmn:incoming>
@@ -222,7 +204,7 @@
     <bpmn:task id="Activity_1q44a63" name="se apaga">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;sistemas&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.02,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;sistemas&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_0071bel</bpmn:incoming>
@@ -283,7 +265,7 @@
     <bpmn:task id="Activity_14ws2q0" name="se pasa a horno">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;noel&#34;&#10;  },&#10;  &#34;habilidad&#34;: &#34;empaque&#34;&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1bbzhhd</bpmn:incoming>
@@ -292,7 +274,7 @@
     <bpmn:task id="Activity_11w9tt4" name="se mete a caja">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 1,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 1,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1qe6dtb</bpmn:incoming>
@@ -301,7 +283,7 @@
     <bpmn:task id="Activity_0rvr7pe" name="se sube a tarima">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_0kpy2zy</bpmn:incoming>
@@ -328,7 +310,7 @@
     <bpmn:task id="Activity_066iwvk" name="se quita plastico">
       <bpmn:extensionElements>
         <camunda:properties>
-          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 2,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;embalaje&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
         </camunda:properties>
       </bpmn:extensionElements>
       <bpmn:incoming>Flow_1xvk19t</bpmn:incoming>
@@ -363,6 +345,9 @@
         </camunda:properties>
       </bpmn:extensionElements>
     </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_0fda6kv" sourceRef="Activity_1coucph" targetRef="Activity_0uzfevn" />
+    <bpmn:sequenceFlow id="Flow_19bpfe4" sourceRef="Activity_0uzfevn" targetRef="Activity_1t7u4tu" />
+    <bpmn:sequenceFlow id="Flow_05awt6d" sourceRef="Activity_1t7u4tu" targetRef="Activity_0kktna7" />
     <bpmn:textAnnotation id="TextAnnotation_0j5qw9w">
       <bpmn:text>falla el 16%</bpmn:text>
     </bpmn:textAnnotation>
@@ -384,27 +369,6 @@
       <bpmndi:BPMNShape id="Activity_1coucph_di" bpmnElement="Activity_1coucph">
         <dc:Bounds x="580" y="80" width="100" height="80" />
         <bpmndi:BPMNLabel />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Gateway_15wuydx_di" bpmnElement="Gateway_0waqk1w">
-        <dc:Bounds x="735" y="95" width="50" height="50" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_0uzfevn_di" bpmnElement="Activity_0uzfevn">
-        <dc:Bounds x="840" y="80" width="100" height="80" />
-        <bpmndi:BPMNLabel />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_1t7u4tu_di" bpmnElement="Activity_1t7u4tu">
-        <dc:Bounds x="840" y="190" width="100" height="80" />
-        <bpmndi:BPMNLabel />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Event_0yzdzs9_di" bpmnElement="Event_0yzdzs9">
-        <dc:Bounds x="1002" y="102" width="36" height="36" />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_0kktna7_di" bpmnElement="Activity_0kktna7">
-        <dc:Bounds x="840" y="370" width="100" height="80" />
-        <bpmndi:BPMNLabel />
-      </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Event_03vxnm4_di" bpmnElement="Event_03vxnm4">
-        <dc:Bounds x="742" y="392" width="36" height="36" />
       </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="Activity_03itks5_di" bpmnElement="Activity_03itks5">
         <dc:Bounds x="1010" y="370" width="100" height="80" />
@@ -509,6 +473,18 @@
           <dc:Bounds x="3873" y="837.5" width="73" height="27" />
         </bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0uzfevn_di" bpmnElement="Activity_0uzfevn">
+        <dc:Bounds x="570" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0kktna7_di" bpmnElement="Activity_0kktna7">
+        <dc:Bounds x="750" y="570" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1t7u4tu_di" bpmnElement="Activity_1t7u4tu">
+        <dc:Bounds x="580" y="300" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
       <bpmndi:BPMNShape id="TextAnnotation_0j5qw9w_di" bpmnElement="TextAnnotation_0j5qw9w">
         <dc:Bounds x="2000" y="395" width="99.98924268502583" height="29.999462134251292" />
         <bpmndi:BPMNLabel />
@@ -525,35 +501,11 @@
         <di:waypoint x="530" y="120" />
         <di:waypoint x="580" y="120" />
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_0lhhesf_di" bpmnElement="Flow_0lhhesf">
-        <di:waypoint x="680" y="120" />
-        <di:waypoint x="735" y="120" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_05s03ii_di" bpmnElement="Flow_05s03ii">
-        <di:waypoint x="785" y="120" />
-        <di:waypoint x="840" y="120" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_1tk99i5_di" bpmnElement="Flow_1tk99i5">
-        <di:waypoint x="760" y="145" />
-        <di:waypoint x="760" y="230" />
-        <di:waypoint x="840" y="230" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_08habod_di" bpmnElement="Flow_08habod">
-        <di:waypoint x="940" y="120" />
-        <di:waypoint x="1002" y="120" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_109hz0r_di" bpmnElement="Flow_109hz0r">
-        <di:waypoint x="778" y="410" />
-        <di:waypoint x="840" y="410" />
-      </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_1ero5j2_di" bpmnElement="Flow_1ero5j2">
-        <di:waypoint x="940" y="410" />
+        <di:waypoint x="850" y="610" />
+        <di:waypoint x="930" y="610" />
+        <di:waypoint x="930" y="410" />
         <di:waypoint x="1010" y="410" />
-      </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge id="Flow_0n8htmp_di" bpmnElement="Flow_0n8htmp">
-        <di:waypoint x="940" y="230" />
-        <di:waypoint x="1060" y="230" />
-        <di:waypoint x="1060" y="370" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Flow_16ngbzv_di" bpmnElement="Flow_16ngbzv">
         <di:waypoint x="1110" y="410" />
@@ -680,6 +632,24 @@
         <di:waypoint x="3910" y="1010" />
         <di:waypoint x="3640" y="1010" />
         <bpmndi:BPMNLabel />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0fda6kv_di" bpmnElement="Flow_0fda6kv">
+        <di:waypoint x="630" y="80" />
+        <di:waypoint x="630" y="60" />
+        <di:waypoint x="620" y="60" />
+        <di:waypoint x="620" y="80" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_19bpfe4_di" bpmnElement="Flow_19bpfe4">
+        <di:waypoint x="670" y="120" />
+        <di:waypoint x="790" y="120" />
+        <di:waypoint x="790" y="340" />
+        <di:waypoint x="680" y="340" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_05awt6d_di" bpmnElement="Flow_05awt6d">
+        <di:waypoint x="630" y="380" />
+        <di:waypoint x="630" y="445" />
+        <di:waypoint x="800" y="445" />
+        <di:waypoint x="800" y="570" />
       </bpmndi:BPMNEdge>
       <bpmndi:BPMNEdge id="Association_1dr02bd_di" bpmnElement="Association_1dr02bd">
         <di:waypoint x="2058" y="527" />

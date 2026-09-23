@@ -164,6 +164,75 @@ en la primera semana. El informe de la consola imprime la tasa **ya resuelta**
 | **Barrera** (`disp.` / `mín` / `moda` / `máx` / `tol.`) | Quien firma: probabilidad de atender a la primera, espera si no atiende, y tolerancia. | Solo se lee con `por lote`. Con `disp.` a 1 no hay ninguna espera. Ver §4.2. |
 | **Carga física** (`kg` / `kg` / `m`) | **Masa cargada** (la que soporta), **masa arrastrada** (la que desliza) y **distancia**. | Opcional. Ver §4.8. Deja las casillas **vacías** si no aplica: vacío es «no lo sabemos». |
 | **Habilidad** | La etiqueta que la tarea **exige**. Varias, separadas por comas. | Si nadie de la piscina la tiene, la tarea se **bloquea**. Ver §4.9. |
+| **Cupo** | Cuántas piezas procesa **A LA VEZ** y libera juntas. Vacío o 1 = una pieza a la vez. | El «Tiempo» es el del **cupo completo**, no el de una pieza. Ver §4.12. |
+| **Arranque del cupo** | `esperar a llenar` o `arrancar con lo que haya`. | Solo se lee con cupo > 1. Ver §4.12. |
+
+> **Scrap vs. retrabajo.** Este motor modela **retrabajo**, no chatarra: un fallo
+> añade tiempo y el caso continúa. No hay pérdida de piezas. Si tu proceso descarta
+> producto, el modelo no lo representa y debes tenerlo en cuenta al leer el costo por
+> pieza.
+
+### 4.12 El cupo: N piezas a la vez, liberadas juntas
+
+Un **horno** que mete 20 tabletas y las saca todas de golpe. Una **tina** de galvanizado. Un
+**carro** de transporte que se llena antes de moverse. En los tres, N piezas se procesan **al mismo
+tiempo** y salen **juntas**.
+
+**No confundir con las otras dos columnas que se le parecen**, porque significan cosas distintas:
+
+| | Qué hace |
+|---|---|
+| **Cant.** | N **recursos** para **una** pieza. Una máquina que necesita dos operarios. |
+| **Frecuencia «por lote»** | N piezas procesadas **en secuencia**, una tras otra. |
+| **Cupo** | N piezas procesadas **a la vez**, y liberadas juntas. |
+
+**El tiempo es el del CUPO COMPLETO.** Un horno que tarda 100 minutos en procesar 20 piezas **no
+tarda 2 000**: tarda 100, y las 20 salen al mismo tiempo. Eso da un tiempo de ciclo **por pieza** de
+100 / 20 = 5 minutos, que es lo que hace que un horno sea barato —y la razón de que existan—.
+
+**La otra cara, que también hay que saber:** una pieza individual puede esperar hasta el tiempo
+entero del cupo. Si llega justo después de que el horno arrancó, espera los 100 minutos completos.
+**El cupo mejora el rendimiento y empeora la latencia**, y las dos cosas se informan.
+
+#### Las dos políticas de arranque
+
+| Política | Qué hace | Ejemplo |
+|---|---|---|
+| **esperar a llenar** | Espera **sin límite** a juntar el cupo. Si el pedido se acaba antes, arranca con lo que haya. | El **carro**: moverlo a medio cargar es tirar un viaje. |
+| **arrancar con lo que haya** | Igual, pero además arranca en cuanto sabe que no viene nadie más. | El **horno** que se enciende con la carga que tenga. |
+
+**Las dos esperan a llenar el cupo.** La diferencia está en **cuándo se rinden**, no en cuándo
+empiezan. (Una versión anterior hacía que «arrancar con lo que haya» arrancara con **cada pieza
+individual**: con piezas que llegan de a una, el cupo no agrupaba nada y la capacidad real caía 24
+veces. Es el bug que producía «142 días» donde debían ser dos jornadas.)
+
+#### El aviso de capacidad, que evita el error más fácil
+
+El cupo y las llegadas se declaran **en sitios distintos** —Tareas y Global— y es fácil que no
+cuadren. Por eso la celda del cupo avisa:
+
+```
+capacidad 2.40/min < 3.0 que llegan — la cola crece
+```
+
+La cuenta es **capacidad contra llegadas, las dos en piezas por minuto**:
+
+```
+capacidad = cupo / minutos de la tarea
+llegadas  = lo que declara `arrivalRate` en Global
+```
+
+| | | Resultado |
+|---|---|---|
+| llegan **menos** que la capacidad | | la cola se vacía, los tiempos del informe valen |
+| llegan **más** que la capacidad | | **la cola crece sin límite**: el tiempo total mide cuánto dura la corrida, **no** lo que tarda una pieza |
+
+Un cupo de 24 con 10 minutos da 2,4/min. Si entran 3/min, faltan 0,6 y la cola crece: el cupo que
+haría falta es 30. El aviso lo dice, y en verde cuando sobra capacidad.
+
+> **Con llegadas lentas el cupo no agrupa nada, y eso es física, no un fallo.** Si las piezas llegan
+> cada hora y el horno tarda 10 minutos, nunca habrá 24 esperando. Para que el cupo sirva, las
+> piezas tienen que **acumularse**.
 
 > **Scrap vs. retrabajo.** Este motor modela **retrabajo**, no chatarra: un fallo
 > añade tiempo y el caso continúa. No hay pérdida de piezas. Si tu proceso descarta

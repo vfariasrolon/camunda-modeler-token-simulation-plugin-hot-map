@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_0me8qik" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.38.1" modeler:executionPlatform="Camunda Platform" modeler:executionPlatformVersion="7.23.0">
+  <bpmn:process id="Process_0xnvqvq" isExecutable="true">
+    <bpmn:extensionElements>
+      <camunda:properties>
+        <camunda:property name="simulationData" value="{&#10;  &#34;resourcePools&#34;: [&#10;    {&#10;      &#34;name&#34;: &#34;tecnico&#34;,&#10;      &#34;quantity&#34;: 7,&#10;      &#34;members&#34;: [&#10;        {&#10;          &#34;nombre&#34;: &#34;noel&#34;,&#10;          &#34;tarifaHora&#34;: 50,&#10;          &#34;cargaMaximaKg&#34;: 25,&#10;          &#34;habilidades&#34;: [&#10;            &#34;limpieza&#34;,&#10;            &#34;garantias&#34;&#10;          ]&#10;        },&#10;        {&#10;          &#34;nombre&#34;: &#34;victor s&#34;,&#10;          &#34;tarifaHora&#34;: 50,&#10;          &#34;cargaMaximaKg&#34;: 25,&#10;          &#34;habilidades&#34;: [&#10;            &#34;limpieza&#34;&#10;          ]&#10;        },&#10;        {&#10;          &#34;nombre&#34;: &#34;chelito&#34;,&#10;          &#34;tarifaHora&#34;: 50,&#10;          &#34;cargaMaximaKg&#34;: 25,&#10;          &#34;habilidades&#34;: [&#10;            &#34;limpieza&#34;,&#10;            &#34;bios&#34;&#10;          ]&#10;        },&#10;        {&#10;          &#34;nombre&#34;: &#34;victoria&#34;,&#10;          &#34;tarifaHora&#34;: 50,&#10;          &#34;cargaMaximaKg&#34;: 15,&#10;          &#34;habilidades&#34;: [&#10;            &#34;bios&#34;,&#10;            &#34;carga&#34;&#10;          ]&#10;        },&#10;        {&#10;          &#34;nombre&#34;: &#34;erika&#34;,&#10;          &#34;tarifaHora&#34;: 50,&#10;          &#34;cargaMaximaKg&#34;: 15,&#10;          &#34;habilidades&#34;: [&#10;            &#34;bios&#34;,&#10;            &#34;carga&#34;&#10;          ]&#10;        },&#10;        {&#10;          &#34;nombre&#34;: &#34;alicia&#34;,&#10;          &#34;tarifaHora&#34;: 50,&#10;          &#34;cargaMaximaKg&#34;: 10,&#10;          &#34;habilidades&#34;: [&#10;            &#34;bios&#34;,&#10;            &#34;carga&#34;&#10;          ]&#10;        },&#10;        {&#10;          &#34;nombre&#34;: &#34;jimbo&#34;,&#10;          &#34;tarifaHora&#34;: 50,&#10;          &#34;cargaMaximaKg&#34;: 25,&#10;          &#34;habilidades&#34;: [&#10;            &#34;desempaque&#34;&#10;          ]&#10;        }&#10;      ]&#10;    }&#10;  ]&#10;}" />
+      </camunda:properties>
+    </bpmn:extensionElements>
+    <bpmn:startEvent id="Event_03imili">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;startDate&#34;: &#34;&#34;,&#10;  &#34;arrivalRate&#34;: {&#10;    &#34;value&#34;: 1,&#10;    &#34;unit&#34;: &#34;minute&#34;&#10;  },&#10;  &#34;simulationConfig&#34;: {&#10;    &#34;runValue&#34;: 3000&#10;  },&#10;  &#34;isRoot&#34;: true,&#10;  &#34;calendar&#34;: {&#10;    &#34;workingDays&#34;: [&#10;      1,&#10;      2,&#10;      3,&#10;      4,&#10;      5&#10;    ],&#10;    &#34;workingHours&#34;: {&#10;      &#34;start&#34;: {&#10;        &#34;hour&#34;: 7,&#10;        &#34;minute&#34;: 0&#10;      },&#10;      &#34;end&#34;: {&#10;        &#34;hour&#34;: 16,&#10;        &#34;minute&#34;: 0&#10;      }&#10;    },&#10;    &#34;breaks&#34;: [&#10;      {&#10;        &#34;start&#34;: {&#10;          &#34;hour&#34;: 12,&#10;          &#34;minute&#34;: 30&#10;        },&#10;        &#34;end&#34;: {&#10;          &#34;hour&#34;: 13,&#10;          &#34;minute&#34;: 30&#10;        },&#10;        &#34;cuentaComoJornada&#34;: false,&#10;        &#34;existeEnExtra&#34;: true&#10;      }&#10;    ]&#10;  },&#10;  &#34;warmup&#34;: {&#10;    &#34;shape&#34;: &#34;exponential&#34;,&#10;    &#34;initialEfficiency&#34;: 0.7,&#10;    &#34;recoveryMinutes&#34;: 30,&#10;    &#34;onShiftStart&#34;: true,&#10;    &#34;onBreakReturn&#34;: true&#10;  },&#10;  &#34;lots&#34;: {&#10;    &#34;enabled&#34;: true,&#10;    &#34;sizeMode&#34;: &#34;fixed&#34;,&#10;    &#34;size&#34;: 20,&#10;    &#34;min&#34;: 10,&#10;    &#34;mode&#34;: 20,&#10;    &#34;max&#34;: 30,&#10;    &#34;stopMinutes&#34;: 0,&#10;    &#34;table&#34;: [&#10;      {&#10;        &#34;size&#34;: 6,&#10;        &#34;weight&#34;: 100&#10;      }&#10;    ]&#10;  },&#10;  &#34;seed&#34;: &#34;&#34;,&#10;  &#34;cost&#34;: {&#10;    &#34;baseRatePerHour&#34;: 50,&#10;    &#34;waitCostPerHour&#34;: 0&#10;  },&#10;  &#34;overtime&#34;: {&#10;    &#34;limitHours&#34;: 9,&#10;    &#34;payMultiplier&#34;: 2,&#10;    &#34;excessPayMultiplier&#34;: 3&#10;  },&#10;  &#34;labor&#34;: {&#10;    &#34;shiftType&#34;: &#34;diurna&#34;,&#10;    &#34;dailyOvertimeLimitHours&#34;: 3,&#10;    &#34;maxOvertimeDaysPerWeek&#34;: 3,&#10;    &#34;sundayPremiumPercent&#34;: 25,&#10;    &#34;holidayPremiumPercent&#34;: 0,&#10;    &#34;rules&#34;: []&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:outgoing>Flow_1enxo9r</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="Activity_0sbw65c" name="desempaque">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;jimbo&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1enxo9r</bpmn:incoming>
+      <bpmn:outgoing>Flow_0hva5fj</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_1enxo9r" sourceRef="Event_03imili" targetRef="Activity_0sbw65c" />
+    <bpmn:task id="Activity_08e3agn" name="llenado linea">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;alicia&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0hva5fj</bpmn:incoming>
+      <bpmn:incoming>Flow_02xrf1y</bpmn:incoming>
+      <bpmn:outgoing>Flow_0d5q2tb</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_0hva5fj" sourceRef="Activity_0sbw65c" targetRef="Activity_08e3agn" />
+    <bpmn:task id="Activity_0okgkg9" name="carga">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.16,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;victoria&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1pxy8kx</bpmn:incoming>
+      <bpmn:outgoing>Flow_0qfycik</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="Gateway_1enu2rs" name="todo ok?">
+      <bpmn:incoming>Flow_1fwskik</bpmn:incoming>
+      <bpmn:outgoing>Flow_1o715ik</bpmn:outgoing>
+      <bpmn:outgoing>Flow_0gqkyvq</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_0qfycik" sourceRef="Activity_0okgkg9" targetRef="Event_0f2bbf3" />
+    <bpmn:task id="Activity_1h6ctug" name="apagado">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1o715ik</bpmn:incoming>
+      <bpmn:outgoing>Flow_0acc1s5</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_1o715ik" sourceRef="Gateway_1enu2rs" targetRef="Activity_1h6ctug">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;branchingProbability&#34;: 0.8&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+    </bpmn:sequenceFlow>
+    <bpmn:task id="Activity_0zdh62u" name="reinicio">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0gqkyvq</bpmn:incoming>
+      <bpmn:outgoing>Flow_02xrf1y</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_0gqkyvq" sourceRef="Gateway_1enu2rs" targetRef="Activity_0zdh62u">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;branchingProbability&#34;: 0.2&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+    </bpmn:sequenceFlow>
+    <bpmn:task id="Activity_1gyver1" name="limpieza">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 7,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;chelito&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0acc1s5</bpmn:incoming>
+      <bpmn:outgoing>Flow_0tllaao</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_0acc1s5" sourceRef="Activity_1h6ctug" targetRef="Activity_1gyver1" />
+    <bpmn:task id="Activity_0ms1531" name="plastificado">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;noel&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0tllaao</bpmn:incoming>
+      <bpmn:outgoing>Flow_1of0hf3</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_0tllaao" sourceRef="Activity_1gyver1" targetRef="Activity_0ms1531" />
+    <bpmn:task id="Activity_18aa1s9" name="entarimado">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 18,&#10;    &#34;unit&#34;: &#34;seconds&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 20,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;victor s&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1of0hf3</bpmn:incoming>
+      <bpmn:outgoing>Flow_0381atp</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_1of0hf3" sourceRef="Activity_0ms1531" targetRef="Activity_18aa1s9" />
+    <bpmn:endEvent id="Event_0788ijn">
+      <bpmn:incoming>Flow_0381atp</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_0381atp" sourceRef="Activity_18aa1s9" targetRef="Event_0788ijn" />
+    <bpmn:task id="Activity_0jyxkpu" name="carga 2">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.16,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;erika&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1vmj4kq</bpmn:incoming>
+      <bpmn:outgoing>Flow_0y3bzw7</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_0d5q2tb" sourceRef="Activity_08e3agn" targetRef="Gateway_0nvur9a" />
+    <bpmn:parallelGateway id="Gateway_0nvur9a">
+      <bpmn:incoming>Flow_0d5q2tb</bpmn:incoming>
+      <bpmn:outgoing>Flow_1pxy8kx</bpmn:outgoing>
+      <bpmn:outgoing>Flow_1vmj4kq</bpmn:outgoing>
+      <bpmn:outgoing>Flow_0p6otq6</bpmn:outgoing>
+      <bpmn:outgoing>Flow_0n3wonh</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="Flow_1pxy8kx" sourceRef="Gateway_0nvur9a" targetRef="Activity_0okgkg9" />
+    <bpmn:sequenceFlow id="Flow_1vmj4kq" sourceRef="Gateway_0nvur9a" targetRef="Activity_0jyxkpu" />
+    <bpmn:intermediateThrowEvent id="Event_0f2bbf3">
+      <bpmn:incoming>Flow_0qfycik</bpmn:incoming>
+      <bpmn:incoming>Flow_0y3bzw7</bpmn:incoming>
+      <bpmn:incoming>Flow_081maog</bpmn:incoming>
+      <bpmn:incoming>Flow_013krd1</bpmn:incoming>
+      <bpmn:outgoing>Flow_1fwskik</bpmn:outgoing>
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="Flow_1fwskik" sourceRef="Event_0f2bbf3" targetRef="Gateway_1enu2rs" />
+    <bpmn:sequenceFlow id="Flow_0y3bzw7" sourceRef="Activity_0jyxkpu" targetRef="Event_0f2bbf3" />
+    <bpmn:task id="Activity_1pp20m5" name="carga 3">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.16,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0p6otq6</bpmn:incoming>
+      <bpmn:outgoing>Flow_081maog</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_0p6otq6" sourceRef="Gateway_0nvur9a" targetRef="Activity_1pp20m5" />
+    <bpmn:sequenceFlow id="Flow_081maog" sourceRef="Activity_1pp20m5" targetRef="Event_0f2bbf3" />
+    <bpmn:sequenceFlow id="Flow_02xrf1y" sourceRef="Activity_0zdh62u" targetRef="Activity_08e3agn" />
+    <bpmn:task id="Activity_1iz567j" name="carga 4">
+      <bpmn:extensionElements>
+        <camunda:properties>
+          <camunda:property name="simulationData" value="{&#10;  &#34;processingTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 5,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;failureRate&#34;: 0.16,&#10;  &#34;reworkTime&#34;: {&#10;    &#34;distribution&#34;: &#34;fixed&#34;,&#10;    &#34;value&#34;: 10,&#10;    &#34;unit&#34;: &#34;minutes&#34;&#10;  },&#10;  &#34;resources&#34;: {&#10;    &#34;pool&#34;: &#34;tecnico&#34;,&#10;    &#34;quantityRequired&#34;: 1,&#10;    &#34;miembro&#34;: &#34;erika&#34;&#10;  }&#10;}" />
+        </camunda:properties>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0n3wonh</bpmn:incoming>
+      <bpmn:outgoing>Flow_013krd1</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="Flow_0n3wonh" sourceRef="Gateway_0nvur9a" targetRef="Activity_1iz567j" />
+    <bpmn:sequenceFlow id="Flow_013krd1" sourceRef="Activity_1iz567j" targetRef="Event_0f2bbf3" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_0xnvqvq">
+      <bpmndi:BPMNShape id="Event_03imili_di" bpmnElement="Event_03imili">
+        <dc:Bounds x="152" y="362" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0sbw65c_di" bpmnElement="Activity_0sbw65c">
+        <dc:Bounds x="240" y="340" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_08e3agn_di" bpmnElement="Activity_08e3agn">
+        <dc:Bounds x="400" y="340" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0okgkg9_di" bpmnElement="Activity_0okgkg9">
+        <dc:Bounds x="660" y="340" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_1enu2rs_di" bpmnElement="Gateway_1enu2rs" isMarkerVisible="true">
+        <dc:Bounds x="975" y="355" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="978" y="323" width="43" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1h6ctug_di" bpmnElement="Activity_1h6ctug">
+        <dc:Bounds x="1110" y="340" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1gyver1_di" bpmnElement="Activity_1gyver1">
+        <dc:Bounds x="1280" y="340" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0ms1531_di" bpmnElement="Activity_0ms1531">
+        <dc:Bounds x="1450" y="340" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_18aa1s9_di" bpmnElement="Activity_18aa1s9">
+        <dc:Bounds x="1620" y="340" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_0788ijn_di" bpmnElement="Event_0788ijn">
+        <dc:Bounds x="1792" y="362" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0jyxkpu_di" bpmnElement="Activity_0jyxkpu">
+        <dc:Bounds x="660" y="220" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_1j4j9xk_di" bpmnElement="Gateway_0nvur9a">
+        <dc:Bounds x="565" y="355" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_0f2bbf3_di" bpmnElement="Event_0f2bbf3">
+        <dc:Bounds x="832" y="362" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0zdh62u_di" bpmnElement="Activity_0zdh62u">
+        <dc:Bounds x="670" y="630" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_1xdgq5i" bpmnElement="Activity_1iz567j">
+        <dc:Bounds x="660" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_1ucy668" bpmnElement="Activity_1pp20m5">
+        <dc:Bounds x="660" y="480" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1enxo9r_di" bpmnElement="Flow_1enxo9r">
+        <di:waypoint x="188" y="380" />
+        <di:waypoint x="240" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0hva5fj_di" bpmnElement="Flow_0hva5fj">
+        <di:waypoint x="340" y="380" />
+        <di:waypoint x="400" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_02xrf1y_di" bpmnElement="Flow_02xrf1y">
+        <di:waypoint x="670" y="670" />
+        <di:waypoint x="450" y="670" />
+        <di:waypoint x="450" y="420" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0d5q2tb_di" bpmnElement="Flow_0d5q2tb">
+        <di:waypoint x="500" y="380" />
+        <di:waypoint x="565" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1pxy8kx_di" bpmnElement="Flow_1pxy8kx">
+        <di:waypoint x="615" y="380" />
+        <di:waypoint x="660" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0qfycik_di" bpmnElement="Flow_0qfycik">
+        <di:waypoint x="760" y="380" />
+        <di:waypoint x="832" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1fwskik_di" bpmnElement="Flow_1fwskik">
+        <di:waypoint x="868" y="380" />
+        <di:waypoint x="975" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1o715ik_di" bpmnElement="Flow_1o715ik">
+        <di:waypoint x="1025" y="380" />
+        <di:waypoint x="1110" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0gqkyvq_di" bpmnElement="Flow_0gqkyvq">
+        <di:waypoint x="1000" y="405" />
+        <di:waypoint x="1000" y="670" />
+        <di:waypoint x="770" y="670" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0acc1s5_di" bpmnElement="Flow_0acc1s5">
+        <di:waypoint x="1210" y="380" />
+        <di:waypoint x="1280" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0tllaao_di" bpmnElement="Flow_0tllaao">
+        <di:waypoint x="1380" y="380" />
+        <di:waypoint x="1450" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1of0hf3_di" bpmnElement="Flow_1of0hf3">
+        <di:waypoint x="1550" y="380" />
+        <di:waypoint x="1620" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0381atp_di" bpmnElement="Flow_0381atp">
+        <di:waypoint x="1720" y="380" />
+        <di:waypoint x="1792" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1vmj4kq_di" bpmnElement="Flow_1vmj4kq">
+        <di:waypoint x="590" y="355" />
+        <di:waypoint x="590" y="260" />
+        <di:waypoint x="660" y="260" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0y3bzw7_di" bpmnElement="Flow_0y3bzw7">
+        <di:waypoint x="760" y="260" />
+        <di:waypoint x="850" y="260" />
+        <di:waypoint x="850" y="362" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0p6otq6_di" bpmnElement="Flow_0p6otq6">
+        <di:waypoint x="590" y="405" />
+        <di:waypoint x="590" y="520" />
+        <di:waypoint x="660" y="520" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0n3wonh_di" bpmnElement="Flow_0n3wonh">
+        <di:waypoint x="590" y="355" />
+        <di:waypoint x="590" y="120" />
+        <di:waypoint x="660" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_081maog_di" bpmnElement="Flow_081maog">
+        <di:waypoint x="760" y="520" />
+        <di:waypoint x="850" y="520" />
+        <di:waypoint x="850" y="398" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_013krd1_di" bpmnElement="Flow_013krd1">
+        <di:waypoint x="760" y="120" />
+        <di:waypoint x="850" y="120" />
+        <di:waypoint x="850" y="362" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

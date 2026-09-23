@@ -4,6 +4,68 @@ All notable changes to the [camunda-modeler-token-simulation-plugin](https://git
 
 ## Unreleased
 
+* `FEAT`: **la tabla de Tareas se navega con las FLECHAS del teclado.** Son 25 columnas y hay que
+  meter decenas de datos seguidos: con el ratón cada celda son dos movimientos, con las flechas se
+  teclea en ráfaga. ↑/↓ van a la misma columna de la tarea de al lado; ←/→ al campo vecino de la
+  misma fila. Tres decisiones que salen de casos reales: **en un desplegable no se navega** —sus
+  flechas cambian la opción, que es lo que el usuario espera—, **se saltan las casillas que no se
+  pueden editar** (una columna muerta no es un destino), y **si la columna no existe en la tarea de
+  al lado** se cae en su primera casilla editable (la barrera solo está en las tareas «por lote»).
+  Dos bugs propios que cazó el arnés: el salto horizontal buscaba «la misma columna», que es el
+  propio campo de partida, así que **los movimientos laterales no funcionaban en absoluto**; y el
+  criterio de visibilidad usaba `offsetParent`, que vale `null` tanto para un elemento oculto como
+  para uno de `position: fixed`, y además hacía la navegación imposible de probar.
+* `FEAT`: **aviso de capacidad del CUPO contra las llegadas del diagrama.** Un cupo de 24 con 10
+  minutos da 2,4 piezas/minuto; si la raíz declara más llegadas que eso, la cola crece sin límite y
+  el tiempo total del informe mide **cuánto dura la corrida**, no lo que tarda una pieza. Es el error
+  más fácil de cometer —el cupo y las llegadas se declaran en sitios distintos— y nadie lo avisaba:
+  se veían «142 días» sin forma de saber que el problema era 0,6 tabletas por minuto. La celda dice
+  las dos cifras **en la misma unidad** y, en el tooltip, cuál debería ser el cupo. En verde cuando
+  sobra capacidad.
+* `FEAT`: **la columna de la Tarea se queda fija** al desplazarse a la derecha, con fondo propio y
+  un borde que marca dónde acaba lo fijo. Con 25 columnas, al llegar al final ya no se sabía qué
+  fila se estaba editando.
+* `FEAT`: **proceso por CUPO: N piezas a la vez, liberadas juntas.** Un horno que mete 20 tabletas
+  y las saca todas de golpe, o un carro de transporte que se llena antes de moverse. No confundir
+  con `quantityRequired`, que es lo contrario —N recursos para UNA pieza— ni con los lotes, que
+  procesan N piezas **en secuencia**. Se declara en Tareas —columnas «Cupo» y «Arranque del cupo»—
+  y viaja en el CSV como `cupo` y `arranque_cupo`. Mecanismo: la tanda es una **cola**; sale la
+  primera como líder, el resto se aparca, y al terminar la líder las suelta a todas. **No hay ningún
+  `for` ni `while`**, y es a propósito: en un motor de eventos discretos el tiempo avanza por saltos.
+  Aviso: con llegadas lentas el cupo no tiene nada que agrupar —no se puede juntar lo que no se
+  junta—, y eso es física, no un fallo.
+* `FIX`: **el cupo no agrupaba nada con «arrancar con lo que haya».** Arrancaba con **cada pieza
+  individual**, así que con piezas que llegan de a una las tandas eran de 1 y la capacidad real caía
+  de 2,4/min a 0,1/min —24 veces menos—. Medido: 60 piezas daban 60 ejecuciones y 600 minutos donde
+  debían dar 3 tandas y 69. Es la causa de los «142 días» del diagrama `bob`. Las dos políticas
+  **esperan a llenar el cupo**, y cambian en **cuándo se rinden**, no en cuándo empiezan.
+* `FIX`: **el aviso de capacidad del cupo validaba solo dentro de `if (size > 1)`**, así que un cupo
+  de CERO pasaba sin decir nada. «Procesa cero piezas a la vez» es imposible y la tarea se habría
+  guardado con un valor que el motor no sabe leer.
+* `FEAT`: **la operatividad por persona se mide contra el tiempo CON TRABAJO PENDIENTE**, no contra
+  la ventana simulada entera. El reporte fue «dice que 95,2 % sin trabajo y esto no tiene sentido».
+  Tenía razón: el trabajo activo estaba bien medido —30 minutos exactos— y lo que estaba mal era el
+  **denominador**. La persona no está ociosa por no trabajar en una jornada donde **no había nada que
+  darle**. Ahora hay dos lecturas: **sin trabajo** (ociosidad imputable, cero cuando no hubo cola) y
+  **jornada sin carga** (el turno abierto menos lo trabajado, que dice si el proceso da de comer a la
+  plantilla). Medido con 3 piezas de 10 min: antes 76,9 % sin trabajo, ahora 0 %.
+* `FEAT`: **pestaña «Tiempos por proceso»**, con las dos lecturas del tiempo entre procesos: la
+  **espera propia** de cada paso —el rato en la cola de ese proceso, que se arregla con capacidad— y
+  el **tránsito** desde que el token terminó el paso anterior —que se arregla con distancia o lote—.
+  Ordenada por espera **acumulada** y no por media: un puesto con 500 tokens y 1 minuto cuesta más al
+  proceso entero que uno con 3 y 40. Lleva cinco números por proceso porque **la media sola engaña**:
+  con 9 tokens directos y 1 que espera 40 minutos, la media sale 4 y el p90 también; los que delatan
+  el caso aislado son el máximo y el % que esperó.
+* `FIX`: **el informe no explicaba POR QUÉ un plan no cabe.** Ahora, arriba del «254 días», dice el
+  desfase con los números del diagrama: cuántas piezas entran al día, cuántas se producen, cuánto
+  crece la cola y cuánto tardaría **solo producir el lote**. La pregunta «¿por qué 254 y no 10?» se
+  responde mirando, sin hacer cuentas. Solo aparece cuando la cola crece de verdad.
+* `REFACTOR`: el panel de datos se trocea en módulos probables por separado. `DataTablePanel.js`
+  pasa de **3.796 a 2.305 líneas** y salen cuatro módulos puros —`CsvTareas`, `validacion`,
+  `DatosDePrueba` y `Ayuda`—, todos con arnés propio. El troceo destapó **siete fallos reales**, y
+  uno de ellos se sufría a diario: **la tabla de vigencias nunca leía lo que `save()` guardaba**,
+  porque se pintaba desde `labor.rules` crudo y la clave la deja `normalizeLabor`, que solo corría
+  dentro del motor. Guardabas vigencias, reabrias el panel y la tabla salía vacía.
 * `FEAT`: **la vista de tráfico colorea por CUOTA DE RAMA, y resalta la ruta dominante con un halo.**
   El reporte fue: «debería verse en rojo el camino más usado pero se sigue viendo un poco más
   diferente que los demás». La causa se midió sobre un diagrama real (7000 casos, compuerta 80/20):
